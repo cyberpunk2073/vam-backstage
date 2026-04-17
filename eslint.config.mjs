@@ -12,20 +12,20 @@ export default [
   {
     settings: {
       react: {
-        version: 'detect'
-      }
-    }
+        version: 'detect',
+      },
+    },
   },
   {
     files: ['**/*.{js,jsx}'],
     plugins: {
       'react-hooks': eslintPluginReactHooks,
-      'react-refresh': eslintPluginReactRefresh
+      'react-refresh': eslintPluginReactRefresh,
     },
     rules: {
       ...eslintPluginReactHooks.configs.recommended.rules,
-      ...eslintPluginReactRefresh.configs.vite.rules
-    }
+      ...eslintPluginReactRefresh.configs.vite.rules,
+    },
   },
-  eslintConfigPrettier
+  eslintConfigPrettier,
 ]
