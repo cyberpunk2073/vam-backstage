@@ -1,4 +1,8 @@
 singleQuote: true
 semi: false
-printWidth: 100
-trailingComma: none
+printWidth: 120
+trailingComma: all
+overrides:
+  - files: '*.css'
+    options:
+      tabWidth: 4
