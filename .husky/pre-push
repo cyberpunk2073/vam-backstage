@@ -1,0 +1,13 @@
+#!/bin/sh
+pkg_version=$(node -p "require('./package.json').version")
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/tags/v*)
+      tagver=${remote_ref#refs/tags/v}
+      if [ "$tagver" != "$pkg_version" ]; then
+        echo "Push rejected: tag v${tagver} does not match package.json version ${pkg_version}" >&2
+        exit 1
+      fi
+      ;;
+  esac
+done

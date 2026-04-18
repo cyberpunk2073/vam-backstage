@@ -11,6 +11,7 @@ export default defineConfig({
       alias: {
         '@renderer': resolve('src/renderer/src'),
         '@': resolve('src/renderer/src'),
+        '@resources': resolve('resources'),
       },
     },
     plugins: [react(), tailwindcss()],

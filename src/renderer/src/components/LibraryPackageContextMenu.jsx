@@ -1,0 +1,385 @@
+import { useState, useCallback, useMemo } from 'react'
+import {
+  ArrowUpCircle,
+  Compass,
+  Download,
+  Eye,
+  EyeOff,
+  FolderTree,
+  Heart,
+  LayoutGrid,
+  Plus,
+  Trash2,
+} from 'lucide-react'
+import { toast } from '@/components/Toast'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
+import { AlertDialog } from '@/components/ui/alert-dialog'
+import {
+  DisablePackageDialogContent,
+  ForceRemoveDialogContent,
+  UninstallDialogContent,
+} from '@/components/package-action-dialogs'
+import FileTreeDialog from '@/components/FileTreeDialog'
+import { displayName } from '@/lib/utils'
+import { useDownloadStore } from '@/stores/useDownloadStore'
+import { useLibraryStore } from '@/stores/useLibraryStore'
+
+async function runLibraryBulkToggleEnabledFromStore() {
+  const { packages, bulkSelectedFilenames } = useLibraryStore.getState()
+  const items = packages.filter((p) => bulkSelectedFilenames.includes(p.filename))
+  if (!items.length) return
+  const nEnabled = items.filter((p) => p.isEnabled).length
+  const allEnabled = nEnabled === items.length
+  const allDisabled = nEnabled === 0
+  const mixed = !allEnabled && !allDisabled
+  const targets = mixed ? items.filter((p) => !p.isEnabled) : items
+  try {
+    for (const p of targets) {
+      await window.api.packages.toggleEnabled(p.filename)
+    }
+    await useLibraryStore.getState().fetchPackages()
+  } catch (err) {
+    toast(`Failed: ${err.message}`)
+  }
+}
+
+async function runLibraryBulkRemoveFromStore() {
+  const { packages, bulkSelectedFilenames } = useLibraryStore.getState()
+  const items = packages.filter((p) => bulkSelectedFilenames.includes(p.filename))
+  const direct = items.filter((p) => p.isDirect)
+  const dep = items.filter((p) => !p.isDirect)
+  try {
+    if (direct.length) {
+      const d = direct.map((p) => p.filename)
+      await window.api.packages.uninstall(d.length === 1 ? d[0] : d)
+    }
+    if (dep.length) {
+      const d = dep.map((p) => p.filename)
+      await window.api.packages.forceRemove(d.length === 1 ? d[0] : d)
+    }
+    useLibraryStore.getState().clearBulkSelection()
+    await useLibraryStore.getState().fetchPackages()
+  } catch (err) {
+    toast(`Failed: ${err.message}`)
+  }
+}
+
+async function runLibraryBulkPromoteFromStore() {
+  const { packages, bulkSelectedFilenames } = useLibraryStore.getState()
+  const fnames = packages
+    .filter((p) => bulkSelectedFilenames.includes(p.filename) && !p.isDirect)
+    .map((p) => p.filename)
+  if (!fnames.length) return
+  try {
+    await window.api.packages.promote(fnames.length === 1 ? fnames[0] : fnames, null)
+    useLibraryStore.getState().clearBulkSelection()
+    await useLibraryStore.getState().fetchPackages()
+  } catch (err) {
+    toast(`Failed: ${err.message}`)
+  }
+}
+
+export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, children }) {
+  const selectedDetail = useLibraryStore((s) => s.selectedDetail)
+  const bulkSelectedFilenames = useLibraryStore((s) => s.bulkSelectedFilenames)
+  const packages = useLibraryStore((s) => s.packages)
+  const [detail, setDetail] = useState(null)
+  const [fileTreeOpen, setFileTreeOpen] = useState(false)
+  const [uninstallOpen, setUninstallOpen] = useState(false)
+  const [disableOpen, setDisableOpen] = useState(false)
+  const [forceRemoveOpen, setForceRemoveOpen] = useState(false)
+
+  const onOpenChange = useCallback(
+    (open) => {
+      if (open) {
+        if (selectedDetail?.filename === pkg.filename) {
+          setDetail(selectedDetail)
+        } else {
+          setDetail(null)
+          void window.api.packages
+            .detail(pkg.filename)
+            .then(setDetail)
+            .catch((err) => toast(`Failed to load package: ${err.message}`))
+        }
+      } else {
+        setDetail(null)
+      }
+    },
+    [pkg.filename, selectedDetail],
+  )
+
+  const p = detail || pkg
+  const name = displayName(p)
+  const hasDependents = (p.dependents?.length ?? 0) > 0
+  const hasCascadeDeps = (p.cascadeDisableDeps?.length ?? 0) > 0
+  const showDisableDialog = p.isEnabled && (hasDependents || hasCascadeDeps)
+  const dependentNames = hasDependents
+    ? p.dependents
+        .slice(0, 2)
+        .map((d) => d.packageName?.split('.').pop() || d.filename)
+        .join(', ') + (p.dependents.length > 2 ? ` +${p.dependents.length - 2}` : '')
+    : ''
+
+  const handleToggleEnabled = async () => {
+    try {
+      await window.api.packages.toggleEnabled(p.filename)
+    } catch (err) {
+      toast(`Failed to toggle package: ${err.message}`)
+    }
+  }
+  const handlePromote = async () => {
+    try {
+      await window.api.packages.promote(p.filename)
+    } catch (err) {
+      toast(`Failed to promote package: ${err.message}`)
+    }
+  }
+  const handleUninstall = async () => {
+    try {
+      await window.api.packages.uninstall(p.filename)
+    } catch (err) {
+      toast(`Uninstall failed: ${err.message}`)
+    }
+  }
+  const handleForceRemove = async () => {
+    try {
+      await window.api.packages.forceRemove(p.filename)
+    } catch (err) {
+      toast(`Remove failed: ${err.message}`)
+    }
+  }
+  const handleRedownload = async () => {
+    try {
+      await window.api.packages.redownload(p.filename)
+      toast('Package redownloaded and verified', 'success')
+    } catch (err) {
+      toast(`Redownload failed: ${err.message}`)
+    }
+  }
+
+  const showBulk = bulkSelectedFilenames.length > 0 && bulkSelectedFilenames.includes(pkg.filename)
+  const bulkDepCount = showBulk
+    ? packages.filter((x) => bulkSelectedFilenames.includes(x.filename) && !x.isDirect).length
+    : 0
+
+  const bulkEnableUi = useMemo(() => {
+    if (!showBulk) return null
+    const items = packages.filter((p) => bulkSelectedFilenames.includes(p.filename))
+    if (!items.length) {
+      return { label: 'Enable', allEnabled: false, allDisabled: true, mixed: false }
+    }
+    const n = items.filter((p) => p.isEnabled).length
+    const allEnabled = n === items.length
+    const allDisabled = n === 0
+    const mixed = n > 0 && n < items.length
+    const label = mixed || allDisabled ? 'Enable' : 'Disable'
+    return { label, allEnabled, allDisabled, mixed }
+  }, [showBulk, packages, bulkSelectedFilenames])
+
+  return (
+    <>
+      <ContextMenu onOpenChange={onOpenChange}>
+        <ContextMenuTrigger className="contents">{children}</ContextMenuTrigger>
+        <ContextMenuContent className="min-w-52">
+          {showBulk ? (
+            <>
+              <ContextMenuItem onSelect={() => void runLibraryBulkToggleEnabledFromStore()}>
+                {bulkEnableUi.allEnabled && !bulkEnableUi.mixed ? (
+                  <EyeOff size={12} className="shrink-0 text-text-secondary" />
+                ) : bulkEnableUi.mixed ? (
+                  <Eye size={12} className="shrink-0 text-text-tertiary" />
+                ) : (
+                  <Eye size={12} className="shrink-0 text-text-secondary" />
+                )}
+                {bulkEnableUi.label} ({bulkSelectedFilenames.length})
+              </ContextMenuItem>
+              <ContextMenuItem variant="destructive" onSelect={() => void runLibraryBulkRemoveFromStore()}>
+                <Trash2 size={12} className="shrink-0" />
+                Remove ({bulkSelectedFilenames.length})
+              </ContextMenuItem>
+              {bulkDepCount > 0 && (
+                <ContextMenuItem onSelect={() => void runLibraryBulkPromoteFromStore()}>
+                  <Plus size={12} className="shrink-0 text-accent-blue" />
+                  Promote ({bulkDepCount})
+                </ContextMenuItem>
+              )}
+            </>
+          ) : (
+            <>
+              {updateInfo?.localNewerFilename ? (
+                <>
+                  <ContextMenuItem
+                    onSelect={async () => {
+                      try {
+                        await window.api.packages.uninstall(p.filename)
+                        await window.api.packages.promote(updateInfo.localNewerFilename)
+                        await useLibraryStore.getState().fetchPackages()
+                        await useLibraryStore.getState().selectPackage(updateInfo.localNewerFilename)
+                      } catch (err) {
+                        toast(`Update failed: ${err.message}`)
+                      }
+                    }}
+                  >
+                    <ArrowUpCircle size={12} className="shrink-0 text-accent-blue" />
+                    Update to v{updateInfo.hubVersion}
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    onSelect={() => useLibraryStore.getState().selectPackage(updateInfo.localNewerFilename)}
+                  >
+                    <Eye size={12} className="shrink-0 text-accent-blue" />
+                    Go to v{updateInfo.hubVersion}
+                  </ContextMenuItem>
+                </>
+              ) : (
+                (updateInfo?.hubResourceId || updateInfo?.packageName) && (
+                  <ContextMenuItem
+                    onSelect={() => {
+                      useDownloadStore
+                        .getState()
+                        .install(
+                          updateInfo.hubResourceId,
+                          null,
+                          false,
+                          updateInfo.packageName,
+                          !!updateInfo.isDepUpdate,
+                        )
+                    }}
+                  >
+                    <ArrowUpCircle size={12} className="shrink-0 text-accent-blue" />
+                    Update to v{updateInfo.hubVersion}
+                  </ContextMenuItem>
+                )
+              )}
+              {p.hubResourceId && (
+                <ContextMenuItem
+                  onSelect={() =>
+                    onNavigate?.('hub', {
+                      openResource: {
+                        resource_id: p.hubResourceId,
+                        title: displayName(p),
+                        username: p.creator,
+                        type: p.derivedType || p.type,
+                      },
+                    })
+                  }
+                >
+                  <Compass size={12} className="shrink-0 text-accent-blue" />
+                  View on Hub
+                </ContextMenuItem>
+              )}
+              {p.promotionalLink && (
+                <ContextMenuItem
+                  onSelect={() => {
+                    void window.api.shell.openExternal(p.promotionalLink)
+                  }}
+                >
+                  <Heart size={12} className="shrink-0 text-accent-blue" />
+                  Support
+                </ContextMenuItem>
+              )}
+              {p.missingDeps > 0 && (
+                <ContextMenuItem
+                  onSelect={() => {
+                    useDownloadStore.getState().installMissing(p.filename)
+                  }}
+                >
+                  <Download size={12} className="shrink-0" />
+                  Install missing dependencies
+                </ContextMenuItem>
+              )}
+              {p.isCorrupted && (
+                <ContextMenuItem onSelect={() => void handleRedownload()}>
+                  <Download size={12} className="shrink-0 text-error" />
+                  Redownload
+                </ContextMenuItem>
+              )}
+              {(p.contentCount ?? 0) > 0 && (
+                <ContextMenuItem
+                  onSelect={() => {
+                    onNavigate?.('content', { filterByPackage: p.packageName || p.filename })
+                  }}
+                >
+                  <LayoutGrid size={12} className="shrink-0" />
+                  View in gallery
+                </ContextMenuItem>
+              )}
+              <ContextMenuItem onSelect={() => setFileTreeOpen(true)}>
+                <FolderTree size={12} className="shrink-0" />
+                Browse package files
+              </ContextMenuItem>
+              {!p.isDirect && (
+                <>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem onSelect={() => void handlePromote()}>
+                    <Plus size={12} className="shrink-0 text-accent-blue" />
+                    Add to Library
+                  </ContextMenuItem>
+                </>
+              )}
+              <ContextMenuSeparator />
+              {showDisableDialog ? (
+                <ContextMenuItem onSelect={() => setDisableOpen(true)} disabled={!detail}>
+                  <EyeOff size={12} className="shrink-0" />
+                  Disable…
+                </ContextMenuItem>
+              ) : (
+                <ContextMenuItem onSelect={() => void handleToggleEnabled()}>
+                  {p.isEnabled ? <EyeOff size={12} className="shrink-0" /> : <Eye size={12} className="shrink-0" />}
+                  {p.isEnabled ? 'Disable' : 'Enable'}
+                </ContextMenuItem>
+              )}
+              {p.isDirect ? (
+                <ContextMenuItem variant="destructive" onSelect={() => setUninstallOpen(true)} disabled={!detail}>
+                  <Trash2 size={12} className="shrink-0" />
+                  {hasDependents ? 'Remove…' : 'Uninstall…'}
+                </ContextMenuItem>
+              ) : (
+                <ContextMenuItem variant="destructive" onSelect={() => setForceRemoveOpen(true)} disabled={!detail}>
+                  <Trash2 size={12} className="shrink-0" />
+                  {hasDependents ? 'Force remove…' : 'Remove…'}
+                </ContextMenuItem>
+              )}
+            </>
+          )}
+        </ContextMenuContent>
+      </ContextMenu>
+
+      <FileTreeDialog open={fileTreeOpen} onOpenChange={setFileTreeOpen} filename={pkg.filename} />
+
+      <AlertDialog open={uninstallOpen} onOpenChange={setUninstallOpen}>
+        {uninstallOpen && detail ? (
+          <UninstallDialogContent
+            pkg={detail}
+            name={name}
+            hasDependents={hasDependents}
+            dependentNames={dependentNames}
+            onConfirm={handleUninstall}
+          />
+        ) : null}
+      </AlertDialog>
+
+      <AlertDialog open={disableOpen} onOpenChange={setDisableOpen}>
+        {disableOpen && detail ? (
+          <DisablePackageDialogContent pkg={detail} name={name} onConfirm={handleToggleEnabled} />
+        ) : null}
+      </AlertDialog>
+
+      <AlertDialog open={forceRemoveOpen} onOpenChange={setForceRemoveOpen}>
+        {forceRemoveOpen && detail ? (
+          <ForceRemoveDialogContent
+            pkg={detail}
+            name={name}
+            hasDependents={hasDependents}
+            onConfirm={handleForceRemove}
+          />
+        ) : null}
+      </AlertDialog>
+    </>
+  )
+}

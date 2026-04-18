@@ -1,0 +1,48 @@
+---
+description: Text selectability — native desktop UX for text selection and cursor behavior
+globs: src/renderer/**/*.jsx
+alwaysApply: false
+---
+
+# Text selectability
+
+The app uses `user-select: none` and `cursor: default` globally on `<body>` so all UI chrome (headers, labels, nav items, buttons, badges, status tags) is non-selectable with a normal pointer — matching native desktop app behavior.
+
+## When to add `select-text cursor-text`
+
+Add `select-text cursor-text` to elements that display **user data** someone might want to copy:
+
+- Package names, filenames, `.var` references
+- Creator / author names (when displayed as plain text, not as a clickable link)
+- Version strings
+- File paths, directory paths
+- Error messages, stack traces, scan results
+- URLs
+- Toast message text
+- App version / build info strings
+
+## When NOT to add it
+
+Leave the global non-selectable default for:
+
+- Section headers, labels, descriptions, help text
+- Button text, nav items, tab labels
+- Status tags (Installed, DEP, Direct, Missing, etc.)
+- Badge text, counts in UI chrome
+- Filter labels, sort options
+- Empty-state messages
+
+## Inside clickable containers
+
+For text inside clickable cards or table rows (where the whole row/card has an `onClick`), prefer keeping data selectable in the **detail panel** rather than on the card itself — adding `select-text` inside click targets can create UX friction between click and drag-to-select.
+
+## Pattern
+
+```jsx
+{/* Non-selectable by default — no extra classes needed */}
+<h2>Section Header</h2>
+
+{/* Copyable user data */}
+<span className="select-text cursor-text">{pkg.filename}</span>
+<div className="select-text cursor-text">{error.message}</div>
+```

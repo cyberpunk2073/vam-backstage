@@ -4,3 +4,12 @@ out
 .DS_Store
 .eslintcache
 *.log*
+
+/build/icon.ico
+/build/installerIcon.ico
+/build/uninstallerIcon.ico
+/build/installerHeaderIcon.ico
+
+/VaM
+/response.json
+/*.tar.gz

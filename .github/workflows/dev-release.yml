@@ -1,0 +1,107 @@
+name: Dev Release
+
+# Do NOT rename this workflow. The CI-computed version depends on github.run_number,
+# which is a per-workflow counter that resets on rename. If a rename is unavoidable,
+# bump package.json "version" first so the new counter starts strictly above
+# anything previously published.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: dev-release
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Currently only Windows dev builds are enabled to save on build time
+          # - os: ubuntu-latest
+          #   build_cmd: npm run build && npx electron-builder --linux AppImage deb --publish never
+          - os: windows-latest
+            build_cmd: npm run build:win -- --publish never
+          # - os: macos-latest
+          #   build_cmd: npm run build:mac -- --publish never
+
+    runs-on: ${{ matrix.os }}
+
+    # All matrix rows compute the same version (base package.json + github.run_number),
+    # so last-write-wins is safe if/when more OS rows are enabled.
+    outputs:
+      dev_version: ${{ steps.setver.outputs.dev_version }}
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Set dev version
+        id: setver
+        shell: bash
+        # See docs/Implementation.md § "Release Channels": patch bump + `-dev.N` semver;
+        # dev updates use the generic provider against the rolling `dev-latest` release.
+        run: |
+          DEV=$(node -e "const p=require('./package.json'),[a,b,c]=p.version.split('-')[0].split('.').map(Number),v=\`\${a}.\${b}.\${c+1}-dev.${{ github.run_number }}\`;p.version=v;require('fs').writeFileSync('package.json',JSON.stringify(p,null,2));process.stdout.write(v)")
+          echo "Dev build version: $DEV"
+          echo "dev_version=$DEV" >> "$GITHUB_OUTPUT"
+      - name: Build installers
+        run: ${{ matrix.build_cmd }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dev-${{ matrix.os }}
+          path: |
+            dist/latest*.yml
+            dist/*.blockmap
+            dist/*.dmg
+            dist/*.exe
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: release-assets
+          pattern: dev-*
+          merge-multiple: true
+      - name: Delete previous dev-latest release and tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete dev-latest --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: dev-latest
+          name: Dev build (rolling)
+          prerelease: true
+          body: |
+            **Version:** `${{ needs.build.outputs.dev_version }}` (commit [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}))
+
+            Ephemeral developer build. Replaced on every push to master. Not for production use.
+
+            Opt in from the app's Settings → Developer → Update Channel.
+          files: |
+            release-assets/*.exe
+            release-assets/*.dmg
+            release-assets/*.AppImage
+            release-assets/*.deb
+            release-assets/*.zip
+            release-assets/*.blockmap
+            release-assets/latest*.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

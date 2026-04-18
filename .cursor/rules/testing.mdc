@@ -1,0 +1,38 @@
+---
+description: Testing approach — what to test, what not to test, and how
+globs: src/**/*.test.js
+alwaysApply: false
+---
+
+# Testing
+
+We use **Vitest** for unit tests. Config is in `vitest.config.mjs`. Run with `npm test` (single run) or `npm run test:watch` (watch mode).
+
+## What we test
+
+Only **pure logic modules** with no side effects — functions that take inputs and return outputs. No mocking, no async, no setup/teardown. Colocate test files next to source (`foo.test.js` beside `foo.js`).
+
+### Modules that need tests
+
+| Module | What to cover |
+|--------|---------------|
+| `src/main/scanner/graph.js` | `parseDepRef`, `extractDepRefs`, `resolveRef`, `buildForwardDeps`, `buildReverseDeps`, `buildGroupIndex`, `detectLeaves`, `getTransitiveDeps`, `computeRemovableDeps` — dependency resolution edge cases, `.latest` fallback, version selection, transitive/removable dep math |
+| `src/main/scanner/classifier.js` | `classifyContents`, `derivePackageType` — each content type rule, sibling dedup across extensions, thumbnail resolution, package type priority |
+| `src/shared/licenses.js` | `canonicalizeLicense`, `isCommercialUseAllowed`, `getHubResourceLicense` — CC variant normalization (cc0, CC-0, casing, whitespace), commercial-use logic for each license type |
+| `src/renderer/src/lib/utils.js` | `formatBytes`, `formatStarRating`, `formatNumber`, `formatDate`, `compareContentTypes`, `displayName`, `getAuthorInitials` — boundary values, edge cases |
+
+## What we do NOT test
+
+- **React components / JSX** — tightly coupled to Electron + Radix + shadcn. Visual bugs are caught by using the app. Do not add `@testing-library/react`, `jsdom`, or component-level tests.
+- **IPC handlers** (`src/main/ipc/`) — glue code calling DB + store. Would need extensive mocking for little benefit.
+- **Zustand stores** (`src/renderer/src/stores/`) — thin wrappers around IPC calls.
+- **E2E / integration tests** — no Playwright, no Spectron, no Electron test harness.
+- **Snapshot tests** — brittle and noisy, not worth maintaining.
+
+## Style
+
+- `describe` per exported function, `it` per case
+- Prefer `.toEqual` for objects, `.toBe` for primitives, `.toBeNull()` for nulls
+- Test names should describe the input scenario, not restate the function name
+- Build fixture data inline in each test — keep tests self-contained
+- No shared mutable state between tests
