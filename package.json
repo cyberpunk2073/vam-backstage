@@ -1,6 +1,6 @@
 {
   "name": "vam-backstage",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "VaM Backstage — desktop app for managing Virt-a-Mate .var packages",
   "main": "./out/main/index.js",
   "author": "cyberpunk2073 <cyberpunk2073@users.noreply.github.com>",
