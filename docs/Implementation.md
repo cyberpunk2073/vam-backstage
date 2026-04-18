@@ -12,7 +12,7 @@ VaM Backstage solves this by:
 - **Content inspector.** A flat gallery of all content items across all packages with visibility/favorite controls.
 - **Package removal with dependency cascade.** Uninstalling a package identifies orphan dependencies and optionally removes them.
 
-The application is built with Electron 39, React 19, SQLite (better-sqlite3), Zustand for state management, and Tailwind CSS v4 with shadcn/ui components. It is JavaScript-only (no TypeScript). The UI is dark-only.
+The application is built with Electron 39, React 19, SQLite (better-sqlite3), Zustand for state management, and Tailwind CSS v4 with shadcn/ui-style components (via the `shadcn` CLI and `radix-ui` primitives). It is JavaScript-only (no TypeScript). The UI is dark-only.
 
 ---
 
@@ -20,11 +20,13 @@ The application is built with Electron 39, React 19, SQLite (better-sqlite3), Zu
 
 ### First Launch
 
-1. The app auto-detects the VaM directory by searching upward from its own location (up to 5 levels), looking for an `AddonPackages` directory containing `.var` files.
-2. A first-run wizard opens:
+1. The app auto-detects the VaM directory by probing common locations around the app's working directory for an `AddonPackages` folder, and counts `.var` files under it for the welcome UI. Detection internals are covered in §11.
+2. A first-run wizard opens (see `FirstRun.jsx`):
+   - **Beta step**: Short beta disclaimer; user continues to welcome.
    - **Welcome step**: Shows detected VaM directory, `.var` file count, "Scan library" CTA, option to change directory.
-   - **Scanning step**: Animated progress through 6 phases — indexing files, reading manifests, building dependency graph, analyzing content, detecting leaves, finalizing database.
-   - **Setup step** (if packages found): "Found X packages — Y direct, Z dependencies." Choice: "Hide dependency content" (recommended) vs "Keep everything visible."
+   - **Scanning step**: Weighted progress across the four local-scan phases (see §11), followed by Hub metadata enrichment and a `hub-finalize` tail.
+   - **Unhandled step** (only if some `.var` files were skipped as unreadable): Summary of skipped files; user continues to setup or done.
+   - **Setup step** (if at least one package was indexed): "Found X packages — Y direct, Z dependencies." Choice: "Hide dependency content" (recommended) vs "Keep everything visible."
    - **Done step**: Stats summary, "Open VaM Backstage."
 3. If no packages on disk, the setup step is skipped; auto-hide is enabled by default.
 
@@ -55,12 +57,12 @@ The application is built with Electron 39, React 19, SQLite (better-sqlite3), Zu
 │  App.jsx (shell, ribbon, view switching)                  │
 │  ├── HubView / LibraryView / ContentView / SettingsView   │
 │  ├── DownloadsPanel                                       │
-│  ├── FirstRun Wizard                                      │
+│  ├── FirstRun (first-run wizard)                          │
 │  ├── StatusBar                                            │
 │  └── Zustand Stores (hub, library, content, downloads,    │
 │       installed, status)                                  │
 │                                                           │
-│  ──── contextBridge (preload/index.js) ────               │
+│  ──── contextBridge (src/preload/index.js) ────           │
 ├───────────────────────────────────────────────────────────┤
 │                       Main Process                        │
 │                                                           │
@@ -74,22 +76,34 @@ The application is built with Electron 39, React 19, SQLite (better-sqlite3), Zu
 │  ├── watcher.js ── FS monitoring (chokidar + fs.watch)    │
 │  ├── thumb-resolver.js ── Hub thumbnail fetching          │
 │  ├── avatar-cache.js ── Hub author avatar caching         │
+│  ├── updater.js ── electron-updater wiring (§20)          │
 │  └── ipc/ ── handler modules per domain                   │
 └───────────────────────────────────────────────────────────┘
 ```
 
 ### Data Flow
 
-On startup, the main process reads the SQLite database and filesystem, then builds in-memory structures (package index, dependency graph, content list, prefs map). IPC handlers serve data from these in-memory structures, not from SQL queries. The database is written to for persistence only (scan cache, settings, downloads).
+On startup, the main process reads SQLite and the filesystem, then builds in-memory structures (package index, dependency graph, content list, prefs map). On changes (FS watcher events, user actions, download completions), the main process writes to SQLite, rebuilds affected in-memory structures, and pushes invalidation events to the renderer, which re-fetches via IPC and re-renders.
 
-On changes (FS watcher events, user actions, download completions), the main process updates the database, rebuilds affected in-memory structures, and pushes invalidation events (`packages:updated`, `contents:updated`) to the renderer. The renderer re-fetches from the IPC bridge and re-renders.
+**Read paths — in-memory vs SQLite:**
+
+| Handler domain                  | Source of truth at read time                         |
+| ------------------------------- | ---------------------------------------------------- |
+| `packages:*` list/detail/stats  | in-memory (via `buildFromDb()`)                      |
+| `contents:*` list/counts        | in-memory                                            |
+| `settings:get` / `settings:set` | SQLite                                               |
+| `downloads:list`                | SQLite (persisted queue rows)                        |
+| `thumbnails:get`                | SQLite (paths + prefs helpers)                       |
+| `hub:*`                         | Hub API + `hub_resources` / `hub_users` cache tables |
+
+<!-- maintainer: this split is referenced by §8 and §16; update here when changing which paths are in-memory vs SQLite. -->
 
 ### IPC Contract
 
-- **Request-response**: `ipcMain.handle` / `ipcRenderer.invoke` — the renderer calls named channels and awaits results.
-- **Events**: `webContents.send` / `ipcRenderer.on` — the main process pushes notifications (download progress, invalidation signals, scan progress).
+Communication between the two processes uses two patterns (arrows are elided from the diagram above):
 
-All IPC channels are wrapped by the preload script into a typed `window.api` object.
+- **Request-response**: renderer calls `ipcRenderer.invoke` (exposed as `window.api.*` by the preload script) and awaits a result from `ipcMain.handle` in main.
+- **Events**: main pushes notifications via `webContents.send`, the renderer subscribes with `ipcRenderer.on`. Used for download progress, invalidation signals, and scan progress.
 
 ---
 
@@ -112,7 +126,7 @@ App.jsx
 │   ├── HubView
 │   │   ├── FilterPanel (resizable left)
 │   │   ├── Toolbar (count + card size toggle)
-│   │   ├── HubCard gallery (infinite scroll, 250px cards, minimal/medium modes)
+│   │   ├── HubCard gallery (infinite scroll, default 220px cards, minimal/medium modes)
 │   │   └── HubDetail (replaces gallery on card click)
 │   │       ├── BackBar (breadcrumb)
 │   │       ├── PackageInfoPanel (320px left, scrollable)
@@ -149,9 +163,11 @@ App.jsx
 │       ├── Content Visibility (auto-hide toggle)
 │       ├── Privacy (thumbnail blur toggle)
 │       └── Developer (Hub debug logging, nuke database)
-├── FirstRunWizard (modal overlay, 480px card)
+├── FirstRun (modal overlay, 480px card)
+│   ├── BetaWarningStep
 │   ├── WelcomeStep (directory picker, file count)
-│   ├── ScanningStep (progress bar, 6 animated phases)
+│   ├── ScanningStep (weighted progress: local scan + Hub enrichment)
+│   ├── UnhandledVarFilesStep (if any .var files skipped as unreadable)
 │   ├── SetupStep (hide deps choice)
 │   └── DoneStep (stats, open button)
 ├── StatusBar (28px bottom)
@@ -202,40 +218,31 @@ Colors are defined as CSS custom properties in `main.css` via `@theme` and consu
 
 An `Other` category covers non-core package types with a neutral gray.
 
-### Typography
-
-- Font: Geist Variable (system sans-serif fallback)
-- No user-select by default (app chrome feel)
-
 ### Custom CSS Utilities
 
-| Class              | Description                                            |
-| ------------------ | ------------------------------------------------------ |
-| `.gradient-text`   | Blue-to-pink text gradient via `background-clip: text` |
-| `.gradient-border` | Blue-to-pink border using mask-composite trick         |
-| `.btn-gradient`    | Gradient button (blue-to-purple) with lift on hover    |
-| `.card-glow`       | Blue-tinted box-shadow on hover                        |
-| `.skeleton`        | Shimmer loading animation                              |
-| `.progress-bar`    | Animated gradient background for download bars         |
-| `.spin-slow`       | Slow CSS rotation                                      |
+- `.gradient-text` — blue-to-pink text gradient via `background-clip: text`
+- `.gradient-border` — blue-to-pink border using mask-composite trick
+- `.btn-gradient` — gradient button (blue-to-purple) with lift on hover
+- `.card-glow` — blue-tinted box-shadow on hover
+- `.skeleton` — shimmer loading animation
+- `.progress-bar` — animated gradient background for download bars
+- `.spin-slow` — slow CSS rotation
 
 ### Procedural Gradients
 
 Three deterministic gradient functions generate unique visual identities from string inputs:
 
-- **`getGradient(id)`**: For packages — produces a 3-layer gradient (2 radial + 1 linear) from a numeric hash of the package ID. Each layer has a random hue, saturation, and position.
+- **`getGradient(id)`**: For packages — produces a 3-layer gradient (2 radial + 1 linear) from a deterministic string hash of `id` (e.g. filename). Each layer varies hue, saturation, and position from that hash.
 - **`getContentGradient(name, type)`**: For content items — same 3-layer approach but biased toward the content type's hue, with the item name adding variation.
 - **`getAuthorColor(author)`**: For author avatars — a single HSL color derived from the author name hash.
 
 All gradients are computed client-side with no server dependency and serve as the immediate visual fallback while real thumbnails load asynchronously.
 
-### Scrollbar Styling
+### Other Visual Details
 
-Custom 6px scrollbar: transparent track, `border-bright` thumb, `text-tertiary` on hover, 3px border-radius.
-
-### Privacy Mode
-
-When enabled, an `html[data-blur-thumbs]` attribute triggers a strong CSS blur filter on all `.thumb` elements.
+- **Typography**: Geist Variable font (system sans-serif fallback); `user-select: none` by default for an app-chrome feel.
+- **Scrollbars**: custom 6px — transparent track, `border-bright` thumb, `text-tertiary` on hover, 3px border-radius.
+- **Privacy mode**: when enabled, `html[data-blur-thumbs]` triggers a strong CSS blur filter on all `.thumb` elements.
 
 ---
 
@@ -245,51 +252,49 @@ Content types are defined in `src/shared/content-types.js` and shared between ma
 
 ### Exact Types → UI Categories
 
-The classifier produces fine-grained "exact types" from file paths inside `.var` ZIP files. These are collapsed into user-facing categories:
+The classifier produces fine-grained "exact types" from file paths inside `.var` ZIP files. These are collapsed into user-facing categories with one of three visibility levels:
 
-| Exact Type       | UI Category | Description                                                  |
-| ---------------- | ----------- | ------------------------------------------------------------ |
-| `scene`          | Scenes      | `Saves/scene/*.json`                                         |
-| `legacyScene`    | Scenes      | `Saves/scene/*.vac`                                          |
-| `subscene`       | SubScenes   | `Custom/SubScenes/*.json`                                    |
-| `look`           | Looks       | `Custom/Atom/Person/Appearance/*.vap`                        |
-| `legacyLook`     | Looks       | `Saves/Person/Appearance/*.json`                             |
-| `skinPreset`     | Looks       | `Custom/Atom/Person/Skin/*.vap`                              |
-| `pose`           | Poses       | `Custom/Atom/Person/Pose/*.vap`                              |
-| `legacyPose`     | Poses       | `Saves/Person/Pose/*.json`                                   |
-| `clothingItem`   | Clothing    | `Custom/Clothing/*` (.vab/.vaj/.vam)                         |
-| `clothingPreset` | Clothing    | `Custom/Atom/Person/Clothing/*.vap`                          |
-| `hairItem`       | Hairstyles  | `Custom/Hair/*` (.vab/.vaj/.vam)                             |
-| `hairPreset`     | Hairstyles  | `Custom/Atom/Person/Hair/*.vap`                              |
-| `atomPreset`     | _(hidden)_  | Other `Custom/<Category>/*.vap`                              |
-| `pluginScript`   | _(hidden)_  | `Custom/Scripts/*.cs`                                        |
-| `scriptList`     | _(hidden)_  | `Custom/Scripts/*.cslist`                                    |
-| `pluginPreset`   | _(hidden)_  | `Custom/Atom/Person/Plugins/*.vap`                           |
-| `morphBinary`    | _(hidden)_  | `Custom/Atom/Person/Morphs/*.vmi`                            |
-| `assetbundle`    | _(hidden)_  | `Custom/(Assets?&#124;Sounds?&#124;Audio)/`, `*.assetbundle` |
-| `audio`          | _(hidden)_  | `Custom/(Sounds?&#124;Audio)/*`                              |
-| `texture`        | _(hidden)_  | `Custom/Atom/Person/Textures/*`                              |
+- **Visible** — shown in the Content gallery
+- **Detail-only** — shown in the package detail panel but not the main Content gallery
+- **Hidden** — detected and counted, never shown
 
-**Visible categories** shown in the Content gallery: `Scenes`, `Looks`, `Poses`, `Clothing`, `Hairstyles`.
-**Detail-only categories**: `SubScenes` (shown in package detail but not the main Content gallery).
-**Hidden types**: Detected and stored for counting purposes, but never shown in the Content view.
+| Exact Type       | UI Category | Visibility  | Path pattern                                             |
+| ---------------- | ----------- | ----------- | -------------------------------------------------------- |
+| `scene`          | Scenes      | Visible     | `Saves/scene/*.json`                                     |
+| `legacyScene`    | Scenes      | Visible     | `Saves/scene/*.vac`                                      |
+| `subscene`       | SubScenes   | Detail-only | `Custom/SubScenes/*.json`                                |
+| `look`           | Looks       | Visible     | `Custom/Atom/Person/Appearance/*.vap`                    |
+| `legacyLook`     | Looks       | Visible     | `Saves/Person/Appearance/*.json`                         |
+| `skinPreset`     | Looks       | Visible     | `Custom/Atom/Person/Skin/*.vap`                          |
+| `pose`           | Poses       | Visible     | `Custom/Atom/Person/Pose/*.vap`                          |
+| `legacyPose`     | Poses       | Visible     | `Saves/Person/Pose/*.json`                               |
+| `clothingItem`   | Clothing    | Visible     | `Custom/Clothing/*` (.vab/.vaj/.vam)                     |
+| `clothingPreset` | Clothing    | Visible     | `Custom/Atom/Person/Clothing/*.vap`                      |
+| `hairItem`       | Hairstyles  | Visible     | `Custom/Hair/*` (.vab/.vaj/.vam)                         |
+| `hairPreset`     | Hairstyles  | Visible     | `Custom/Atom/Person/Hair/*.vap`                          |
+| `atomPreset`     | —           | Hidden      | other `Custom/<Category>/*.vap`                          |
+| `pluginScript`   | —           | Hidden      | `Custom/Scripts/*.cs`                                    |
+| `scriptList`     | —           | Hidden      | `Custom/Scripts/*.cslist`                                |
+| `pluginPreset`   | —           | Hidden      | `Custom/Atom/Person/Plugins/*.vap`                       |
+| `morphBinary`    | —           | Hidden      | `Custom/Atom/Person/Morphs/*.vmi`                        |
+| `assetbundle`    | —           | Hidden      | `Custom/(Assets?\|Sounds?\|Audio)/`, any `*.assetbundle` |
+| `audio`          | —           | Hidden      | `Custom/(Sounds?\|Audio)/*`                              |
+| `texture`        | —           | Hidden      | `Custom/Atom/Person/Textures/*`                          |
 
 ### Custom Tags
 
 Some exact types get a UI tag to distinguish them within their category:
 
-| Exact Type                                | Tag                      |
-| ----------------------------------------- | ------------------------ |
-| `legacyScene`, `legacyLook`, `legacyPose` | "Legacy" (amber)         |
-| `skinPreset`                              | "Skin Preset" (sky blue) |
-| `clothingPreset`, `hairPreset`            | "Preset" (sky blue)      |
+- `legacyScene`, `legacyLook`, `legacyPose` → "Legacy" (amber)
+- `skinPreset` → "Skin Preset" (sky blue)
+- `clothingPreset`, `hairPreset` → "Preset" (sky blue)
 
 ### Content Deduplication
 
-Within a single package, duplicate content items (same stem, same type) are collapsed. The highest-priority file extension wins:
+Within a single package, duplicate content items (same stem, same type) are collapsed. The highest-priority file extension wins — a clothing/hair item is defined across three companion files (`.vam` holds the metadata manifest, `.vaj` the material bindings, `.vab` the binary mesh), and picking the manifest as the canonical entry matches how VaM itself keys the item:
 
 - For clothing/hair: `.vam` > `.vaj` > `.vab`
-- For morphs: `.vmi` preferred over `.vmb`/`.dsf`
+- For morphs: `.vmi` > `.dsf` > `.vmb` (see classifier `prefer` order)
 - Clothing/hair item + preset pairs are merged (item has priority)
 
 Cross-package deduplication also occurs: when multiple versions of the same package exist, content with the same stem and type keeps only the entry from the highest-versioned package. This prevents duplicate content items in the gallery when multiple versions coexist.
@@ -298,7 +303,7 @@ Cross-package deduplication also occurs: when multiple versions of the same pack
 
 ## 7. Database Schema
 
-SQLite with WAL journaling, managed by `better-sqlite3` in the main process. Current schema version: **16**. New databases are created at this version in one step (`createSchema` in `db.js`); incremental migrations from pre-release builds (versions 1–15) are no longer supported—delete `backstage.db` under the app userData directory if you hit that error.
+SQLite with WAL journaling, managed by `better-sqlite3` in the main process. Current schema version: **16**. New databases are created at this version in one step (`createSchema` in `db.js`); incremental migrations from pre-release builds (versions 1–15) are no longer supported—delete `backstage.db` under the app userData directory if you hit that error. The `migrate()` framework remains in place for future version bumps (see "Future migrations" below).
 
 ### `packages` — Package Scan Cache
 
@@ -324,7 +329,7 @@ CREATE TABLE packages (
   hub_tags         TEXT,              -- JSON array of Hub tag strings
   promotional_link TEXT,              -- external link (Patreon, etc.)
   image_url        TEXT,              -- Hub CDN thumbnail URL
-  thumb_checked    INTEGER NOT NULL DEFAULT 0,  -- legacy; retained for schema compat, no longer consulted
+  thumb_checked    INTEGER NOT NULL DEFAULT 0,  -- legacy; see "Legacy Fields" below
   type_override    TEXT,              -- user-set type override (null=auto-detected)
   is_corrupted     INTEGER NOT NULL DEFAULT 0,  -- 1=failed integrity check
   dep_refs         TEXT NOT NULL DEFAULT '[]',  -- JSON array of raw dep ref strings
@@ -355,7 +360,7 @@ CREATE INDEX idx_contents_type ON contents(type);
 
 ### `downloads` — Persistent Download Queue
 
-Survives crash/restart. Live progress (speed, %) is in-memory only. On startup, `status='active'` rows reset to `'queued'`.
+Survives crash/restart. Live progress (speed, %) is in-memory only. On startup, `status='active'` and `status='queued'` rows are marked `'failed'` with `error='Interrupted'` (temp files are cleaned up first); the user can retry them manually.
 
 ```sql
 CREATE TABLE downloads (
@@ -422,16 +427,22 @@ CREATE TABLE settings (
 - `auto_hide_deps` — `'1'` to auto-manage `.hide` files for dependency content
 - `hub_debug_requests` — `'1'` to log all Hub API requests
 - `hub_filters_json` — cached Hub filter metadata (types, tags, sort options)
+- `blur_thumbnails` — `'1'` when thumbnail blur (privacy) is enabled
+- `update_channel` — `'stable'` | `'dev'`; selects updater feed (see §20)
 
-### Schema migrations
+### Legacy Fields
 
-Pre-public incremental migrations (formerly versions 1–16) were **flattened** into a single initial DDL at version **16**. The `schema_version` table still stores one integer row; databases at version 16 skip migration work on open. Versions **1–15** are rejected with an error (delete the DB file). Future schema changes should bump `SCHEMA_VERSION` and add a small incremental step in `migrate()` after the `createSchema` / legacy cutoff logic.
+- `packages.thumb_checked` is still written when a Hub thumbnail is stored but is no longer read; the thumb resolver selects on `image_url IS NULL` instead. The column stays for backward compatibility with the on-disk schema.
+
+### Future migrations
+
+Schema version 16 is the starting point. To evolve the schema, bump `SCHEMA_VERSION` and add an incremental step in `migrate()` after the `createSchema` / legacy-cutoff logic — do not modify `createSchema` itself, or new installs and upgrades will diverge.
 
 ---
 
 ## 8. In-Memory Structures
 
-All business logic (filtering, sorting, dependency resolution, content aggregation) runs against in-memory structures built on startup from the database and filesystem. The database is never queried during normal IPC request handling.
+All library business logic — filtering, sorting, dependency resolution, content aggregation — runs against in-memory structures built on startup from SQLite and the filesystem. These back the `packages:*` and `contents:*` read paths; see §3 for the full read-path split.
 
 ### Core Indexes
 
@@ -474,7 +485,7 @@ All business logic (filtering, sorting, dependency resolution, content aggregati
 
 ### Build Process
 
-`buildFromDb(skipGraph)` is the central rebuild function:
+`buildFromDb({ skipGraph } = {})` is the central rebuild function:
 
 1. Load all packages and contents from SQLite
 2. If `!skipGraph`: build `groupIndex`, resolve all `forwardDeps`, compute `reverseDeps`
@@ -485,7 +496,7 @@ All business logic (filtering, sorting, dependency resolution, content aggregati
 7. Compute orphan sets
 8. Aggregate `stats`, `tagCounts`, `authorCounts`
 
-On incremental changes (single package add/remove), a targeted `refreshPackage(filename)` or full `refreshAll()` is used rather than always rebuilding from scratch.
+`refreshPackage(filename)` and `refreshAll()` are thin wrappers around `buildFromDb()` — they exist as named call sites for incremental changes (FS watcher events, post-download), but today they always trigger a full rebuild. The `skipGraph` fast path is used directly by callers that know the graph is unchanged (e.g. enable/disable toggles, type overrides).
 
 ---
 
@@ -549,7 +560,9 @@ flowchart TD
 | `buildForwardDeps()` | `packageIndex` + `groupIndex` | `forwardDeps` | Resolves each dep ref to a local filename or `missing`               |
 | `buildReverseDeps()` | `forwardDeps`                 | `reverseDeps` | Inverts forward edges — for each resolved dep, records the dependent |
 
-**Performance note**: The entire graph rebuild is O(P × D) where P = packages and D = average deps per package. For a typical library of ~2000 packages this takes <50ms and runs synchronously. No incremental graph patching exists — the full graph is rebuilt from scratch on any structural change.
+These three steps together are exposed as `buildGraphOnly()` — a helper called by the scanner's `graph` phase (§11) and the post-download cascade (§16) when the graph needs to be rebuilt without also recomputing the aggregates in `buildFromDb()`.
+
+**Performance note**: The entire graph rebuild is O(P × D) where P = packages and D = average deps per package. No incremental graph patching exists — the full graph is rebuilt from scratch on any structural change. For concrete timings see §16 "Data Staleness and Consistency."
 
 ### Resolution
 
@@ -576,95 +589,96 @@ flowchart TD
 
 ### Graph Analysis Algorithms
 
-#### Transitive Dependencies — BFS
+All algorithms read from `packageIndex`, `forwardDeps`, and `reverseDeps` (built once per rebuild) and use a shared pseudocode style: `set` for unordered membership, `repeat until stable` for fixed points.
 
-`getTransitiveDeps(filename, forwardDeps)` returns the full set of reachable dependency filenames via iterative BFS (using a stack, not recursion). Cycle-safe via a visited set.
+#### `getTransitiveDeps` — DFS walk
+
+Called on demand (e.g. uninstall preview) to return the full set of reachable dependency filenames. Uses an explicit stack (`pop` from the end of the array): depth-first order, cycle-safe via a visited set. Same reachable set as BFS; only the traversal order differs.
 
 ```
 getTransitiveDeps(A):
-  visited = {}
-  queue = [A]
-  while queue not empty:
-    current = queue.pop()
-    for each dep of forwardDeps[current]:
+  visited = empty set
+  stack = [A]
+  while stack not empty:
+    current = stack.pop()
+    for dep in forwardDeps[current]:
       if dep.resolved and dep.resolved not in visited:
         visited.add(dep.resolved)
-        queue.push(dep.resolved)
-  return visited    // does NOT include A itself
+        stack.push(dep.resolved)
+  return visited            # does NOT include A itself
 ```
 
-#### Dependency Tree for UI — Recursive DFS
+#### `buildDepTree` — recursive DFS for UI
 
-`buildDepTree(filename)` produces a nested tree for the Library detail panel's dependency section. Each node carries resolution status, package metadata, and children. Uses a visited set for cycle protection — a cycle is silently truncated (returns empty children).
+Produces a nested tree for the Library detail panel. Each node carries resolution status, package metadata, and children. A visited set protects against cycles — when a cycle is hit, children are returned empty.
 
-#### Cascade Disable — Fixed-Point Iteration
+#### `computeCascadeDisable` — fixed point
 
-When disabling a package, its transitive dependencies should also be disabled — but only if they have no other enabled dependents outside the disable set. This is computed as a fixed-point:
+When disabling a package, also disable transitive deps that have no other enabled dependents:
 
 ```
 computeCascadeDisable(target):
-  toDisable = {}
+  toDisable = empty set
   repeat until stable:
-    for each dep in transitiveDeps(target):
-      if dep already in toDisable: skip
-      if dep is disabled: skip
-      dependents = reverseDeps[dep]
-      if ALL dependents are either target OR in toDisable:
-        toDisable.add(dep)     // no other enabled package needs this
+    for dep in transitiveDeps(target):
+      if dep in toDisable: skip
+      if dep is already disabled: skip
+      if every d in reverseDeps[dep] is either target or in toDisable:
+        toDisable.add(dep)
   return toDisable
 ```
 
-The fixed-point loop is necessary because adding a dep to `toDisable` may unlock further deps whose only remaining dependent was that dep. Convergence is guaranteed because `toDisable` can only grow and is bounded by the finite transitive dep set.
+The loop is needed because adding a dep may unlock further deps whose only remaining enabled dependent was that dep. Convergence is guaranteed: `toDisable` only grows and is bounded by the transitive dep set.
 
-#### Cascade Enable
+#### `computeCascadeEnable` — single pass
 
-`computeCascadeEnable(filename)` is simpler: return all transitive deps that are currently disabled. When re-enabling a package, all its disabled dependencies are re-enabled unconditionally (they were presumably disabled by a prior cascade-disable).
+Return all transitive deps of the package that are currently disabled. When re-enabling a package, its disabled deps are re-enabled unconditionally (they were presumably disabled by a prior cascade-disable).
 
-#### Removable Dependencies — Fixed-Point
+#### `computeRemovableDeps` — fixed point
 
-When uninstalling a package, `computeRemovableDeps(filename)` identifies which dependencies would become orphans:
+When uninstalling a package, identify which deps would become orphans:
 
 ```
 computeRemovableDeps(target):
   toRemove = {target}
   repeat until stable:
-    for each dep in transitiveDeps(target):
+    for dep in transitiveDeps(target):
       if dep in toRemove or dep.is_direct: skip
-      dependents = reverseDeps[dep]
-      if ALL dependents are in toRemove:
+      if every d in reverseDeps[dep] is in toRemove:
         toRemove.add(dep)
-  toRemove.delete(target)      // target itself is handled separately
-  return toRemove, sum of sizes
+  toRemove.remove(target)   # target handled separately
+  return toRemove, sum(sizes)
 ```
 
-This is pre-computed for every package during `buildFromDb()` and cached in `removableSizeMap` so the Library UI can show "removes X deps, frees Y MB" without recomputation.
+Pre-computed for every package during `buildFromDb()` and cached in `removableSizeMap`, so the Library UI can show "removes X deps, frees Y MB" with no recomputation on hover.
 
-#### Leaf Detection — Initial Classification
+#### `detectLeaves` — initial classification
 
-`detectLeaves(packageIndex, reverseDeps)` identifies packages with zero reverse dependencies — nothing depends on them, so they are "leaves" of the dependency tree. During the initial scan, leaves are classified as `is_direct=1` (user-installed). Everything else starts as `is_direct=0` (dependency).
+Packages with zero reverse dependencies are "leaves" of the graph — nothing depends on them. On initial scan, leaves are classified as `is_direct = 1`; everything else starts as `is_direct = 0`.
 
-This heuristic works because in a typical VaM library, packages the user cares about (scenes, looks) sit at the leaves while shared resources (morphs, textures, plugins) sit deeper in the graph. Users can manually promote/demote packages afterward.
+This heuristic works because in a typical VaM library, packages the user cares about (scenes, looks) sit at the leaves while shared resources (morphs, textures, plugins) sit deeper. Users can promote/demote afterward.
 
-#### Orphan Detection — Cascading Fixed-Point
+#### `computeOrphanCascade` — fixed point
 
-`computeOrphanCascade(packageIndex, forwardDeps, reverseDeps)` identifies dependency packages that no direct package transitively needs:
+Identify dependency packages no direct package transitively needs:
 
 ```
-1. directOrphans = non-direct packages with zero reverse deps
-2. toRemove = copy of directOrphans
-3. repeat until stable:
-     for each non-direct package not in toRemove:
-       if ALL its dependents are in toRemove:
-         toRemove.add(it)
-4. return { orphans: toRemove, directOrphans, totalSize }
+computeOrphanCascade():
+  directOrphans = {p for p in packageIndex if !p.is_direct and reverseDeps[p] is empty}
+  toRemove = copy(directOrphans)
+  repeat until stable:
+    for p in packageIndex where !p.is_direct and p not in toRemove:
+      if every d in reverseDeps[p] is in toRemove:
+        toRemove.add(p)
+  return { orphans: toRemove, directOrphans, totalSize }
 ```
 
-Two sets are maintained:
+Two sets are exposed:
 
-- `directOrphanSet`: Deps with strictly zero reverse deps (nothing references them at all — likely leftover from uninstalled packages)
-- `orphanSet`: Full cascade — includes deps whose entire dependent chain consists of other orphans
+- `directOrphanSet` — deps with strictly zero reverse deps (likely leftover from uninstalled packages)
+- `orphanSet` — full cascade, including deps whose entire dependent chain consists of other orphans
 
-The Library UI shows orphan packages with a distinct filter and offers "Remove all orphans" to clean them up in bulk.
+The Library UI exposes orphans via a filter and a bulk "Remove all orphans" action.
 
 ---
 
@@ -710,14 +724,16 @@ VaM stores hidden/favorite state as empty sidecar files alongside content items:
 
 ### Scan Phases
 
-`runScan(vamDir, onProgress)` runs on startup and on user request:
+`runScan(vamDir, onProgress)` runs on startup and on user request, emitting four phases via `scan:progress` (see `scanner/index.js`):
 
-1. **Indexing**: Walk `AddonPackages/` recursively for `.var` and `.var.disabled` files
-2. **Reading**: For each file, check the scan cache (`file_mtime` + `size_bytes`). If unchanged, skip. Otherwise read the ZIP central directory, extract `meta.json`, index the file list.
-3. **Content classification**: Map internal paths to exact types, deduplicate within packages
-4. **Graph**: Detect removed packages (files in DB but not on disk). Delete their rows.
-5. **Leaves**: For the initial scan or newly added packages, run leaf detection to classify direct vs dependency
-6. **Finalizing**: Load prefs from sidecar files, run `buildFromDb()` to populate all in-memory structures
+| Phase        | What it does                                                                                                                                      | Key operations                                     |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `indexing`   | Walk `AddonPackages/` recursively for `.var` and `.var.disabled` files                                                                            | directory traversal                                |
+| `reading`    | Per-file: skip if `file_mtime` + `size_bytes` match cache; otherwise read the ZIP, extract `meta.json`, classify and dedup content, write DB rows | `scanAndUpsert`                                    |
+| `graph`      | Drop DB rows for files no longer on disk; on initial scan / structural changes, rebuild graph and run leaf detection                              | `buildGraphOnly`, `detectLeaves`, `batchSetDirect` |
+| `finalizing` | Optional prefs extension migration; reload prefs; rebuild in-memory state                                                                         | `readAllPrefs`, `buildFromDb()`                    |
+
+Hub metadata enrichment is driven separately by the first-run wizard via `wizard:enrich-hub`, which emits `hub-scan:progress` events (`lookup` / `cache` / `fetching` / `hub-finalize`). Outside first-run, enrichment is incremental and background-only.
 
 ### `.var` Reader
 
@@ -754,7 +770,7 @@ The download manager (`src/main/downloads/manager.js`) handles concurrent packag
 
 - **Max 5 concurrent transfers** (`MAX_CONCURRENT`)
 - **Priority scheduling**: Direct installs go first, dependencies second (by `created_at` within each tier)
-- **Persistent queue**: Download entries are stored in SQLite with durable state. On startup, `status='active'` rows reset to `'queued'`.
+- **Persistent queue**: Download entries are stored in SQLite with durable state (startup recovery is described in §7's `downloads` table). `resetActiveDownloads()` resets rows back to `'queued'` and is only used by `resumeAll()` after a pause — distinct from the startup fail-forward behavior.
 - **Live state in memory**: Progress percentage, speed, bytes loaded, and transfer handles live in-memory only. Pushed to the renderer every 250ms via `download:progress` IPC events.
 
 ### Download Lifecycle
@@ -762,13 +778,7 @@ The download manager (`src/main/downloads/manager.js`) handles concurrent packag
 1. **Enqueue**: `enqueueInstall(resourceId, hubDetailData, autoQueueDeps)` creates a download entry. If `autoQueueDeps`, all missing transitive dependencies are also queued.
 2. **Process queue**: `processQueue()` picks the next queued item (direct priority first) and starts up to `MAX_CONCURRENT` transfers.
 3. **Transfer**: Downloads to a `.var.tmp` file with resume support (HTTP Range headers). Validates the ZIP after completion (size check + integrity verification on mismatch).
-4. **Integration**: `postDownloadIntegrate()` runs after successful download:
-   - Scan and classify the new package
-   - Store Hub metadata (resource ID, user ID, display name, tags)
-   - If dependency and auto-hide enabled: create `.hide` sidecars for managed content
-   - Rebuild dependency graph, cascade-enable disabled deps
-   - If `autoQueueDeps`: find and queue remaining transitive missing deps (recursive)
-   - Emit `packages:updated`, `contents:updated`, `thumbnails:updated`
+4. **Integration**: `postDownloadIntegrate()` runs on success — scans/classifies the package, stores Hub metadata, optionally hides dep content, rebuilds the graph, cascade-enables disabled deps, queues newly discovered transitive deps, and fires invalidation events. See §16 "Download → Library Cascade" for the full step-by-step.
 
 ### Resume Support
 
@@ -840,7 +850,7 @@ Events are debounced for 500ms and processed as a batch:
 
 When the app itself writes files (sidecars, downloads), it suppresses the resulting FS events to avoid circular processing:
 
-- `suppressPath(path)`: Ignores events for 5 seconds
+- `suppressPath(path)`: Ignores events for 5 seconds — long enough to outlast chokidar's 2s `awaitWriteFinish` window plus OS-level FS event latency
 - `suppressPrefsStem(stem)` / `unsuppressPrefsStem(stem)`: Suppresses an entire package's prefs during bulk operations
 
 ---
@@ -850,7 +860,7 @@ When the app itself writes files (sidecars, downloads), it suppresses the result
 ### Thumbnail Sources
 
 1. **Content thumbnails**: Sibling `.jpg` files inside the `.var` ZIP (discovered during scan, stored as `thumbnail_path` on the content row). Extracted on demand.
-2. **Package thumbnails**: Hub CDN images via `image_url` on the package row. Resolved by `thumb-resolver.js` which batch-queries `findPackages()` for unchecked packages.
+2. **Package thumbnails**: Hub CDN images via `image_url` on the package row. Resolved by `thumb-resolver.js`: packages with `image_url IS NULL` get `hub_resource_id` backfilled from the **`packages.json` CDN index** when missing, then icons are fetched from the **resource-icons CDN** (`1424104733.rsc.cdn77.org`, see `thumb-resolver.js`) — not via the Hub `findPackages()` API.
 3. **Fallback**: Procedural gradient rendered immediately — real image overlaid when loaded.
 
 ### Thumbnail Pipeline
@@ -934,69 +944,27 @@ The events split into two categories:
 - **Invalidation events** (`packages:updated`, `contents:updated`, `downloads:updated`): Carry no payload. Signal "something changed" so the renderer re-fetches full datasets via `ipcMain.handle`. This avoids data consistency issues where event payloads might be stale relative to the main-process state at the time the renderer processes them.
 - **Streaming events** (`download:progress`, `scan:progress`): Carry data payloads directly. Used for high-frequency updates where a full re-fetch would be too expensive. The renderer writes these directly into Zustand state with no IPC round-trip.
 
-### Detailed Event Reactions by View
+### Event Reactions by View
 
-#### LibraryView
+Each event triggers a specific set of re-fetches per subscriber. HubStore does not subscribe to global events — it relies on cross-store sync (below).
 
-On mount, subscribes to two IPC events:
+| Event               | LibraryView                                                                                                                                             | ContentView                                            | StatusBar                                                                                | DownloadStore                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------- | ------------------------------- |
+| `packages:updated`  | `fetchPackages`, `fetchBackendCounts`, `checkForUpdates`, `refreshDetail`, tag/author counts; missing-dep fetch or invalidate depending on filter state | `fetchContents`, `refreshSelection`, tag/author counts | `fetchStats`                                                                             | —                               |
+| `contents:updated`  | `refreshDetail`                                                                                                                                         | `fetchContents`, `refreshSelection`                    | `fetchStats`                                                                             | —                               |
+| `downloads:updated` | —                                                                                                                                                       | —                                                      | —                                                                                        | `fetchItems` (rebuilds indexes) |
+| `download:progress` | —                                                                                                                                                       | —                                                      | —                                                                                        | updates `liveProgress` in place |
+| `download:failed`   | —                                                                                                                                                       | —                                                      | —                                                                                        | toast notification              |
+| `scan:progress`     | —                                                                                                                                                       | —                                                      | updates `scan` state; shows bar after 1s delay; on finalize, clears and re-fetches stats | —                               |
 
-**`packages:updated`** triggers:
+Notes on LibraryView's `packages:updated` handling:
 
-1. `fetchPackages()` — re-fetch full package list (unfiltered, filtering done client-side)
-2. `fetchBackendCounts()` — re-fetch status counts (direct/dependency/broken/orphan)
-3. `checkForUpdates()` — re-run CDN update check
-4. `refreshDetail()` — if a package is selected, re-fetch its detail (deps/contents may have changed)
-5. If "missing" filter is active: `fetchMissingDeps()` — re-aggregate missing dep data
-6. If "missing" filter is NOT active: invalidate the cached `missingDeps` (set to null) so it's re-fetched lazily next time the filter activates
-7. Re-fetch `tagCounts` and `authorCounts` for filter sidebar badges
+- Missing-dep data is re-fetched eagerly when the "missing" filter is active, or invalidated (set to `null`) otherwise so the next filter activation triggers a lazy fetch.
+- `checkForUpdates()` re-runs the CDN update check against the rebuilt package list.
 
-**`contents:updated`** triggers:
+Notes on DownloadStore:
 
-1. `refreshDetail()` — the selected package's content section may have changed (visibility toggled, etc.)
-
-#### ContentView
-
-**`contents:updated`** triggers:
-
-1. `fetchContents()` — re-fetch full content list
-2. `refreshSelection()` — if an item is selected, re-fetch it (hidden/favorite state may have changed)
-
-**`packages:updated`** triggers:
-
-1. `fetchContents()` — content list includes package metadata (creator, title, direct/dep status) which may have changed
-2. `refreshSelection()` — same reason
-3. Re-fetch `tagCounts` and `authorCounts` for filter sidebar
-
-#### StatusBar
-
-**`packages:updated`** and **`contents:updated`** both trigger:
-
-1. `fetchStats()` — re-fetch aggregate stats (package counts, content counts, sizes)
-
-**`scan:progress`** is streamed continuously during scans:
-
-1. Updates `scan` state with `{phase, step, total, message}`
-2. Shows scan progress bar after 1 second delay (avoids flicker for fast scans)
-3. When `phase=finalizing` and `step=total`: clears scan state, re-fetches stats
-
-#### DownloadStore
-
-**`downloads:updated`** triggers:
-
-1. `fetchItems()` — re-fetch all download rows from DB, rebuild lookup indexes
-
-**`download:progress`** is received every 250ms per active transfer:
-
-1. Updates `liveProgress` map in-place: `{[id]: {progress, speed, bytesLoaded, fileSize}}`
-2. No IPC round-trip — this is a pure in-memory state update from the event payload
-
-**`download:failed`** triggers:
-
-1. Toast notification with package name and error message
-
-#### HubStore
-
-The Hub store does NOT subscribe to global IPC events. Instead, it relies on cross-store synchronization (see below).
+- `download:progress` is a pure in-memory update driven by the event payload — no IPC round-trip.
 
 ### Cross-Store Synchronization
 
@@ -1071,14 +1039,6 @@ Each step in the chain:
 | `notify`                          | Pushes invalidation events to renderer, triggering re-fetches                      |
 | `resolvePackageThumbnails`        | Background async fetch of Hub thumbnails for new packages                          |
 
-This means a single download completion can trigger:
-
-- Re-enabling of previously disabled packages
-- Queueing of newly discovered transitive dependencies
-- Auto-hiding of dependency content
-- Full in-memory state rebuild
-- Multiple renderer refreshes
-
 #### Optimistic UI for Downloads
 
 The download store uses `pendingInstalls` (a `Set<hubResourceId>`) for optimistic UI. When the user clicks "Install":
@@ -1134,47 +1094,32 @@ User clicks "Disable" on package A
   ├─ rename C.var → C.var.disabled        (cascade)
   ├─ DB: setPackageEnabled for A, B, C
   ├─ In-mem: patchEnabled([A, B, C], false)  ── fast in-place patch
-  │   (no full rebuild — just flips is_enabled on packageIndex entries
-  │    and isEnabled on their content items)
   ├─ notify('packages:updated')
   └─ Return {ok, isEnabled: false, cascadeCount: 2}
   │
   Renderer: toast "Disabled A and 2 dependencies"
 ```
 
-**Note**: `patchEnabled` is an optimization — it mutates the in-memory `packageIndex` and `contentByPackage` entries directly without a full `buildFromDb()`. This avoids an expensive O(P×D) rebuild for what is conceptually a flag flip. The tradeoff is that derived data (stats, orphan sets) may be slightly stale until the next full rebuild. In practice, the renderer immediately re-fetches, which returns data from the patched in-memory state.
-
-#### Package Type Override
-
-```
-User sets type override to "Scenes" on package A
-  │
-  Main process:
-  ├─ DB: setPackageTypeOverride(A, "Scenes")
-  ├─ In-mem: patchTypeOverride(A, "Scenes")  ── fast in-place patch
-  ├─ notify('packages:updated')
-  └─ Return {ok}
-```
-
-Another example of a fast-path mutation: only the package's `type_override` field is patched in memory, avoiding a full rebuild. The renderer re-fetches and uses the `effectivePackageType()` function which checks `type_override` before `type`.
+**Note**: `patchEnabled` is an optimization — it mutates the in-memory `packageIndex` and `contentByPackage` entries directly without a full `buildFromDb()`. This avoids an expensive O(P×D) rebuild for what is conceptually a flag flip. The tradeoff is that derived data (stats, orphan sets) may be slightly stale until the next full rebuild. In practice, the renderer immediately re-fetches, which returns data from the patched in-memory state. `patchTypeOverride` (for the type-override mutation) uses the same fast-path pattern.
 
 ### Data Staleness and Consistency
 
 The system accepts bounded staleness in exchange for responsiveness:
 
-1. **In-memory store is always authoritative** during the current process lifetime. The DB is only used for persistence across restarts.
-2. **Renderer data may lag by one IPC round-trip** after a mutation. Between `notify()` and the renderer's `fetchPackages()` completing, the UI shows stale data. In practice this gap is <50ms and imperceptible.
-3. **Fast-path patches** (`patchEnabled`, `patchTypeOverride`) trade full consistency for speed. Derived data (stats, orphan sets) may be stale until the next `buildFromDb()`. Full rebuilds happen on any structural change (package add/remove, graph change).
-4. **Graph is never incrementally patched** — always rebuilt from scratch. This keeps the graph code simple and correct at the cost of O(P×D) per structural change. For typical library sizes (<5000 packages), this is <100ms.
-5. **Concurrent mutations are serialized** by Node.js's single-threaded event loop. Two IPC handlers cannot interleave their reads and writes to the in-memory structures.
+- **Renderer data lags by one IPC round-trip** after a mutation. Between `notify()` and the renderer's `fetchPackages()` completing, the UI shows stale data — typically <50ms and imperceptible.
+- **Fast-path patches** (`patchEnabled`, `patchTypeOverride`) mutate the in-memory index directly. Derived aggregates (stats, orphan sets) may be stale until the next `buildFromDb()`; full rebuilds run on any structural change.
+- **The graph is never incrementally patched** — it's rebuilt from scratch on every structural change. This keeps graph code simple at the cost of O(P × D) per change (<100ms for typical libraries of <5000 packages).
+- **Concurrent mutations are serialized** by Node.js's single-threaded event loop; two IPC handlers cannot interleave reads and writes to in-memory structures.
+
+For the in-memory vs SQLite split, see §3.
 
 ---
 
-## 17. Virtual Scrolling
-
-Both the Library and Content views use **@tanstack/react-virtual** for efficient rendering of large lists.
+## 17. Reusable Components
 
 ### VirtualGrid
+
+Built on **@tanstack/react-virtual**; used by Library and Content galleries (and, as a virtual list with fixed row heights, by their table views).
 
 - Responsive column count based on available width and `itemWidth` prop
 - Row-based virtualization (items grouped into rows)
@@ -1183,15 +1128,7 @@ Both the Library and Content views use **@tanstack/react-virtual** for efficient
 - Reports layout metrics via `onLayout` callback (`{ cols, cellWidth, availableWidth }`)
 - Configurable `gap`, `padding`, `overscan`
 
-### Usage
-
-- **Library gallery**: `VirtualGrid` with `itemWidth` of 250px (adjustable)
-- **Content gallery**: `VirtualGrid` with variable `itemWidth` (adjustable via thumbnail size slider, typically 190px)
-- **Table views**: Virtual list with fixed row heights
-
----
-
-## 18. Reusable Components
+The Library gallery uses a default `itemWidth` of 220px (user-adjustable, persisted); the Content gallery defaults to the same but is driven by a thumbnail-size slider.
 
 ### FilterPanel
 
@@ -1234,68 +1171,178 @@ Expandable/collapsible content type groups with batch hide/favorite toggle actio
 
 ---
 
-## 19. IPC Channel Reference
+## 18. IPC Channel Reference
 
-### Request-Response Channels
+Handlers live under `src/main/ipc/` split per domain (`packages.js`, `contents.js`, `hub.js`, `downloads.js`, `scanner.js`, `settings.js`, `thumbnails.js`, `avatars.js`, `shell.js`, `dev.js`, `app.js`) plus the `updater:*` handlers in `src/main/updater.js`. The preload script (`src/preload/index.js`) exposes them verbatim on `window.api`.
 
-**Packages**:
-`packages:list`, `packages:detail`, `packages:stats`, `packages:status-counts`, `packages:type-counts`, `packages:tag-counts`, `packages:author-counts`, `packages:install`, `packages:install-missing`, `packages:install-all-missing`, `packages:install-deps-batch`, `packages:install-dep`, `packages:missing-deps`, `packages:promote`, `packages:uninstall`, `packages:set-type-override`, `packages:toggle-enabled`, `packages:force-remove`, `packages:remove-orphans`, `packages:check-updates`, `packages:file-list`, `packages:redownload`
+### Naming conventions
 
-**Contents**:
-`contents:list`, `contents:type-counts`, `contents:visibility-counts`, `contents:toggle-hidden`, `contents:toggle-favorite`, `contents:set-hidden-batch`, `contents:set-favorite-batch`
+- `<domain>:<verb>` — request-response (`ipcMain.handle` / `ipcRenderer.invoke`). Read verbs: `list`, `detail`, `stats`, `*-counts`. Mutation verbs: `install`, `uninstall`, `promote`, `toggle-*`, `set-*`, `remove-*`, `force-remove`, `retry`, `cancel`, `clear-*`.
+- `<domain>:updated` — payload-less invalidation events (see §16).
+- `<domain>:progress` — streaming events carrying data directly.
+- `wizard:*` — first-run wizard flow.
+- `startup:*` — one-shot startup handoffs.
 
-**Hub**:
-`hub:filters`, `hub:search`, `hub:detail`, `hub:invalidateCaches`, `hub:check-availability`, `hub:localSnapshot`
+### Request-response channels
 
-**Downloads**:
-`downloads:list`, `downloads:cancel`, `downloads:retry`, `downloads:clear-completed`, `downloads:clear-failed`, `downloads:remove-failed`, `downloads:is-paused`, `downloads:pause-all`, `downloads:resume-all`, `downloads:cancel-all`
+#### Packages (`src/main/ipc/packages.js`)
 
-**Scanner**:
-`scan:start`, `scan:apply-auto-hide`, `integrity:check`, `startup:consume-unreadable`, `wizard:detect-vam-dir`, `wizard:browse-vam-dir`
+| Channel                        | Purpose                                                                      |
+| ------------------------------ | ---------------------------------------------------------------------------- |
+| `packages:list`                | All packages (filtering done client-side)                                    |
+| `packages:detail`              | Single package with deps, dependents, contents                               |
+| `packages:stats`               | Aggregate stats (see §8)                                                     |
+| `packages:status-counts`       | Direct/dependency/broken/orphan counts                                       |
+| `packages:type-counts`         | Counts grouped by package type                                               |
+| `packages:tag-counts`          | Hub tag occurrence counts                                                    |
+| `packages:author-counts`       | Author occurrence counts                                                     |
+| `packages:install`             | Install by Hub resource (with optional dep auto-queue)                       |
+| `packages:install-missing`     | Install a single missing dep of one package                                  |
+| `packages:install-all-missing` | Install every missing ref across the library                                 |
+| `packages:install-deps-batch`  | Install a renderer-supplied list of missing refs                             |
+| `packages:install-dep`         | Install a single dep by Hub file record                                      |
+| `packages:promote`             | Promote dep → direct (single filename or array)                              |
+| `packages:uninstall`           | Single filename or array; demotes instead of deleting when dependents remain |
+| `packages:toggle-enabled`      | Disable/enable on disk (cascade-aware)                                       |
+| `packages:force-remove`        | Delete a package regardless of dependents                                    |
+| `packages:remove-orphans`      | Bulk-remove every package in `orphanSet`                                     |
+| `packages:set-type-override`   | Override the auto-detected type                                              |
+| `packages:missing-deps`        | Aggregated missing-dep data for Library's "missing" filter                   |
+| `packages:enrich-from-hub`     | Backfill Hub metadata for a batch of package stems                           |
+| `packages:file-list`           | Full internal ZIP file list for a `.var`                                     |
+| `packages:check-updates`       | Run the CDN update check                                                     |
+| `packages:redownload`          | Re-fetch a `.var` from the Hub to replace a corrupted copy                   |
 
-**Settings**:
-`settings:get`, `settings:set`, `settings:getDatabasePath`
+`packages:install-missing`, `packages:install-all-missing`, and `packages:install-deps-batch` are three distinct entry points; all three are backed by the Hub client's `findPackages`.
 
-**Thumbnails/Avatars**:
-`thumbnails:get`, `avatars:get`
+#### Contents (`src/main/ipc/contents.js`)
 
-**Shell**:
-`shell:openPath`, `shell:openExternal`
+| Channel                       | Purpose                                                   |
+| ----------------------------- | --------------------------------------------------------- |
+| `contents:list`               | All gallery-visible content items (filtering client-side) |
+| `contents:type-counts`        | Counts grouped by content type                            |
+| `contents:visibility-counts`  | Visible/hidden/favorite counts                            |
+| `contents:toggle-hidden`      | Write/delete `.hide` sidecar                              |
+| `contents:toggle-favorite`    | Write/delete `.fav` sidecar                               |
+| `contents:set-hidden-batch`   | Batch hide/unhide                                         |
+| `contents:set-favorite-batch` | Batch favorite/unfavorite                                 |
 
-### Event Channels (Main → Renderer)
+#### Hub (`src/main/ipc/hub.js`)
 
-| Channel              | Data                                           | Frequency                         |
-| -------------------- | ---------------------------------------------- | --------------------------------- |
-| `packages:updated`   | —                                              | On package changes                |
-| `contents:updated`   | —                                              | On content changes                |
-| `downloads:updated`  | —                                              | On download queue changes         |
-| `download:progress`  | `{id, progress, speed, bytesLoaded, fileSize}` | Every 250ms per active download   |
-| `download:failed`    | `{id, error}`                                  | On download failure               |
-| `scan:progress`      | `{phase, step, total, message}`                | During scan                       |
-| `integrity:progress` | `{checked, total}`                             | During integrity check            |
-| `scan:unreadable`    | `[filenames]`                                  | After scan for corrupted files    |
-| `thumbnails:updated` | —                                              | After background thumb resolution |
-| `avatars:updated`    | —                                              | After avatar cache update         |
+| Channel                  | Purpose                                                                    |
+| ------------------------ | -------------------------------------------------------------------------- |
+| `hub:filters`            | Hub filter metadata (types, tags, sort options)                            |
+| `hub:search`             | Paginated search with filters                                              |
+| `hub:detail`             | Full resource detail including `hubFiles`                                  |
+| `hub:localSnapshot`      | Installed state for a batch of resource IDs (hydrates `useInstalledStore`) |
+| `hub:check-availability` | Hub availability for a batch of dep refs                                   |
+| `hub:scan-packages`      | Trigger the packages.json CDN scan                                         |
+| `hub:invalidateCaches`   | Clear in-memory Hub LRU caches                                             |
+
+#### Downloads (`src/main/ipc/downloads.js`)
+
+| Channel                     | Purpose                                      |
+| --------------------------- | -------------------------------------------- |
+| `downloads:list`            | All download rows from SQLite                |
+| `downloads:cancel`          | Abort a single transfer                      |
+| `downloads:retry`           | Reset a failed download to `queued`          |
+| `downloads:clear-completed` | Delete completed rows                        |
+| `downloads:clear-failed`    | Delete failed rows                           |
+| `downloads:remove-failed`   | Delete a single failed row                   |
+| `downloads:is-paused`       | Current global pause state                   |
+| `downloads:pause-all`       | Stop all active transfers, preserve progress |
+| `downloads:resume-all`      | Re-queue paused/stopped transfers            |
+| `downloads:cancel-all`      | Cancel everything active/queued              |
+| `downloads:network-online`  | Hint that the network is back                |
+
+#### Scanner / Wizard / Startup (`src/main/ipc/scanner.js`)
+
+| Channel                      | Purpose                                                                                                                            |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `scan:start`                 | Run a full rescan                                                                                                                  |
+| `scan:apply-auto-hide`       | Create `.hide` sidecars for all dep content                                                                                        |
+| `integrity:check`            | CRC32 pass over every `.var`                                                                                                       |
+| `wizard:detect-vam-dir`      | Auto-detect VaM directory (see §2)                                                                                                 |
+| `wizard:browse-vam-dir`      | Native folder picker                                                                                                               |
+| `wizard:enrich-hub`          | Trigger Hub metadata enrichment (drives `hub-scan:progress`)                                                                       |
+| `startup:consume-unreadable` | One-shot drain of unreadable-`.var` files collected during the startup scan; further instances arrive via `scan:unreadable` events |
+
+#### Settings / App / Shell
+
+| Channel                    | Purpose                        |
+| -------------------------- | ------------------------------ |
+| `settings:get`             | Read a settings key            |
+| `settings:set`             | Write a settings key           |
+| `settings:getDatabasePath` | Return the userData DB path    |
+| `app:version`              | `app.getVersion()`             |
+| `shell:openExternal`       | Open URL in system browser     |
+| `shell:showItemInFolder`   | Reveal path in OS file manager |
+
+#### Thumbnails / Avatars
+
+| Channel          | Purpose                                |
+| ---------------- | -------------------------------------- |
+| `thumbnails:get` | Resolve a batch of thumbnail keys      |
+| `avatars:get`    | Resolve a batch of Hub avatar user IDs |
+
+#### Updater (`src/main/updater.js`)
+
+| Channel              | Purpose                                              |
+| -------------------- | ---------------------------------------------------- |
+| `updater:check`      | Force an update check                                |
+| `updater:install`    | Quit-and-install a downloaded update                 |
+| `updater:getChannel` | Current update channel (`stable` / `dev`)            |
+| `updater:setChannel` | Switch channel and kick off a background check (§20) |
+
+#### Dev (`src/main/ipc/dev.js`)
+
+Always registered, but destructive handlers (`dev:nuke-database`) are gated behind either `is.dev` or the `developer_options_unlocked` setting (toggled by seven taps on the version string).
+
+| Channel                         | Purpose                                    |
+| ------------------------------- | ------------------------------------------ |
+| `dev:is-dev`                    | Whether the app is running in dev mode     |
+| `dev:browser-assist-dir-exists` | Probe for the browser-assist resources dir |
+| `dev:sync-browser-assist`       | Copy browser-assist resources              |
+| `dev:nuke-database`             | Delete `backstage.db` and restart          |
+
+### Event channels (Main → Renderer)
+
+| Channel                     | Payload                                                            | Frequency                                   |
+| --------------------------- | ------------------------------------------------------------------ | ------------------------------------------- |
+| `packages:updated`          | —                                                                  | On package changes                          |
+| `contents:updated`          | —                                                                  | On content changes                          |
+| `downloads:updated`         | —                                                                  | On download queue changes                   |
+| `thumbnails:updated`        | `{ keys }` (invalidated thumbnail cache keys, e.g. `pkg:filename`) | After background thumb resolution (batched) |
+| `avatars:updated`           | —                                                                  | After avatar cache update                   |
+| `download:progress`         | `{id, progress, speed, bytesLoaded, fileSize}`                     | Every 250ms per active download             |
+| `download:failed`           | `{id, error}`                                                      | On download failure                         |
+| `scan:progress`             | `{phase, step, total, message}`                                    | During local library scan                   |
+| `scan:unreadable`           | `{filename}` per event                                             | Unreadable `.var` detected post-startup     |
+| `hub-scan:progress`         | `{current, total, found, phase, ...}`                              | During first-run / Hub enrichment           |
+| `auto-hide:progress`        | `{current, total, filename?, items, ...}`                          | During batch `.hide` application            |
+| `integrity:progress`        | `{checked, total}`                                                 | During integrity check                      |
+| `updater:update-available`  | `{version, ...}`                                                   | When an update is available                 |
+| `updater:update-downloaded` | `{version, ...}`                                                   | When an update is ready to install          |
 
 ---
 
-## 20. Tech Stack Summary
+## 19. Tech Stack Summary
 
-| Layer          | Technology                 | Version          |
-| -------------- | -------------------------- | ---------------- |
-| Shell          | Electron                   | 39.2.6           |
-| Build          | electron-vite              | 3.1.0            |
-| Renderer       | React                      | 19.2.1           |
-| Bundler        | Vite                       | 7.2.6            |
-| Styling        | Tailwind CSS               | 4.2.2            |
-| Components     | shadcn/ui (radix-nova)     | 4.1.2            |
-| Icons          | lucide-react               | 1.7.0            |
-| State          | Zustand                    | 5.0.12           |
-| Virtual scroll | @tanstack/react-virtual    | 3.13.23          |
-| Database       | better-sqlite3             | 12.8.0           |
-| File watching  | chokidar                   | 5.0.0            |
-| ZIP reading    | yauzl                      | (via var-reader) |
-| Language       | JavaScript (no TypeScript) | —                |
+| Layer          | Technology                 | Version       |
+| -------------- | -------------------------- | ------------- |
+| Shell          | Electron                   | 39.2.6        |
+| Build          | electron-vite              | 5.0.0         |
+| Renderer       | React                      | 19.2.1        |
+| Bundler        | Vite                       | 7.2.6         |
+| Styling        | Tailwind CSS               | 4.2.2         |
+| Components     | shadcn + radix-ui          | 4.1.2 / 1.4.3 |
+| Icons          | lucide-react               | 1.7.0         |
+| State          | Zustand                    | 5.0.12        |
+| Virtual scroll | @tanstack/react-virtual    | 3.13.23       |
+| Database       | better-sqlite3             | 12.8.0        |
+| File watching  | chokidar                   | 5.0.0         |
+| ZIP reading    | yauzl                      | 3.3.0         |
+| Language       | JavaScript (no TypeScript) | —             |
 
 ### Path Aliases
 
@@ -1306,14 +1353,17 @@ Expandable/collapsible content type groups with batch hide/favorite toggle actio
 
 ```
 src/
-├── main/           (32 files — Electron backend)
+├── main/           (~36 files — Electron backend; count drifts with features)
 │   ├── db.js, store.js, index.js
 │   ├── scanner/    (var-reader, classifier, graph, ingest, integrity)
-│   ├── hub/        (client, packages-json)
+│   ├── hub/        (client, packages-json, scanner)
 │   ├── downloads/  (manager)
 │   ├── ipc/        (per-domain handlers)
-│   └── vam-prefs.js, watcher.js, notify.js, thumb-resolver.js, avatar-cache.js
-├── renderer/       (54 files — React frontend)
+│   └── vam-prefs.js, watcher.js, notify.js, thumb-resolver.js, thumbnails.js,
+│       avatar-cache.js, updater.js, browser-assist.js, p-limit.js
+├── preload/
+│   └── index.js    (contextBridge → window.api)
+├── renderer/       (~55 files under src/ — React frontend)
 │   └── src/
 │       ├── App.jsx
 │       ├── views/      (Hub, Library, Content, Settings)
@@ -1322,58 +1372,40 @@ src/
 │       ├── hooks/      (useThumbnail, useAvatar, useHubInstallState, etc.)
 │       ├── lib/        (utils, licenses)
 │       └── assets/     (main.css)
-└── shared/         (5 files — shared between main and renderer)
-    ├── content-types.js, licenses.js, paths.js
-    └── preload/index.js
+└── shared/ (shared modules between main and renderer; includes tests)
+    ├── content-types.js, hub-http.js, licenses.js, paths.js, search-text.js
+    └── licenses.test.js
 ```
 
 ---
 
-## 21. Release Channels
+## 20. Release Channels
 
-Two channels are published from this repository via separate GitHub Actions workflows. The in-app setting `update_channel` (`stable` | `dev`) chooses how [`src/main/updater.js`](../src/main/updater.js) configures `electron-updater`.
+Two GitHub Actions workflows publish to separate channels. The in-app setting `update_channel` (`stable` | `dev`, default `stable`) picks which feed `electron-updater` uses via [`src/main/updater.js`](../src/main/updater.js).
 
-### Stable channel
+| Aspect       | Stable                                                           | Dev (`dev-latest`)                                                                                       |
+| ------------ | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Workflow     | [`release.yml`](../.github/workflows/release.yml)                | [`dev-release.yml`](../.github/workflows/dev-release.yml)                                                |
+| Trigger      | Push of a `v*` tag (tag must match `package.json` version)       | Every push to `master` (plus `workflow_dispatch`)                                                        |
+| Build matrix | Linux + Windows + macOS                                          | Windows only (other rows commented out; re-enable to ship for more OSes)                                 |
+| Release      | Normal GitHub release per tag; `v*-*` tags are marked prerelease | Single rolling `dev-latest` release, deleted and recreated each run so only one build is ever stored     |
+| Versioning   | `X.Y.Z` from `package.json`                                      | CI rewrites `package.json` to `X.Y.(Z+1)-dev.<run_number>` before building (on-disk only, not committed) |
+| Feed         | `provider: github` via the embedded `app-update.yml`             | `provider: generic` pointed at `.../releases/download/dev-latest/`                                       |
 
-- Workflow: [`.github/workflows/release.yml`](../.github/workflows/release.yml)
-- Trigger: push of a tag matching `v*` (e.g. `v0.2.0`). `workflow_dispatch` is also available for re-runs.
-- Validates that the tag matches `package.json` version, builds the full matrix (Linux / Windows / macOS), and creates a GitHub release with `latest.yml` + installers.
-- Pre-release tags (anything containing `-`, e.g. `v0.2.0-rc.1`) are marked as pre-release on GitHub but are otherwise published the same way. Stable-channel clients ignore pre-releases.
-- **Updater:** `provider: github`, configured by the `app-update.yml` that `electron-builder` generates from the `publish` block in [`electron-builder.yml`](../electron-builder.yml) and embeds under `resources/`. Uses GitHub’s normal “latest non-prerelease release” behavior (`/releases/latest`), not `/releases/latest/download/...` for artifacts.
+### Dev patch bump
 
-### Dev channel (rolling `dev-latest`)
+Semver rule 11 says `0.1.6 > 0.1.6-dev.42`, so without the bump a stable user on `0.1.6` would see a dev build as a downgrade. Using `X.Y.(Z+1)-dev.N` keeps dev strictly ahead of the current stable baseline but behind the eventual `X.Y.(Z+1)` stable, which cleanly promotes dev users onto that stable when it ships. `N` is `github.run_number`, a per-workflow counter — **do not rename the workflow** (the counter resets); if a rename is unavoidable, bump the base version first.
 
-- Workflow: [`.github/workflows/dev-release.yml`](../.github/workflows/dev-release.yml)
-- Trigger: every push to `master`, plus `workflow_dispatch` for manual re-runs.
-- `concurrency: dev-release` with `cancel-in-progress: true` collapses rapid-fire pushes to the latest commit — older in-flight runs are cancelled so they can't overwrite a newer rolling release.
-- Before building, CI rewrites `package.json` version from `X.Y.Z` to `X.Y.(Z+1)-dev.<github.run_number>` on disk (not committed). The patch bump ensures dev builds are strictly ahead of the current stable baseline per semver.
-- Publishing is ephemeral: the previous `dev-latest` GitHub release and its tag are deleted and recreated each run, so exactly one dev build is stored at any time and old assets don't pile up.
-- **Do not rename this workflow.** `github.run_number` is a per-workflow counter and resets on rename. If a rename is unavoidable, bump the base `package.json` `version` first so the new counter starts strictly above anything previously published.
-- **Updater:** `provider: generic` with base URL  
-  `https://github.com/<owner>/<repo>/releases/download/dev-latest`  
-  The generic provider fetches `latest.yml` from that URL (and resolves installer URLs relative to it). It does **not** walk `releases.atom` or interpret Git tag names — that avoids `GitHubProvider` feed-order and prerelease-selection quirks for a single rolling tag.
-- `owner` / `repo` are **not** duplicated in code: [`src/main/updater.js`](../src/main/updater.js) reads them from the same parsed `app-update.yml` that `electron-updater` already loaded (`autoUpdater.configOnDisk.value`), so [`electron-builder.yml`](../electron-builder.yml)'s `publish` block stays the single source of truth.
-- **Do not** point nightly/dev at `/repos/.../releases/latest/...`: that endpoint is defined as the latest **non-prerelease** release only.
+### Dev uses `provider: generic`
 
-### Version ordering
+`GitHubProvider` walks `releases.atom` in tag-lexicographic order and has prerelease-selection quirks that make a single rolling tag unreliable. The generic provider just fetches `latest.yml` (plus platform variants and `.blockmap` files for differential updates) from a fixed URL. `owner`/`repo` are not duplicated in code — `updater.js` reads them from `autoUpdater.configOnDisk.value`, i.e. the same `app-update.yml` that `electron-builder` generates from [`electron-builder.yml`](../electron-builder.yml)'s `publish` block, keeping that block the single source of truth.
 
-- Dev build version format: `X.Y.(Z+1)-dev.N`, e.g. base `0.1.6` → dev `0.1.7-dev.42`. The numeric `N` (`github.run_number`) is compared numerically by semver (`dev.10 > dev.9`).
-- **Why the patch bump:** by semver rule-11, a normal version is greater than any prerelease with the same base (`0.1.6 > 0.1.6-dev.42`). Without the bump, a stable user on `0.1.6` would see `0.1.6-dev.42` as a downgrade and never pick it up. Using `X.Y.(Z+1)-dev.N` makes dev always ahead of stable `X.Y.Z` while staying behind the eventual stable `X.Y.(Z+1)` — so releasing `v0.1.7` stable later promotes dev users to the stable build cleanly.
-- No git SHA is baked into the version — the exact commit is recorded on the `dev-latest` GitHub release and in the Actions run.
+> Do not point dev at `/repos/.../releases/latest/...` — that endpoint only returns the latest non-prerelease release and will skip `dev-latest`.
 
-### Update manifest handling
+### Channel switching at runtime
 
-- `electron-builder`'s GitHub publisher writes `latest.yml` (and platform variants like `latest-mac.yml` when those targets are built) under `dist/`. The dev workflow uploads `dist/latest*.yml` plus installers and `.blockmap` files to the `dev-latest` release. Differential updates use the local cached blockmap and the new `.blockmap` on the release like any other channel.
-
-### In-app channel switch
-
-- Setting: `update_channel` in the SQLite `settings` table, values `stable` | `dev`, default `stable`.
-- UI: Settings → Developer → Update channel (the Developer section is hidden in release builds until unlocked with seven taps on the version string). Changing the combo box saves the preference immediately; an update check is started in the background (success or failure does not block the control).
-- On init, [`src/main/updater.js`](../src/main/updater.js) reads the setting and calls `setFeedURL`: for stable it re-applies the parsed `app-update.yml` (`autoUpdater.configOnDisk.value`) as-is; for dev it builds a `{ provider: 'generic', url: ... }` feed from the same `owner`/`repo`. Then it sets `autoUpdater.channel` to `'latest'` (so the manifest is always `latest.yml`) and forces `allowDowngrade` to `false` after that (the `channel` setter would otherwise set `allowDowngrade` to `true`).
-- IPC `updater:setChannel` persists the new value, reapplies the feed URL, returns `{ ok: true }` right away, and triggers `checkForUpdates()` without awaiting it — no app restart needed.
+`updater:setChannel` persists the new value, calls `applyChannel()` to reconfigure `setFeedURL` (stable re-applies `configOnDisk`; dev builds a generic feed for `<owner>/<repo>/releases/download/dev-latest`), then kicks off a background `checkForUpdates()` without awaiting it — the IPC returns `{ ok: true }` immediately and no app restart is needed. `applyChannel` also pins `autoUpdater.channel = 'latest'` (so the manifest is always `latest.yml`), sets `allowPrerelease = false`, and forces `allowDowngrade = false` _after_ the channel setter (which otherwise flips it on).
 
 ### No downgrade
 
-- Forward-only DB migrations (schema version is bumped but never walked back) make running an older binary against a newer database unsafe.
-- Switching channel Dev → Stable will therefore **not** downgrade the user. `electron-updater` naturally refuses older versions; we keep `allowDowngrade` false. If a user is ahead of stable (e.g. on `0.2.0-dev.5` while latest stable is `0.1.4`), the Stable channel quietly waits until stable catches up.
-- The Settings UI surfaces this behavior explicitly in the channel description copy.
+Schema migrations are forward-only, so running an older binary against a newer DB is unsafe. `allowDowngrade` stays false on both channels, and `electron-updater` naturally refuses older versions. Switching Dev → Stable therefore never rolls the user back: a user on `0.2.0-dev.5` with latest stable `0.1.4` simply waits on the Stable channel until stable catches up. The Settings UI surfaces this in the channel description copy.

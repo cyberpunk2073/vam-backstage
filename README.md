@@ -40,3 +40,5 @@ npm run build:win
 npm run build:mac
 npm run build:linux
 ```
+
+For a detailed project overview, architecture, and implementation notes, see [docs/Implementation.md](docs/Implementation.md).
