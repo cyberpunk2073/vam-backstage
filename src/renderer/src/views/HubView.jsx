@@ -48,6 +48,9 @@ import { LicenseTag } from '../components/LicenseTag'
 import { Tag } from '../components/ui/tag'
 import { ThumbnailSizeSlider } from '../components/ThumbnailSizeSlider'
 
+/** Hub text search: avoid a network request on every keystroke */
+const HUB_SEARCH_DEBOUNCE_MS = 320
+
 export default function HubView({ onNavigate }) {
   const {
     resources,
@@ -81,6 +84,36 @@ export default function HubView({ onNavigate }) {
     openDetail,
     closeDetail,
   } = useHubStore()
+
+  const [searchDraft, setSearchDraft] = useState(search)
+  const searchDebounceRef = useRef(null)
+  useEffect(() => {
+    setSearchDraft(search)
+  }, [search])
+  useEffect(
+    () => () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
+    },
+    [],
+  )
+  const handleSearchChange = useCallback(
+    (value) => {
+      setSearchDraft(value)
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current)
+        searchDebounceRef.current = null
+      }
+      if (value === '') {
+        setSearch('')
+        return
+      }
+      searchDebounceRef.current = setTimeout(() => {
+        searchDebounceRef.current = null
+        setSearch(value)
+      }, HUB_SEARCH_DEBOUNCE_MS)
+    },
+    [setSearch],
+  )
 
   const sortOptions = useMemo(() => filterOptions?.sort || [], [filterOptions])
   const hubTypes = (filterOptions?.type || CONTENT_TYPES).toSorted(compareContentTypes)
@@ -312,7 +345,7 @@ export default function HubView({ onNavigate }) {
 
   return (
     <div className="h-full flex min-w-0 relative">
-      <FilterPanel search={search} onSearchChange={setSearch} sections={sections} />
+      <FilterPanel search={searchDraft} onSearchChange={handleSearchChange} sections={sections} />
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {/* Toolbar */}

@@ -4,6 +4,7 @@ out
 .DS_Store
 .eslintcache
 *.log*
+.cursor/plans
 
 /build/icon.ico
 /build/installerIcon.ico
