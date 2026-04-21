@@ -134,9 +134,11 @@ export function HubCard({
           className="absolute inset-y-0 left-0 progress-bar rounded transition-[width] duration-200"
           style={{ width: `${Math.max(p, 3)}%` }}
         />
-        <span className="relative z-10 flex items-center justify-center text-[10px] text-white font-medium tracking-wide whitespace-nowrap">
-          <span className="@max-[179px]:hidden">Downloading </span>
-          {dlInfo.completed}/{dlInfo.total} · {p}%
+        <span className="relative z-10 flex items-center justify-center gap-1 text-[10px] text-white font-medium tracking-wide whitespace-nowrap">
+          <span className="@max-[179px]:hidden">Downloading</span>
+          <span>
+            {dlInfo.completed}/{dlInfo.total} · {p}%
+          </span>
         </span>
       </div>
     )
