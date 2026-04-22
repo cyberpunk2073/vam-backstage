@@ -6,7 +6,10 @@ import DownloadsPanel from './components/DownloadsPanel'
 import FirstRun from './components/FirstRun'
 import ErrorBoundary from './components/ErrorBoundary'
 import { ToastContainer, toast } from './components/Toast'
+import { WhatsNewDialog } from './components/WhatsNewDialog'
 import { ThumbnailLightbox } from './components/ThumbnailLightbox'
+import { CHANGELOG } from './lib/changelog'
+import { compareVersions, parseVersionCore, selectUnseen } from './lib/semver'
 import HubView from './views/HubView'
 import LibraryView from './views/LibraryView'
 import ContentView from './views/ContentView'
@@ -28,6 +31,7 @@ export default function App() {
   const [view, setView] = useState('library')
   const [dlPanelOpen, setDlPanelOpen] = useState(false)
   const [showWizard, setShowWizard] = useState(null) // null=checking, true/false
+  const [whatsNew, setWhatsNew] = useState(null) // { entries, current } | null
   const dlItems = useDownloadStore((s) => s.items)
   const dlPaused = useDownloadStore((s) => s.paused)
   const dlBadge = dlItems.filter((d) => d.status === 'active' || d.status === 'queued').length
@@ -61,7 +65,39 @@ export default function App() {
     })
   }, [])
 
+  useEffect(() => {
+    if (showWizard === null) return
+    const run = async () => {
+      const current = await window.api.app.getVersion()
+      const lastSeen = await window.api.settings.get('whats_new_last_seen_version')
+      if (!lastSeen) {
+        await window.api.settings.set('whats_new_last_seen_version', current)
+        return
+      }
+      if (!parseVersionCore(lastSeen) || !parseVersionCore(current)) {
+        await window.api.settings.set('whats_new_last_seen_version', current)
+        return
+      }
+      const cmp = compareVersions(current, lastSeen)
+      if (Number.isNaN(cmp) || cmp <= 0) return
+      const entries = selectUnseen(CHANGELOG, lastSeen, current)
+      if (entries.length === 0) {
+        await window.api.settings.set('whats_new_last_seen_version', current)
+        return
+      }
+      setWhatsNew({ entries, current })
+    }
+    void run()
+  }, [showWizard])
+
   const navContextRef = useRef(null)
+  const onWhatsNewDismiss = useCallback(async () => {
+    if (!whatsNew) return
+    const v = whatsNew.current
+    setWhatsNew(null)
+    await window.api.settings.set('whats_new_last_seen_version', v)
+  }, [whatsNew])
+
   const navigateTo = useCallback((targetView, context) => {
     if (targetView === 'hub') {
       if (context?.openResource) {
@@ -150,6 +186,12 @@ export default function App() {
           <StatusBar />
         </div>
         <ToastContainer />
+        <WhatsNewDialog
+          open={!!whatsNew}
+          entries={whatsNew?.entries ?? []}
+          version={whatsNew?.current ?? ''}
+          onDismiss={onWhatsNewDismiss}
+        />
         <ThumbnailLightbox />
       </div>
     </TooltipProvider>
