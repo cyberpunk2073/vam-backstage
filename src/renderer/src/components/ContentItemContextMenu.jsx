@@ -15,8 +15,9 @@ import { cn, displayName } from '@/lib/utils'
 import { useContentStore } from '@/stores/useContentStore'
 import { useIsDev } from '@/hooks/useIsDev'
 
-const SCENE_TYPES = new Set(['scene', 'legacyScene'])
-const EXTRACT_KIND_LABEL = { appearance: 'appearance', outfit: 'outfit' }
+const SCENE_SOURCE_TYPES = new Set(['scene', 'legacyScene'])
+const LOOK_SOURCE_TYPES = new Set(['legacyLook'])
+const KIND_NOUN = { appearance: 'appearance', outfit: 'outfit' }
 
 function applyBulkVisibilityFromStore() {
   const { contents, bulkSelectedIds } = useContentStore.getState()
@@ -58,12 +59,12 @@ function toastExtractResult(label, result) {
   }
 }
 
-async function runExtractAndToast(kindLabel, payload) {
+async function runExtractAndToast(actionLabel, payload) {
   try {
     const r = await window.api.extract.run(payload)
-    toastExtractResult(`Extract ${kindLabel} preset${(r?.written?.length ?? 0) === 1 ? '' : 's'}`, r)
+    toastExtractResult(`${actionLabel} preset${(r?.written?.length ?? 0) === 1 ? '' : 's'}`, r)
   } catch (err) {
-    toast(`Extract failed: ${err.message}`)
+    toast(`${actionLabel} failed: ${err.message}`)
   }
 }
 
@@ -77,11 +78,22 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
   const isDev = useIsDev()
 
   const showBulk = bulkSelectedIds.length > 0 && bulkSelectedIds.includes(item.id)
-  const isScene = SCENE_TYPES.has(item.type)
+  const isScene = SCENE_SOURCE_TYPES.has(item.type)
+  const isLook = LOOK_SOURCE_TYPES.has(item.type)
+  const isExtractable = isScene || isLook
 
   const bulkSceneItems = useMemo(() => {
     if (!showBulk) return []
-    return bulkSelectedIds.map((id) => contents.find((c) => c.id === id)).filter((c) => c && SCENE_TYPES.has(c.type))
+    return bulkSelectedIds
+      .map((id) => contents.find((c) => c.id === id))
+      .filter((c) => c && SCENE_SOURCE_TYPES.has(c.type))
+  }, [showBulk, bulkSelectedIds, contents])
+
+  const bulkLookItems = useMemo(() => {
+    if (!showBulk) return []
+    return bulkSelectedIds
+      .map((id) => contents.find((c) => c.id === id))
+      .filter((c) => c && LOOK_SOURCE_TYPES.has(c.type))
   }, [showBulk, bulkSelectedIds, contents])
 
   const bulkVisibilityEligible = useMemo(
@@ -124,7 +136,7 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
             .then(setPkg)
             .catch((err) => toast(`Failed to load package: ${err.message}`))
         }
-        if (isDev && isScene && !showBulk) {
+        if (isDev && isExtractable && !showBulk) {
           setProbe(null)
           window.api.extract
             .probeScene({ packageFilename: item.packageFilename, internalPath: item.internalPath })
@@ -136,7 +148,7 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
         setProbe(null)
       }
     },
-    [item.id, item.packageFilename, item.internalPath, selectedItem, selectedPackage, isDev, isScene, showBulk],
+    [item.id, item.packageFilename, item.internalPath, selectedItem, selectedPackage, isDev, isExtractable, showBulk],
   )
 
   const hubLabel = pkg
@@ -150,26 +162,30 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
 
   const missingByKind = useMemo(() => {
     if (!probe?.atoms?.length) return null
+    const kinds = isScene ? ['appearance', 'clothing'] : ['appearance']
     const out = {}
-    for (const kind of ['appearance', 'clothing']) {
+    for (const kind of kinds) {
       const missing = probe.atoms.filter((a) => !a.outputs[kind].exists)
       if (missing.length) out[kind] = missing
     }
     return out
-  }, [probe])
+  }, [probe, isScene])
 
   const renderExtractEntries = () => {
-    if (!isDev || !isScene || !probe || !missingByKind) return null
+    if (!isDev || !isExtractable || !probe || !missingByKind) return null
+    // Scenes → "Extract <kind> preset". Legacy looks → "Convert to appearance preset".
+    const verb = isLook ? 'Convert to' : 'Extract'
     const entries = []
     for (const [kindKey, missing] of Object.entries(missingByKind)) {
       const kind = kindKey === 'clothing' ? 'outfit' : 'appearance'
-      const label = EXTRACT_KIND_LABEL[kind]
+      const noun = KIND_NOUN[kind]
+      const actionLabel = `${verb} ${noun}`
       if (missing.length === 1) {
         entries.push(
           <ContextMenuItem
             key={`extract-${kind}`}
             onSelect={() =>
-              void runExtractAndToast(label, {
+              void runExtractAndToast(actionLabel, {
                 packageFilename: item.packageFilename,
                 internalPath: item.internalPath,
                 atomIds: [missing[0].atomId],
@@ -178,7 +194,7 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
             }
           >
             <Download size={12} className="shrink-0 text-accent-blue" />
-            Extract {label} preset
+            {actionLabel} preset
           </ContextMenuItem>,
         )
       } else {
@@ -186,12 +202,12 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
           <ContextMenuSub key={`extract-${kind}`}>
             <ContextMenuSubTrigger>
               <Download size={12} className="shrink-0 text-accent-blue" />
-              Extract {label} preset
+              {actionLabel} preset
             </ContextMenuSubTrigger>
             <ContextMenuSubContent>
               <ContextMenuItem
                 onSelect={() =>
-                  void runExtractAndToast(label, {
+                  void runExtractAndToast(actionLabel, {
                     packageFilename: item.packageFilename,
                     internalPath: item.internalPath,
                     atomIds: missing.map((a) => a.atomId),
@@ -199,14 +215,14 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
                   })
                 }
               >
-                Extract all ({missing.length})
+                {isLook ? 'Convert' : 'Extract'} all ({missing.length})
               </ContextMenuItem>
               <ContextMenuSeparator />
               {missing.map((a) => (
                 <ContextMenuItem
                   key={a.atomId}
                   onSelect={() =>
-                    void runExtractAndToast(label, {
+                    void runExtractAndToast(actionLabel, {
                       packageFilename: item.packageFilename,
                       internalPath: item.internalPath,
                       atomIds: [a.atomId],
@@ -255,37 +271,57 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
               />
               {bulkFavoriteUi.label} ({bulkSelectedIds.length})
             </ContextMenuItem>
-            {isDev && bulkSceneItems.length > 0 && (
+            {isDev && (bulkSceneItems.length > 0 || bulkLookItems.length > 0) && (
               <>
                 <ContextMenuSeparator />
-                <ContextMenuItem
-                  onSelect={() =>
-                    void runExtractAndToast('appearance', {
-                      items: bulkSceneItems.map((c) => ({
-                        packageFilename: c.packageFilename,
-                        internalPath: c.internalPath,
-                      })),
-                      kind: 'appearance',
-                    })
-                  }
-                >
-                  <Download size={12} className="shrink-0 text-accent-blue" />
-                  Extract appearance presets ({bulkSceneItems.length})
-                </ContextMenuItem>
-                <ContextMenuItem
-                  onSelect={() =>
-                    void runExtractAndToast('outfit', {
-                      items: bulkSceneItems.map((c) => ({
-                        packageFilename: c.packageFilename,
-                        internalPath: c.internalPath,
-                      })),
-                      kind: 'outfit',
-                    })
-                  }
-                >
-                  <Download size={12} className="shrink-0 text-accent-blue" />
-                  Extract outfit presets ({bulkSceneItems.length})
-                </ContextMenuItem>
+                {bulkSceneItems.length > 0 && (
+                  <>
+                    <ContextMenuItem
+                      onSelect={() =>
+                        void runExtractAndToast('Extract appearance', {
+                          items: bulkSceneItems.map((c) => ({
+                            packageFilename: c.packageFilename,
+                            internalPath: c.internalPath,
+                          })),
+                          kind: 'appearance',
+                        })
+                      }
+                    >
+                      <Download size={12} className="shrink-0 text-accent-blue" />
+                      Extract appearance presets ({bulkSceneItems.length})
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onSelect={() =>
+                        void runExtractAndToast('Extract outfit', {
+                          items: bulkSceneItems.map((c) => ({
+                            packageFilename: c.packageFilename,
+                            internalPath: c.internalPath,
+                          })),
+                          kind: 'outfit',
+                        })
+                      }
+                    >
+                      <Download size={12} className="shrink-0 text-accent-blue" />
+                      Extract outfit presets ({bulkSceneItems.length})
+                    </ContextMenuItem>
+                  </>
+                )}
+                {bulkLookItems.length > 0 && (
+                  <ContextMenuItem
+                    onSelect={() =>
+                      void runExtractAndToast('Convert to appearance', {
+                        items: bulkLookItems.map((c) => ({
+                          packageFilename: c.packageFilename,
+                          internalPath: c.internalPath,
+                        })),
+                        kind: 'appearance',
+                      })
+                    }
+                  >
+                    <Download size={12} className="shrink-0 text-accent-blue" />
+                    Convert legacy looks to appearance presets ({bulkLookItems.length})
+                  </ContextMenuItem>
+                )}
               </>
             )}
           </>

@@ -1,6 +1,9 @@
 /**
- * Orchestration layer: given a scene (in a .var or on disk), probe which
- * appearance/outfit presets are missing on disk and, when asked, write them.
+ * Orchestration layer: given a scene or legacy appearance JSON (in a .var or on
+ * disk), probe which appearance/outfit presets are missing on disk and, when
+ * asked, write them. Legacy looks are structurally identical to a scene with a
+ * single Person atom, so they share the read/filter/write path; outfit
+ * extraction is only surfaced for scenes in the UI layer.
  */
 
 import { existsSync } from 'fs'
@@ -18,6 +21,11 @@ const KIND_DIRS = {
   appearance: 'Appearance',
   outfit: 'Clothing',
 }
+
+/** Content types we accept as extraction sources. Scenes and legacy looks share
+ * the same `{ atoms:[{ type:"Person", storables }] }` shape; outfit extraction
+ * works against either, it's just not surfaced for looks in the UI. */
+export const APPEARANCE_SOURCE_TYPES = new Set(['scene', 'legacyScene', 'legacyLook'])
 
 /** Replace filesystem-invalid characters in a segment: `/`→`-`, strip `\:*?"<>|#`. */
 function sanitizeFsSegment(s) {
@@ -60,8 +68,10 @@ function creatorFor(packageFilename) {
 }
 
 /**
- * Probe a single scene: list its Person atoms and, for each kind, whether the
- * output preset already exists on disk.
+ * Probe a single scene (or legacy appearance JSON): list its Person atoms and,
+ * for each kind, whether the output preset already exists on disk. Callers
+ * decide per source type which kinds they want to surface (outfit is hidden
+ * for legacy looks in the UI); this function reports both unconditionally.
  */
 export async function probeScene({ packageFilename, internalPath }) {
   const vamDir = getSetting('vam_dir')
@@ -87,24 +97,28 @@ export async function probeScene({ packageFilename, internalPath }) {
 }
 
 /**
- * Probe every scene / legacyScene content item inside a package, skipping
- * scenes whose every output already exists.
+ * Probe every scene / legacyScene / legacyLook content item inside a package,
+ * skipping items whose every UI-surfaced output already exists. Legacy looks
+ * don't expose outfit in the UI, so their `clothing` output isn't considered
+ * when deciding whether an item has anything missing.
  */
 export async function probePackage(filename) {
-  const items = (getContentByPackage().get(filename) || []).filter(
-    (c) => c.type === 'scene' || c.type === 'legacyScene',
-  )
+  const items = (getContentByPackage().get(filename) || []).filter((c) => APPEARANCE_SOURCE_TYPES.has(c.type))
   const limit = pLimit(PROBE_CONCURRENCY)
   const results = await Promise.all(
     items.map((c) =>
       limit(async () => {
         try {
           const probe = await probeScene({ packageFilename: filename, internalPath: c.internal_path })
-          const anyMissing = probe.atoms.some((a) => !a.outputs.appearance.exists || !a.outputs.clothing.exists)
+          const considersOutfit = c.type !== 'legacyLook'
+          const anyMissing = probe.atoms.some(
+            (a) => !a.outputs.appearance.exists || (considersOutfit && !a.outputs.clothing.exists),
+          )
           if (!anyMissing) return null
           return {
             packageFilename: filename,
             internalPath: c.internal_path,
+            type: c.type,
             label: probe.label,
             atoms: probe.atoms,
           }
@@ -112,6 +126,7 @@ export async function probePackage(filename) {
           return {
             packageFilename: filename,
             internalPath: c.internal_path,
+            type: c.type,
             label: basename(c.internal_path, extname(c.internal_path)),
             error: err.message,
             atoms: [],
@@ -134,11 +149,13 @@ function targetKey(kind) {
 }
 
 /**
- * Extract presets for one scene.
+ * Extract presets for one scene or legacy appearance JSON.
  *
- * Reads scene + thumb once, applies SELF replacement if .var-sourced, then
+ * Reads the source + thumb once, applies SELF replacement if .var-sourced, then
  * for each requested atom: skips if the target for `kind` already exists,
- * otherwise mkdir -p + writes .vap (+ sibling .jpg if thumb available).
+ * otherwise mkdir -p + writes .vap (+ sibling .jpg if thumb available). Both
+ * kinds work against either source shape; it's up to the UI whether to expose
+ * outfit extraction for legacy looks.
  *
  * @param {object} params
  * @param {string} params.packageFilename

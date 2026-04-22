@@ -1,7 +1,8 @@
 /**
- * Pure logic for extracting appearance/outfit presets from a VaM scene JSON.
- * No I/O: the caller is responsible for reading the scene JSON / thumbnail
- * and writing the resulting preset to disk.
+ * Pure logic for extracting appearance/outfit presets from a VaM scene JSON
+ * or a legacy appearance JSON (same `{ atoms: [{ type:"Person", storables }] }`
+ * shape, just one Person). No I/O: the caller is responsible for reading the
+ * source JSON / thumbnail and writing the resulting preset to disk.
  */
 
 /** All atoms with type === "Person" in a parsed scene JSON. */

@@ -1,6 +1,8 @@
 /**
- * Reads a scene JSON and (optionally) its sibling .jpg thumbnail from either
- * a .var package or from disk (legacy/local scenes).
+ * Reads a scene (or legacy appearance) JSON and (optionally) its sibling .jpg
+ * thumbnail from either a .var package or from disk (legacy/local files).
+ * Legacy appearance JSONs share the same on-disk shape as a scene with a
+ * single Person atom, so they flow through this reader unchanged.
  *
  * TODO(db-caching): cache a per-scene summary during scan (person atom ids,
  * presence of a sibling `.jpg` thumbnail) so the extract probe doesn't have

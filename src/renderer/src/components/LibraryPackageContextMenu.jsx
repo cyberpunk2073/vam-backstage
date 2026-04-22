@@ -74,7 +74,9 @@ async function runLibraryBulkRemoveFromStore() {
   }
 }
 
-const SCENE_TYPES = new Set(['scene', 'legacyScene'])
+const SCENE_SOURCE_TYPES = new Set(['scene', 'legacyScene'])
+const LOOK_SOURCE_TYPES = new Set(['legacyLook'])
+const EXTRACTABLE_SOURCE_TYPES = new Set([...SCENE_SOURCE_TYPES, ...LOOK_SOURCE_TYPES])
 
 function toastExtractResult(label, result) {
   if (!result) return
@@ -90,17 +92,16 @@ function toastExtractResult(label, result) {
   }
 }
 
-async function runExtractAndToast(kindLabel, payload) {
+async function runExtractAndToast(actionLabel, payload) {
   try {
     const r = await window.api.extract.run(payload)
-    toastExtractResult(`Extract ${kindLabel} presets`, r)
+    toastExtractResult(`${actionLabel} presets`, r)
   } catch (err) {
-    toast(`Extract failed: ${err.message}`)
+    toast(`${actionLabel} failed: ${err.message}`)
   }
 }
 
-async function runLibraryBulkExtract(kind) {
-  const label = kind === 'appearance' ? 'appearance' : 'outfit'
+async function runLibraryBulkExtract({ kind, sources, sourceNoun, actionLabel }) {
   const { packages, bulkSelectedFilenames } = useLibraryStore.getState()
   const selected = packages.filter((p) => bulkSelectedFilenames.includes(p.filename))
   if (!selected.length) return
@@ -110,18 +111,18 @@ async function runLibraryBulkExtract(kind) {
     for (const d of details) {
       if (!d?.contents) continue
       for (const c of d.contents) {
-        if (SCENE_TYPES.has(c.type)) {
+        if (sources.has(c.type)) {
           items.push({ packageFilename: c.packageFilename, internalPath: c.internalPath })
         }
       }
     }
     if (!items.length) {
-      toast(`No scenes in selected package${selected.length === 1 ? '' : 's'}`, 'info')
+      toast(`No ${sourceNoun} in selected package${selected.length === 1 ? '' : 's'}`, 'info')
       return
     }
-    await runExtractAndToast(label, { items, kind })
+    await runExtractAndToast(actionLabel, { items, kind })
   } catch (err) {
-    toast(`Extract failed: ${err.message}`)
+    toast(`${actionLabel} failed: ${err.message}`)
   }
 }
 
@@ -152,7 +153,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
   const [forceRemoveOpen, setForceRemoveOpen] = useState(false)
   const isDev = useIsDev()
 
-  const hasScenes = (detail?.contents || []).some((c) => SCENE_TYPES.has(c.type))
+  const hasExtractable = (detail?.contents || []).some((c) => EXTRACTABLE_SOURCE_TYPES.has(c.type))
 
   const onOpenChange = useCallback(
     (open) => {
@@ -175,7 +176,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
   )
 
   useEffect(() => {
-    if (!isDev || !hasScenes || probe !== null) return
+    if (!isDev || !hasExtractable || probe !== null) return
     let alive = true
     window.api.extract
       .probePackage(pkg.filename)
@@ -188,7 +189,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
     return () => {
       alive = false
     }
-  }, [isDev, hasScenes, pkg.filename, probe])
+  }, [isDev, hasExtractable, pkg.filename, probe])
 
   const p = detail || pkg
   const name = displayName(p)
@@ -258,35 +259,45 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
     return { label, allEnabled, allDisabled, mixed }
   }, [showBulk, packages, bulkSelectedFilenames])
 
-  const extractMissing = useMemo(() => {
+  // Three sibling groups: scene-sourced appearance, scene-sourced outfit,
+  // and look-sourced appearance. Looks produce a distinct "Convert to ..."
+  // entry rather than being folded into the scene-sourced "Extract ..." one.
+  const extractGroups = useMemo(() => {
     if (!probe?.scenes?.length) return null
-    const missing = { appearance: [], outfit: [] }
+    const groups = {
+      sceneAppearance: { kind: 'appearance', actionLabel: 'Extract appearance', missing: [] },
+      sceneOutfit: { kind: 'outfit', actionLabel: 'Extract outfit', missing: [] },
+      lookAppearance: { kind: 'appearance', actionLabel: 'Convert to appearance', missing: [] },
+    }
     for (const scene of probe.scenes) {
+      const isLook = LOOK_SOURCE_TYPES.has(scene.type)
       for (const atom of scene.atoms || []) {
         if (!atom.outputs?.appearance?.exists) {
-          missing.appearance.push({ scene, atomId: atom.atomId })
+          const bucket = isLook ? groups.lookAppearance : groups.sceneAppearance
+          bucket.missing.push({ scene, atomId: atom.atomId })
         }
-        if (!atom.outputs?.clothing?.exists) {
-          missing.outfit.push({ scene, atomId: atom.atomId })
+        if (!isLook && !atom.outputs?.clothing?.exists) {
+          groups.sceneOutfit.missing.push({ scene, atomId: atom.atomId })
         }
       }
     }
-    return missing
+    return groups
   }, [probe])
 
   const renderPkgExtractEntries = () => {
-    if (!isDev || !hasScenes || !extractMissing) return null
+    if (!isDev || !hasExtractable || !extractGroups) return null
     const entries = []
-    for (const kind of ['appearance', 'outfit']) {
-      const missing = extractMissing[kind]
+    for (const [groupKey, group] of Object.entries(extractGroups)) {
+      const { kind, actionLabel, missing } = group
       if (!missing.length) continue
+      const entryKey = `extract-${groupKey}`
       if (missing.length === 1) {
         const m = missing[0]
         entries.push(
           <ContextMenuItem
-            key={`extract-${kind}`}
+            key={entryKey}
             onSelect={() =>
-              void runExtractAndToast(kind, {
+              void runExtractAndToast(actionLabel, {
                 packageFilename: m.scene.packageFilename,
                 internalPath: m.scene.internalPath,
                 atomIds: [m.atomId],
@@ -295,7 +306,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
             }
           >
             <Download size={12} className="shrink-0 text-accent-blue" />
-            Extract {kind} preset
+            {actionLabel} preset
           </ContextMenuItem>,
         )
         continue
@@ -303,29 +314,30 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
       const byScene = new Map()
       for (const m of missing) {
         const key = m.scene.internalPath
-        let group = byScene.get(key)
-        if (!group) {
-          group = { scene: m.scene, atomIds: [] }
-          byScene.set(key, group)
+        let g = byScene.get(key)
+        if (!g) {
+          g = { scene: m.scene, atomIds: [] }
+          byScene.set(key, g)
         }
-        group.atomIds.push(m.atomId)
+        g.atomIds.push(m.atomId)
       }
-      // Single scene with N atoms → list atom ids (like content-item menu).
-      // Multiple scenes → list scenes (each runs across all its missing atoms).
-      const singleScene = byScene.size === 1
-      const only = singleScene ? [...byScene.values()][0] : null
+      // Single source with N atoms → list atom ids (like content-item menu).
+      // Multiple sources → list each (each runs across all its missing atoms).
+      const singleSource = byScene.size === 1
+      const only = singleSource ? [...byScene.values()][0] : null
+      const verb = groupKey === 'lookAppearance' ? 'Convert' : 'Extract'
       entries.push(
-        <ContextMenuSub key={`extract-${kind}`}>
+        <ContextMenuSub key={entryKey}>
           <ContextMenuSubTrigger>
             <Download size={12} className="shrink-0 text-accent-blue" />
-            Extract {kind} preset{singleScene ? '' : 's from scenes'}
+            {actionLabel} preset{singleSource ? '' : 's'}
           </ContextMenuSubTrigger>
           <ContextMenuSubContent>
             <ContextMenuItem
               onSelect={() =>
                 void runExtractAndToast(
-                  kind,
-                  singleScene
+                  actionLabel,
+                  singleSource
                     ? {
                         packageFilename: only.scene.packageFilename,
                         internalPath: only.scene.internalPath,
@@ -343,15 +355,15 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                 )
               }
             >
-              Extract all ({missing.length})
+              {verb} all ({missing.length})
             </ContextMenuItem>
             <ContextMenuSeparator />
-            {singleScene
+            {singleSource
               ? only.atomIds.map((atomId) => (
                   <ContextMenuItem
                     key={atomId}
                     onSelect={() =>
-                      void runExtractAndToast(kind, {
+                      void runExtractAndToast(actionLabel, {
                         packageFilename: only.scene.packageFilename,
                         internalPath: only.scene.internalPath,
                         atomIds: [atomId],
@@ -366,7 +378,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                   <ContextMenuItem
                     key={g.scene.internalPath}
                     onSelect={() =>
-                      void runExtractAndToast(kind, {
+                      void runExtractAndToast(actionLabel, {
                         packageFilename: g.scene.packageFilename,
                         internalPath: g.scene.internalPath,
                         atomIds: g.atomIds,
@@ -415,13 +427,44 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
               {isDev && (
                 <>
                   <ContextMenuSeparator />
-                  <ContextMenuItem onSelect={() => void runLibraryBulkExtract('appearance')}>
+                  <ContextMenuItem
+                    onSelect={() =>
+                      void runLibraryBulkExtract({
+                        kind: 'appearance',
+                        sources: SCENE_SOURCE_TYPES,
+                        sourceNoun: 'scenes',
+                        actionLabel: 'Extract appearance',
+                      })
+                    }
+                  >
                     <Download size={12} className="shrink-0 text-accent-blue" />
                     Extract appearance presets from scenes ({bulkSelectedFilenames.length})
                   </ContextMenuItem>
-                  <ContextMenuItem onSelect={() => void runLibraryBulkExtract('outfit')}>
+                  <ContextMenuItem
+                    onSelect={() =>
+                      void runLibraryBulkExtract({
+                        kind: 'outfit',
+                        sources: SCENE_SOURCE_TYPES,
+                        sourceNoun: 'scenes',
+                        actionLabel: 'Extract outfit',
+                      })
+                    }
+                  >
                     <Download size={12} className="shrink-0 text-accent-blue" />
                     Extract outfit presets from scenes ({bulkSelectedFilenames.length})
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    onSelect={() =>
+                      void runLibraryBulkExtract({
+                        kind: 'appearance',
+                        sources: LOOK_SOURCE_TYPES,
+                        sourceNoun: 'legacy looks',
+                        actionLabel: 'Convert to appearance',
+                      })
+                    }
+                  >
+                    <Download size={12} className="shrink-0 text-accent-blue" />
+                    Convert legacy looks to appearance presets ({bulkSelectedFilenames.length})
                   </ContextMenuItem>
                 </>
               )}
