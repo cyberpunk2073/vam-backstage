@@ -1,4 +1,5 @@
 import { ContextMenu as ContextMenuPrimitive } from 'radix-ui'
+import { ChevronRight } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 
@@ -65,4 +66,53 @@ function ContextMenuLabel({ className, inset, ...props }) {
   )
 }
 
-export { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuLabel }
+function ContextMenuSub({ ...props }) {
+  return <ContextMenuPrimitive.Sub data-slot="context-menu-sub" {...props} />
+}
+
+function ContextMenuSubTrigger({ className, inset, children, ...props }) {
+  return (
+    <ContextMenuPrimitive.SubTrigger
+      data-slot="context-menu-sub-trigger"
+      data-inset={inset ? '' : undefined}
+      className={cn(
+        'relative flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 outline-none',
+        'data-[highlighted]:bg-hover data-[state=open]:bg-hover',
+        inset && 'pl-8',
+        className,
+      )}
+      {...props}
+    >
+      {children}
+      <ChevronRight size={12} className="ml-auto shrink-0 text-text-tertiary" />
+    </ContextMenuPrimitive.SubTrigger>
+  )
+}
+
+function ContextMenuSubContent({ className, ...props }) {
+  return (
+    <ContextMenuPrimitive.Portal>
+      <ContextMenuPrimitive.SubContent
+        data-slot="context-menu-sub-content"
+        className={cn(
+          'z-50 min-w-40 origin-(--radix-context-menu-content-transform-origin) overflow-hidden rounded-md border border-border-bright bg-elevated p-1 text-xs text-text-secondary shadow-lg',
+          'data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95',
+          className,
+        )}
+        {...props}
+      />
+    </ContextMenuPrimitive.Portal>
+  )
+}
+
+export {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuLabel,
+  ContextMenuSub,
+  ContextMenuSubTrigger,
+  ContextMenuSubContent,
+}

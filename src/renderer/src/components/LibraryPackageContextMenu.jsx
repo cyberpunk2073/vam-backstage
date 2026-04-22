@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import {
   ArrowUpCircle,
   Compass,
@@ -17,8 +17,12 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
+import { useIsDev } from '@/hooks/useIsDev'
 import { AlertDialog } from '@/components/ui/alert-dialog'
 import {
   DisablePackageDialogContent,
@@ -70,6 +74,57 @@ async function runLibraryBulkRemoveFromStore() {
   }
 }
 
+const SCENE_TYPES = new Set(['scene', 'legacyScene'])
+
+function toastExtractResult(label, result) {
+  if (!result) return
+  const w = result.written?.length ?? 0
+  const s = result.skipped?.length ?? 0
+  const e = result.errors?.length ?? 0
+  if (e > 0) {
+    toast(`${label}: ${w} written, ${s} skipped, ${e} error${e === 1 ? '' : 's'}`, 'error')
+  } else if (w === 0) {
+    toast(`${label}: nothing to extract (${s} already existed)`, 'info')
+  } else {
+    toast(`${label}: ${w} preset${w === 1 ? '' : 's'} written${s ? `, ${s} skipped` : ''}`, 'success')
+  }
+}
+
+async function runExtractAndToast(kindLabel, payload) {
+  try {
+    const r = await window.api.extract.run(payload)
+    toastExtractResult(`Extract ${kindLabel} presets`, r)
+  } catch (err) {
+    toast(`Extract failed: ${err.message}`)
+  }
+}
+
+async function runLibraryBulkExtract(kind) {
+  const label = kind === 'appearance' ? 'appearance' : 'outfit'
+  const { packages, bulkSelectedFilenames } = useLibraryStore.getState()
+  const selected = packages.filter((p) => bulkSelectedFilenames.includes(p.filename))
+  if (!selected.length) return
+  try {
+    const details = await Promise.all(selected.map((p) => window.api.packages.detail(p.filename).catch(() => null)))
+    const items = []
+    for (const d of details) {
+      if (!d?.contents) continue
+      for (const c of d.contents) {
+        if (SCENE_TYPES.has(c.type)) {
+          items.push({ packageFilename: c.packageFilename, internalPath: c.internalPath })
+        }
+      }
+    }
+    if (!items.length) {
+      toast(`No scenes in selected package${selected.length === 1 ? '' : 's'}`, 'info')
+      return
+    }
+    await runExtractAndToast(label, { items, kind })
+  } catch (err) {
+    toast(`Extract failed: ${err.message}`)
+  }
+}
+
 async function runLibraryBulkPromoteFromStore() {
   const { packages, bulkSelectedFilenames } = useLibraryStore.getState()
   const fnames = packages
@@ -90,10 +145,14 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
   const bulkSelectedFilenames = useLibraryStore((s) => s.bulkSelectedFilenames)
   const packages = useLibraryStore((s) => s.packages)
   const [detail, setDetail] = useState(null)
+  const [probe, setProbe] = useState(null)
   const [fileTreeOpen, setFileTreeOpen] = useState(false)
   const [uninstallOpen, setUninstallOpen] = useState(false)
   const [disableOpen, setDisableOpen] = useState(false)
   const [forceRemoveOpen, setForceRemoveOpen] = useState(false)
+  const isDev = useIsDev()
+
+  const hasScenes = (detail?.contents || []).some((c) => SCENE_TYPES.has(c.type))
 
   const onOpenChange = useCallback(
     (open) => {
@@ -109,10 +168,27 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
         }
       } else {
         setDetail(null)
+        setProbe(null)
       }
     },
     [pkg.filename, selectedDetail],
   )
+
+  useEffect(() => {
+    if (!isDev || !hasScenes || probe !== null) return
+    let alive = true
+    window.api.extract
+      .probePackage(pkg.filename)
+      .then((r) => {
+        if (alive) setProbe(r || { scenes: [] })
+      })
+      .catch(() => {
+        if (alive) setProbe({ scenes: [] })
+      })
+    return () => {
+      alive = false
+    }
+  }, [isDev, hasScenes, pkg.filename, probe])
 
   const p = detail || pkg
   const name = displayName(p)
@@ -182,6 +258,133 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
     return { label, allEnabled, allDisabled, mixed }
   }, [showBulk, packages, bulkSelectedFilenames])
 
+  const extractMissing = useMemo(() => {
+    if (!probe?.scenes?.length) return null
+    const missing = { appearance: [], outfit: [] }
+    for (const scene of probe.scenes) {
+      for (const atom of scene.atoms || []) {
+        if (!atom.outputs?.appearance?.exists) {
+          missing.appearance.push({ scene, atomId: atom.atomId })
+        }
+        if (!atom.outputs?.clothing?.exists) {
+          missing.outfit.push({ scene, atomId: atom.atomId })
+        }
+      }
+    }
+    return missing
+  }, [probe])
+
+  const renderPkgExtractEntries = () => {
+    if (!isDev || !hasScenes || !extractMissing) return null
+    const entries = []
+    for (const kind of ['appearance', 'outfit']) {
+      const missing = extractMissing[kind]
+      if (!missing.length) continue
+      if (missing.length === 1) {
+        const m = missing[0]
+        entries.push(
+          <ContextMenuItem
+            key={`extract-${kind}`}
+            onSelect={() =>
+              void runExtractAndToast(kind, {
+                packageFilename: m.scene.packageFilename,
+                internalPath: m.scene.internalPath,
+                atomIds: [m.atomId],
+                kind,
+              })
+            }
+          >
+            <Download size={12} className="shrink-0 text-accent-blue" />
+            Extract {kind} preset
+          </ContextMenuItem>,
+        )
+        continue
+      }
+      const byScene = new Map()
+      for (const m of missing) {
+        const key = m.scene.internalPath
+        let group = byScene.get(key)
+        if (!group) {
+          group = { scene: m.scene, atomIds: [] }
+          byScene.set(key, group)
+        }
+        group.atomIds.push(m.atomId)
+      }
+      // Single scene with N atoms → list atom ids (like content-item menu).
+      // Multiple scenes → list scenes (each runs across all its missing atoms).
+      const singleScene = byScene.size === 1
+      const only = singleScene ? [...byScene.values()][0] : null
+      entries.push(
+        <ContextMenuSub key={`extract-${kind}`}>
+          <ContextMenuSubTrigger>
+            <Download size={12} className="shrink-0 text-accent-blue" />
+            Extract {kind} preset{singleScene ? '' : 's from scenes'}
+          </ContextMenuSubTrigger>
+          <ContextMenuSubContent>
+            <ContextMenuItem
+              onSelect={() =>
+                void runExtractAndToast(
+                  kind,
+                  singleScene
+                    ? {
+                        packageFilename: only.scene.packageFilename,
+                        internalPath: only.scene.internalPath,
+                        atomIds: only.atomIds,
+                        kind,
+                      }
+                    : {
+                        items: [...byScene.values()].map((g) => ({
+                          packageFilename: g.scene.packageFilename,
+                          internalPath: g.scene.internalPath,
+                          atomIds: g.atomIds,
+                        })),
+                        kind,
+                      },
+                )
+              }
+            >
+              Extract all ({missing.length})
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            {singleScene
+              ? only.atomIds.map((atomId) => (
+                  <ContextMenuItem
+                    key={atomId}
+                    onSelect={() =>
+                      void runExtractAndToast(kind, {
+                        packageFilename: only.scene.packageFilename,
+                        internalPath: only.scene.internalPath,
+                        atomIds: [atomId],
+                        kind,
+                      })
+                    }
+                  >
+                    {atomId}
+                  </ContextMenuItem>
+                ))
+              : [...byScene.values()].map((g) => (
+                  <ContextMenuItem
+                    key={g.scene.internalPath}
+                    onSelect={() =>
+                      void runExtractAndToast(kind, {
+                        packageFilename: g.scene.packageFilename,
+                        internalPath: g.scene.internalPath,
+                        atomIds: g.atomIds,
+                        kind,
+                      })
+                    }
+                  >
+                    {g.scene.label}
+                    {g.atomIds.length > 1 ? ` (${g.atomIds.length})` : ''}
+                  </ContextMenuItem>
+                ))}
+          </ContextMenuSubContent>
+        </ContextMenuSub>,
+      )
+    }
+    return entries
+  }
+
   return (
     <>
       <ContextMenu onOpenChange={onOpenChange}>
@@ -208,6 +411,19 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                   <Plus size={12} className="shrink-0 text-accent-blue" />
                   Promote ({bulkDepCount})
                 </ContextMenuItem>
+              )}
+              {isDev && (
+                <>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem onSelect={() => void runLibraryBulkExtract('appearance')}>
+                    <Download size={12} className="shrink-0 text-accent-blue" />
+                    Extract appearance presets from scenes ({bulkSelectedFilenames.length})
+                  </ContextMenuItem>
+                  <ContextMenuItem onSelect={() => void runLibraryBulkExtract('outfit')}>
+                    <Download size={12} className="shrink-0 text-accent-blue" />
+                    Extract outfit presets from scenes ({bulkSelectedFilenames.length})
+                  </ContextMenuItem>
+                </>
               )}
             </>
           ) : (
@@ -313,6 +529,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                 <FolderTree size={12} className="shrink-0" />
                 Browse package files
               </ContextMenuItem>
+              {renderPkgExtractEntries()}
               {!p.isDirect && (
                 <>
                   <ContextMenuSeparator />

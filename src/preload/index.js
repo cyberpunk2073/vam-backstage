@@ -94,6 +94,11 @@ const api = {
     browserAssistDirExists: () => ipcRenderer.invoke('dev:browser-assist-dir-exists'),
     syncBrowserAssist: () => ipcRenderer.invoke('dev:sync-browser-assist'),
   },
+  extract: {
+    probeScene: (p) => ipcRenderer.invoke('extract:probe-scene', p),
+    probePackage: (fn) => ipcRenderer.invoke('extract:probe-package', fn),
+    run: (p) => ipcRenderer.invoke('extract:run', p),
+  },
   shell: {
     openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
     showItemInFolder: (fullPath) => ipcRenderer.invoke('shell:showItemInFolder', fullPath),
