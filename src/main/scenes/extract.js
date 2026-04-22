@@ -44,7 +44,7 @@ function sceneStem(internalPath) {
 /**
  * Compute the output paths for a single scene + atom.
  *
- *   <vamDir>/Custom/Atom/Person/<kindDir>/extracted/<creator>/Preset_<name>.vap (+ .jpg)
+ *   <vamDir>/Custom/Atom/Person/<kindDir>/extracted/Preset_<creator> - <name>.vap (+ .jpg)
  *   <name>       = <sceneStem><atomSuffix>
  *   <atomSuffix> = "" when singleAtom, else "_<sanitize(atomId)>"
  */
@@ -53,11 +53,12 @@ export function computeTargets({ vamDir, creator, internalPath, atomId, singleAt
   const atomSuffix = singleAtom ? '' : '_' + sanitizeFsSegment(atomId)
   const name = stem + atomSuffix
   const creatorSeg = sanitizeFsSegment(creator || '!local') || '!local'
-  const baseDir = (kind) => join(vamDir, 'Custom', 'Atom', 'Person', KIND_DIRS[kind], 'extracted', creatorSeg)
+  const baseDir = (kind) => join(vamDir, 'Custom', 'Atom', 'Person', KIND_DIRS[kind], 'extracted')
+  const fileBase = `Preset_${creatorSeg} - ${name}`
   return {
     name,
-    appearance: { absPath: join(baseDir('appearance'), `Preset_${name}.vap`) },
-    clothing: { absPath: join(baseDir('outfit'), `Preset_${name}.vap`) },
+    appearance: { absPath: join(baseDir('appearance'), `${fileBase}.vap`) },
+    clothing: { absPath: join(baseDir('outfit'), `${fileBase}.vap`) },
   }
 }
 
