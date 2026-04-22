@@ -773,7 +773,7 @@ export default function LibraryView({ onNavigate, navContext }) {
                   <ChevronDown size={14} className="text-text-tertiary shrink-0 opacity-90" strokeWidth={2.25} />
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="max-h-64 overflow-y-auto min-w-[12rem]">
+              <DropdownMenuContent align="end" className="max-h-64 overflow-y-auto min-w-48">
                 <DropdownMenuLabel className="text-[11px] px-2 py-1.5">
                   Type ({bulkSelectedFilenames.length})
                 </DropdownMenuLabel>
@@ -1439,7 +1439,7 @@ function LibraryPackageTypeBadgeMenu({ pkg, kindLabel, kindIsCore }) {
         align="start"
         side="bottom"
         sideOffset={3}
-        className="min-w-[7rem] max-w-[8.25rem] p-0.5 text-[10px] leading-snug"
+        className="min-w-28 max-w-33 p-0.5 text-[10px] leading-snug"
       >
         <DropdownMenuLabel className="px-2 py-0.5 text-[10px]">Set type</DropdownMenuLabel>
         {LIBRARY_FILTER_TYPES.map((t) => (

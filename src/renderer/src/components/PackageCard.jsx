@@ -413,7 +413,7 @@ export function LibraryCard({
           pkg.isLocalOnly ||
           pkg.noLookPresetTag ||
           (minimal && pkg.missingDeps > 0)) && (
-          <div className="absolute top-2 left-2 z-[2] flex max-w-[calc(100%-2.75rem)] items-center gap-1 overflow-x-auto [scrollbar-width:thin] flex-nowrap">
+          <div className="absolute top-2 left-2 z-2 flex max-w-[calc(100%-2.75rem)] items-center gap-1 overflow-x-auto [scrollbar-width:thin] flex-nowrap">
             {bulkMode && <BulkSelectChip checked={bulkSelected} />}
             {!hideType && (
               <div
@@ -446,7 +446,7 @@ export function LibraryCard({
             )}
           </div>
         )}
-        <div className="absolute top-2 right-2 flex items-center gap-1 z-[1]">
+        <div className="absolute top-2 right-2 flex items-center gap-1 z-1">
           {disabled && (
             <div className={`${THUMB_OVERLAY_CHIP} bg-warning/25 text-warning backdrop-blur-sm`}>
               <EyeOff size={10} className="shrink-0" />
@@ -854,9 +854,9 @@ export function ContentCard({
             <div className="absolute inset-0 bg-base/15 transition-opacity duration-200 group-hover:opacity-0" />
           )}
         </div>
-        {bulkSelected && <div className="absolute inset-0 bg-accent-blue/10 pointer-events-none z-[1]" />}
+        {bulkSelected && <div className="absolute inset-0 bg-accent-blue/10 pointer-events-none z-1" />}
         {(showBulk || !hideType || item.tag) && (
-          <div className="absolute top-2 left-2 z-[2] flex max-w-[calc(100%-2.75rem)] items-center gap-1 overflow-x-auto [scrollbar-width:thin] flex-nowrap">
+          <div className="absolute top-2 left-2 z-2 flex max-w-[calc(100%-2.75rem)] items-center gap-1 overflow-x-auto [scrollbar-width:thin] flex-nowrap">
             {bulkMode && <BulkSelectChip checked={bulkSelected} />}
             {!hideType && (
               <span className={`${THUMB_OVERLAY_CHIP} text-white`} style={{ background: typeColor + 'cc' }}>
@@ -878,7 +878,7 @@ export function ContentCard({
           </div>
         )}
         {!bulkMode && (
-          <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 z-[2]">
+          <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 z-2">
             {isDisabledPkg ? (
               <div
                 title="Package is disabled"
