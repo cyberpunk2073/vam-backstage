@@ -1,5 +1,8 @@
 import yauzl from 'yauzl'
 import JSON5 from 'json5'
+import { classifyContents } from './classifier.js'
+
+const SCENE_ATOM_ID_TYPES = new Set(['scene', 'legacyScene', 'legacyLook'])
 
 function openZip(filePath) {
   return new Promise((resolve, reject) => {
@@ -24,10 +27,13 @@ function readStream(zipfile, entry) {
 
 /**
  * Read a .var file's central directory and meta.json.
- * Returns { meta, fileList } where meta is parsed JSON (or null)
- * and fileList is [{ path, size }].
+ * Returns { meta, fileList, contentItems?, extracts? } where meta is parsed JSON (or null),
+ * fileList is [{ path, size }].
+ * When `options.extractSceneJsons` is true, also classifies contents, reads scene/legacyLook JSON
+ * bodies in the same ZIP pass, and returns `contentItems` plus `extracts` (Map path → Buffer).
  */
-export async function readVar(varPath) {
+export async function readVar(varPath, options = {}) {
+  const extractSceneJsons = options.extractSceneJsons === true
   const zipfile = await openZip(varPath)
 
   // Iterate all entries in the central directory
@@ -41,6 +47,10 @@ export async function readVar(varPath) {
     zipfile.on('end', () => resolve(list))
     zipfile.on('error', reject)
   })
+
+  const fileList = entries
+    .filter((e) => !e.fileName.endsWith('/')) // skip directories
+    .map((e) => ({ path: e.fileName, size: e.uncompressedSize }))
 
   // Read meta.json if present
   const metaEntry = entries.find((e) => e.fileName === 'meta.json')
@@ -56,13 +66,30 @@ export async function readVar(varPath) {
     }
   }
 
+  let contentItems = null
+  /** @type {Map<string, Buffer>} */
+  let extracts = new Map()
+  if (extractSceneJsons) {
+    contentItems = classifyContents(fileList)
+    const paths = [...new Set(contentItems.filter((c) => SCENE_ATOM_ID_TYPES.has(c.type)).map((c) => c.internalPath))]
+    for (const p of paths) {
+      const entry = entries.find((e) => e.fileName === p)
+      if (!entry) continue
+      try {
+        extracts.set(p, await readStream(zipfile, entry))
+      } catch {
+        // Missing or corrupt entry — omit from extracts; ingest stores [] for atom ids.
+      }
+    }
+  }
+
   zipfile.close()
 
   return {
     meta,
-    fileList: entries
-      .filter((e) => !e.fileName.endsWith('/')) // skip directories
-      .map((e) => ({ path: e.fileName, size: e.uncompressedSize })),
+    fileList,
+    contentItems,
+    extracts,
   }
 }
 

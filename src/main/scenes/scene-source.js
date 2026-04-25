@@ -4,12 +4,9 @@
  * Legacy appearance JSONs share the same on-disk shape as a scene with a
  * single Person atom, so they flow through this reader unchanged.
  *
- * TODO(db-caching): cache a per-scene summary during scan (person atom ids,
- * presence of a sibling `.jpg` thumbnail) so the extract probe doesn't have
- * to re-open the zip and re-parse the scene JSON every time the menu opens.
- * The actual scene JSON and thumbnail bytes are still read on demand at
- * extract time — only the summary would be cached. Hook into
- * src/main/scanner/classifier.js when we're ready.
+ * Person atom ids for probe are cached in `contents.person_atom_ids` at scan time;
+ * this reader is still used for extract-write and for probe fallback before the
+ * first rescan after a DB upgrade.
  */
 
 import { existsSync } from 'fs'
@@ -33,7 +30,7 @@ function thumbPathFor(internalPath) {
  * Parse a scene JSON string. Native `JSON.parse` is ~10x faster than `JSON5.parse`,
  * so try it first; fall back to JSON5 for SimpleJSON tolerance (trailing commas etc).
  */
-function parseSceneJson(s) {
+export function parseSceneJson(s) {
   try {
     return JSON.parse(s)
   } catch {

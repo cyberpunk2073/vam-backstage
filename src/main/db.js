@@ -3,7 +3,7 @@ import { existsSync, unlinkSync } from 'fs'
 import { app } from 'electron'
 import { join } from 'path'
 
-const SCHEMA_VERSION = 16
+const SCHEMA_VERSION = 17
 
 let db
 
@@ -59,13 +59,17 @@ function migrate() {
       `Schema version ${current} is from a pre-release build and cannot be migrated. ` +
         `Delete "${getDatabasePath()}" and restart the app.`,
     )
+  } else if (current < 17) {
+    applyV17()
   }
-
-  // Future incremental migrations (e.g. SCHEMA_VERSION 17):
-  // if (current < 17) applyV17()
 
   db.prepare('DELETE FROM schema_version').run()
   db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION)
+}
+
+function applyV17() {
+  db.exec('ALTER TABLE contents ADD COLUMN person_atom_ids TEXT')
+  db.prepare('UPDATE packages SET file_mtime = 0').run()
 }
 
 /** Full schema as of LEGACY_SCHEMA_CUTOFF — new installs skip incremental migrations. */
@@ -108,6 +112,7 @@ function createSchema() {
       display_name TEXT NOT NULL,
       type TEXT NOT NULL,
       thumbnail_path TEXT,
+      person_atom_ids TEXT,
       UNIQUE(package_filename, internal_path)
     );
 
@@ -225,13 +230,21 @@ export function getAllPackagesForHubScan() {
 // Contents
 export function insertContents(rows) {
   const ins = stmt(`
-    INSERT OR IGNORE INTO contents (package_filename, internal_path, display_name, type, thumbnail_path)
-    VALUES (@packageFilename, @internalPath, @displayName, @type, @thumbnailPath)
+    INSERT OR IGNORE INTO contents (package_filename, internal_path, display_name, type, thumbnail_path, person_atom_ids)
+    VALUES (@packageFilename, @internalPath, @displayName, @type, @thumbnailPath, @personAtomIds)
   `)
   const tx = db.transaction((items) => {
     for (const item of items) ins.run(item)
   })
   tx(rows)
+}
+
+/** @returns {{ person_atom_ids: string | null } | undefined} */
+export function getPersonAtomIds(packageFilename, internalPath) {
+  return stmt('SELECT person_atom_ids FROM contents WHERE package_filename = ? AND internal_path = ?').get(
+    packageFilename,
+    internalPath,
+  )
 }
 
 export function deleteContentsForPackage(filename) {

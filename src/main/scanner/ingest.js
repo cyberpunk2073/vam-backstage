@@ -1,9 +1,29 @@
 import { stat } from 'fs/promises'
 import { basename } from 'path'
 import { readVar, parseVarFilename, canonicalVarFilename } from './var-reader.js'
-import { classifyContents, derivePackageType } from './classifier.js'
+import { derivePackageType } from './classifier.js'
 import { extractDepRefs } from './graph.js'
 import { upsertPackage, insertContents, deleteContentsForPackage } from '../db.js'
+import { parseSceneJson } from '../scenes/scene-source.js'
+import { getPersonAtoms } from '../scenes/extractor.js'
+
+const PERSON_ATOM_ID_CONTENT_TYPES = new Set(['scene', 'legacyScene', 'legacyLook'])
+
+function personAtomIdsJsonFromBuffer(buf, packageFilename) {
+  if (!buf || buf.length === 0) return '[]'
+  try {
+    const selfName = packageFilename.replace(/\.var$/i, '')
+    const raw = buf
+      .toString('utf-8')
+      .split('SELF:/')
+      .join(selfName + ':/')
+    const sceneJson = parseSceneJson(raw)
+    const atoms = getPersonAtoms(sceneJson)
+    return JSON.stringify(atoms.map((a) => a.id))
+  } catch {
+    return '[]'
+  }
+}
 
 /**
  * Read a .var file, classify its contents, and upsert the package + contents into the DB.
@@ -17,11 +37,10 @@ import { upsertPackage, insertContents, deleteContentsForPackage } from '../db.j
 export async function scanAndUpsert(fullPath, { isEnabled = true, isDirect = 0, typeOverride } = {}) {
   const filename = canonicalVarFilename(basename(fullPath))
   const s = await stat(fullPath)
-  const { meta, fileList } = await readVar(fullPath)
+  const { meta, contentItems, extracts } = await readVar(fullPath, { extractSceneJsons: true })
   const parsed = parseVarFilename(filename)
   if (!parsed) return null
 
-  const contentItems = classifyContents(fileList)
   const depRefs = meta ? extractDepRefs(meta, filename) : []
   const pkgType = typeOverride || derivePackageType(contentItems)
 
@@ -50,6 +69,9 @@ export async function scanAndUpsert(fullPath, { isEnabled = true, isDirect = 0, 
         displayName: item.displayName,
         type: item.type,
         thumbnailPath: item.thumbnailPath,
+        personAtomIds: PERSON_ATOM_ID_CONTENT_TYPES.has(item.type)
+          ? personAtomIdsJsonFromBuffer(extracts.get(item.internalPath), filename)
+          : null,
       })),
     )
   }

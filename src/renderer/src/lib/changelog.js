@@ -5,6 +5,7 @@ export const CHANGELOG = [
     date: '2026-04-22',
     notes: [
       'Extract appearance and clothing presets from scenes and convert legacy looks to appearance presets. Accessible from right-click menu.',
+      'Offer to hide/unhide all existing dependency content when toggled in the settings.',
     ],
   },
 ]

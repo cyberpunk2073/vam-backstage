@@ -9,7 +9,7 @@
 import { existsSync } from 'fs'
 import { mkdir, writeFile } from 'fs/promises'
 import { basename, extname, dirname, join } from 'path'
-import { getSetting } from '../db.js'
+import { getSetting, getPersonAtomIds } from '../db.js'
 import { getContentByPackage, getPackageIndex } from '../store.js'
 import { pLimit } from '../p-limit.js'
 import { readScene } from './scene-source.js'
@@ -77,15 +77,28 @@ function creatorFor(packageFilename) {
 export async function probeScene({ packageFilename, internalPath }) {
   const vamDir = getSetting('vam_dir')
   if (!vamDir) throw new Error('VaM directory not configured')
-  const { sceneJson } = await readScene({ vamDir, packageFilename, internalPath })
-  const atoms = getPersonAtoms(sceneJson)
-  const singleAtom = atoms.length === 1
   const creator = creatorFor(packageFilename)
 
-  const atomResults = atoms.map((atom) => {
-    const targets = computeTargets({ vamDir, creator, internalPath, atomId: atom.id, singleAtom })
+  const row = packageFilename ? getPersonAtomIds(packageFilename, internalPath) : null
+  let atomIds
+  if (row?.person_atom_ids != null && row.person_atom_ids !== '') {
+    try {
+      atomIds = JSON.parse(row.person_atom_ids)
+    } catch {
+      atomIds = []
+    }
+    if (!Array.isArray(atomIds)) atomIds = []
+  } else {
+    const { sceneJson } = await readScene({ vamDir, packageFilename, internalPath })
+    atomIds = getPersonAtoms(sceneJson).map((a) => a.id)
+  }
+
+  const singleAtom = atomIds.length === 1
+
+  const atomResults = atomIds.map((atomId) => {
+    const targets = computeTargets({ vamDir, creator, internalPath, atomId, singleAtom })
     return {
-      atomId: atom.id,
+      atomId,
       outputs: {
         appearance: { path: targets.appearance.absPath, exists: existsSync(targets.appearance.absPath) },
         clothing: { path: targets.clothing.absPath, exists: existsSync(targets.clothing.absPath) },
