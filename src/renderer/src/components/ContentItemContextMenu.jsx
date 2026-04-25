@@ -13,7 +13,6 @@ import {
 import { toast } from '@/components/Toast'
 import { cn, displayName } from '@/lib/utils'
 import { useContentStore } from '@/stores/useContentStore'
-import { useIsDev } from '@/hooks/useIsDev'
 
 const SCENE_SOURCE_TYPES = new Set(['scene', 'legacyScene'])
 const LOOK_SOURCE_TYPES = new Set(['legacyLook'])
@@ -75,7 +74,6 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
   const contents = useContentStore((s) => s.contents)
   const [pkg, setPkg] = useState(null)
   const [probe, setProbe] = useState(null)
-  const isDev = useIsDev()
 
   const showBulk = bulkSelectedIds.length > 0 && bulkSelectedIds.includes(item.id)
   const isScene = SCENE_SOURCE_TYPES.has(item.type)
@@ -125,7 +123,7 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
   }, [bulkSelectedIds, contents])
 
   const onOpenChange = useCallback(
-    (open) => {
+    async (open) => {
       if (open) {
         if (selectedItem?.id === item.id && selectedPackage?.filename === item.packageFilename) {
           setPkg(selectedPackage)
@@ -136,19 +134,24 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
             .then(setPkg)
             .catch((err) => toast(`Failed to load package: ${err.message}`))
         }
-        if (isDev && isExtractable && !showBulk) {
-          setProbe(null)
-          window.api.extract
-            .probeScene({ packageFilename: item.packageFilename, internalPath: item.internalPath })
-            .then(setProbe)
-            .catch(() => setProbe({ atoms: [], error: true }))
+        if (isExtractable && !showBulk) {
+          try {
+            setProbe(
+              await window.api.extract.probeScene({
+                packageFilename: item.packageFilename,
+                internalPath: item.internalPath,
+              }),
+            )
+          } catch {
+            setProbe({ atoms: [], error: true })
+          }
         }
       } else {
         setPkg(null)
         setProbe(null)
       }
     },
-    [item.id, item.packageFilename, item.internalPath, selectedItem, selectedPackage, isDev, isExtractable, showBulk],
+    [item.id, item.packageFilename, item.internalPath, selectedItem, selectedPackage, isExtractable, showBulk],
   )
 
   const hubLabel = pkg
@@ -172,7 +175,7 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
   }, [probe, isScene])
 
   const renderExtractEntries = () => {
-    if (!isDev || !isExtractable || !probe || !missingByKind) return null
+    if (!isExtractable || !probe || !missingByKind) return null
     // Scenes → "Extract <kind> preset". Legacy looks → "Convert to appearance preset".
     const verb = isLook ? 'Convert to' : 'Extract'
     const entries = []
@@ -271,7 +274,7 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
               />
               {bulkFavoriteUi.label} ({bulkSelectedIds.length})
             </ContextMenuItem>
-            {isDev && (bulkSceneItems.length > 0 || bulkLookItems.length > 0) && (
+            {(bulkSceneItems.length > 0 || bulkLookItems.length > 0) && (
               <>
                 <ContextMenuSeparator />
                 {bulkSceneItems.length > 0 && (

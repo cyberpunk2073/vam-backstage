@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import {
   ArrowUpCircle,
   Compass,
@@ -22,7 +22,6 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
-import { useIsDev } from '@/hooks/useIsDev'
 import { AlertDialog } from '@/components/ui/alert-dialog'
 import {
   DisablePackageDialogContent,
@@ -76,8 +75,6 @@ async function runLibraryBulkRemoveFromStore() {
 
 const SCENE_SOURCE_TYPES = new Set(['scene', 'legacyScene'])
 const LOOK_SOURCE_TYPES = new Set(['legacyLook'])
-const EXTRACTABLE_SOURCE_TYPES = new Set([...SCENE_SOURCE_TYPES, ...LOOK_SOURCE_TYPES])
-
 function toastExtractResult(label, result) {
   if (!result) return
   const w = result.written?.length ?? 0
@@ -151,12 +148,9 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
   const [uninstallOpen, setUninstallOpen] = useState(false)
   const [disableOpen, setDisableOpen] = useState(false)
   const [forceRemoveOpen, setForceRemoveOpen] = useState(false)
-  const isDev = useIsDev()
-
-  const hasExtractable = (detail?.contents || []).some((c) => EXTRACTABLE_SOURCE_TYPES.has(c.type))
 
   const onOpenChange = useCallback(
-    (open) => {
+    async (open) => {
       if (open) {
         if (selectedDetail?.filename === pkg.filename) {
           setDetail(selectedDetail)
@@ -167,6 +161,11 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
             .then(setDetail)
             .catch((err) => toast(`Failed to load package: ${err.message}`))
         }
+        try {
+          setProbe((await window.api.extract.probePackage(pkg.filename)) || { scenes: [] })
+        } catch {
+          setProbe({ scenes: [] })
+        }
       } else {
         setDetail(null)
         setProbe(null)
@@ -174,22 +173,6 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
     },
     [pkg.filename, selectedDetail],
   )
-
-  useEffect(() => {
-    if (!isDev || !hasExtractable || probe !== null) return
-    let alive = true
-    window.api.extract
-      .probePackage(pkg.filename)
-      .then((r) => {
-        if (alive) setProbe(r || { scenes: [] })
-      })
-      .catch(() => {
-        if (alive) setProbe({ scenes: [] })
-      })
-    return () => {
-      alive = false
-    }
-  }, [isDev, hasExtractable, pkg.filename, probe])
 
   const p = detail || pkg
   const name = displayName(p)
@@ -285,7 +268,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
   }, [probe])
 
   const renderPkgExtractEntries = () => {
-    if (!isDev || !hasExtractable || !extractGroups) return null
+    if (!extractGroups) return null
     const entries = []
     for (const [groupKey, group] of Object.entries(extractGroups)) {
       const { kind, actionLabel, missing } = group
@@ -424,50 +407,46 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                   Promote ({bulkDepCount})
                 </ContextMenuItem>
               )}
-              {isDev && (
-                <>
-                  <ContextMenuSeparator />
-                  <ContextMenuItem
-                    onSelect={() =>
-                      void runLibraryBulkExtract({
-                        kind: 'appearance',
-                        sources: SCENE_SOURCE_TYPES,
-                        sourceNoun: 'scenes',
-                        actionLabel: 'Extract appearance',
-                      })
-                    }
-                  >
-                    <Download size={12} className="shrink-0 text-accent-blue" />
-                    Extract appearance presets from scenes ({bulkSelectedFilenames.length})
-                  </ContextMenuItem>
-                  <ContextMenuItem
-                    onSelect={() =>
-                      void runLibraryBulkExtract({
-                        kind: 'outfit',
-                        sources: SCENE_SOURCE_TYPES,
-                        sourceNoun: 'scenes',
-                        actionLabel: 'Extract outfit',
-                      })
-                    }
-                  >
-                    <Download size={12} className="shrink-0 text-accent-blue" />
-                    Extract outfit presets from scenes ({bulkSelectedFilenames.length})
-                  </ContextMenuItem>
-                  <ContextMenuItem
-                    onSelect={() =>
-                      void runLibraryBulkExtract({
-                        kind: 'appearance',
-                        sources: LOOK_SOURCE_TYPES,
-                        sourceNoun: 'legacy looks',
-                        actionLabel: 'Convert to appearance',
-                      })
-                    }
-                  >
-                    <Download size={12} className="shrink-0 text-accent-blue" />
-                    Convert legacy looks to appearance presets ({bulkSelectedFilenames.length})
-                  </ContextMenuItem>
-                </>
-              )}
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                onSelect={() =>
+                  void runLibraryBulkExtract({
+                    kind: 'appearance',
+                    sources: SCENE_SOURCE_TYPES,
+                    sourceNoun: 'scenes',
+                    actionLabel: 'Extract appearance',
+                  })
+                }
+              >
+                <Download size={12} className="shrink-0 text-accent-blue" />
+                Extract appearance presets from scenes ({bulkSelectedFilenames.length})
+              </ContextMenuItem>
+              <ContextMenuItem
+                onSelect={() =>
+                  void runLibraryBulkExtract({
+                    kind: 'outfit',
+                    sources: SCENE_SOURCE_TYPES,
+                    sourceNoun: 'scenes',
+                    actionLabel: 'Extract outfit',
+                  })
+                }
+              >
+                <Download size={12} className="shrink-0 text-accent-blue" />
+                Extract outfit presets from scenes ({bulkSelectedFilenames.length})
+              </ContextMenuItem>
+              <ContextMenuItem
+                onSelect={() =>
+                  void runLibraryBulkExtract({
+                    kind: 'appearance',
+                    sources: LOOK_SOURCE_TYPES,
+                    sourceNoun: 'legacy looks',
+                    actionLabel: 'Convert to appearance',
+                  })
+                }
+              >
+                <Download size={12} className="shrink-0 text-accent-blue" />
+                Convert legacy looks to appearance presets ({bulkSelectedFilenames.length})
+              </ContextMenuItem>
             </>
           ) : (
             <>
