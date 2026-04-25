@@ -3,7 +3,7 @@ import { access, readdir } from 'fs/promises'
 import { dirname, join } from 'path'
 import { ADDON_PACKAGES } from '../../shared/paths.js'
 import { getSetting, clearAllCorrupted, batchSetCorrupted } from '../db.js'
-import { runScan, applyAutoHide } from '../scanner/index.js'
+import { runScan, applyAutoHide, removeAutoHide } from '../scanner/index.js'
 import { runIntegrityCheck } from '../scanner/integrity.js'
 import { buildFromDb } from '../store.js'
 import { startWatcher } from '../watcher.js'
@@ -46,6 +46,17 @@ export function registerScanHandlers() {
     const vamDir = getSetting('vam_dir')
     if (!vamDir) throw new Error('VaM directory not configured')
     await applyAutoHide(vamDir, (progress) => {
+      notify('auto-hide:progress', progress)
+    })
+
+    notify('contents:updated')
+    return { ok: true }
+  })
+
+  ipcMain.handle('scan:remove-auto-hide', async () => {
+    const vamDir = getSetting('vam_dir')
+    if (!vamDir) throw new Error('VaM directory not configured')
+    await removeAutoHide(vamDir, (progress) => {
       notify('auto-hide:progress', progress)
     })
 

@@ -13,7 +13,7 @@ import {
   getSetting,
   setSetting,
 } from '../db.js'
-import { readAllPrefs, hidePackageContent, migratePrefsExtensions } from '../vam-prefs.js'
+import { readAllPrefs, hidePackageContent, unhidePackageContent, migratePrefsExtensions } from '../vam-prefs.js'
 import {
   buildFromDb,
   buildGraphOnly,
@@ -183,6 +183,38 @@ export async function applyAutoHide(vamDir, onProgress = () => {}) {
     onProgress({ current: done, total: work.length, filename, items: totalItems })
     await hidePackageContent(vamDir, filename, paths)
     for (const p of paths) updatePref(filename, p, 'hidden', true)
+    done++
+  }
+  onProgress({ current: work.length, total: work.length, items: totalItems })
+}
+
+/**
+ * Remove .hide from all hidden content in dependency packages (e.g. when user turns off auto-hide).
+ * @param {string} vamDir
+ * @param {(data: { current: number, total: number, filename?: string, items: number }) => void} [onProgress]
+ */
+export async function removeAutoHide(vamDir, onProgress = () => {}) {
+  const pkgIndex = getPackageIndex()
+  const cbp = getContentByPackage()
+
+  const work = []
+  let totalItems = 0
+  for (const [filename, pkg] of pkgIndex) {
+    if (pkg.is_direct) continue
+    const items = cbp.get(filename) || []
+    const paths = items.filter((c) => c.hidden).map((c) => c.internal_path)
+    if (paths.length > 0) {
+      work.push({ filename, paths })
+      totalItems += paths.length
+    }
+  }
+
+  onProgress({ current: 0, total: work.length, items: totalItems })
+  let done = 0
+  for (const { filename, paths } of work) {
+    onProgress({ current: done, total: work.length, filename, items: totalItems })
+    await unhidePackageContent(vamDir, filename, paths)
+    for (const p of paths) updatePref(filename, p, 'hidden', false)
     done++
   }
   onProgress({ current: work.length, total: work.length, items: totalItems })

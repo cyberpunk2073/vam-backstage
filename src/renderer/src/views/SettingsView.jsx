@@ -17,6 +17,7 @@ import { formatBytes } from '../lib/utils'
 import { toast } from '../components/Toast'
 import { useStatusStore } from '../stores/useStatusStore'
 import { Button } from '../components/ui/button'
+import { Progress } from '../components/ui/progress'
 import { Switch } from '../components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import {
@@ -50,6 +51,12 @@ export default function SettingsView() {
   const [baDirPresent, setBaDirPresent] = useState(false)
   const [appVersion, setAppVersion] = useState('')
   const [updateChannel, setUpdateChannel] = useState('stable')
+  const [unhideDialogOpen, setUnhideDialogOpen] = useState(false)
+  const [unhiding, setUnhiding] = useState(false)
+  const [unhideProgress, setUnhideProgress] = useState(null)
+  const [hideDialogOpen, setHideDialogOpen] = useState(false)
+  const [hiding, setHiding] = useState(false)
+  const [hideProgress, setHideProgress] = useState(null)
   const stats = useStatusStore((s) => s.stats)
   const fetchStats = useStatusStore((s) => s.fetchStats)
 
@@ -161,17 +168,113 @@ export default function SettingsView() {
     }
   }, [verifying, hubScanning, fetchStats])
 
-  const handleToggleAutoHide = useCallback(async (checked) => {
-    setAutoHideDeps(checked)
-    await window.api.settings.set('auto_hide_deps', checked ? '1' : '0')
-    if (checked) {
-      try {
-        await window.api.scan.applyAutoHide()
-      } catch (err) {
-        toast(`Auto-hide failed: ${err.message}`)
-      }
+  const handleTurnOffAutoHideOnly = useCallback(async (e) => {
+    e?.preventDefault()
+    try {
+      await window.api.settings.set('auto_hide_deps', '0')
+      setAutoHideDeps(false)
+      setUnhideDialogOpen(false)
+    } catch (err) {
+      toast(`Failed to update setting: ${err.message}`)
     }
   }, [])
+
+  const handleTurnOffAutoHideAndUnhide = useCallback(
+    async (e) => {
+      e?.preventDefault()
+      try {
+        await window.api.settings.set('auto_hide_deps', '0')
+        setAutoHideDeps(false)
+      } catch (err) {
+        toast(`Failed to update setting: ${err.message}`)
+        return
+      }
+      setUnhiding(true)
+      setUnhideProgress(null)
+      let progressCleanup = null
+      try {
+        progressCleanup = window.api.onApplyAutoHideProgress((data) => {
+          setUnhideProgress(data)
+        })
+        await window.api.scan.removeAutoHide()
+        fetchStats()
+      } catch (err) {
+        toast(`Unhide failed: ${err.message}`, 'error', 5000)
+      } finally {
+        progressCleanup?.()
+        setUnhiding(false)
+        setUnhideProgress(null)
+        setUnhideDialogOpen(false)
+      }
+    },
+    [fetchStats],
+  )
+
+  const handleTurnOnAutoHideOnly = useCallback(async (e) => {
+    e?.preventDefault()
+    try {
+      await window.api.settings.set('auto_hide_deps', '1')
+      setAutoHideDeps(true)
+      setHideDialogOpen(false)
+    } catch (err) {
+      toast(`Failed to update setting: ${err.message}`)
+    }
+  }, [])
+
+  const handleTurnOnAndHide = useCallback(
+    async (e) => {
+      e?.preventDefault()
+      try {
+        await window.api.settings.set('auto_hide_deps', '1')
+        setAutoHideDeps(true)
+      } catch (err) {
+        toast(`Failed to update setting: ${err.message}`)
+        return
+      }
+      setHiding(true)
+      setHideProgress(null)
+      let progressCleanup = null
+      try {
+        progressCleanup = window.api.onApplyAutoHideProgress((data) => {
+          setHideProgress(data)
+        })
+        await window.api.scan.applyAutoHide()
+        fetchStats()
+      } catch (err) {
+        toast(`Auto-hide failed: ${err.message}`)
+      } finally {
+        progressCleanup?.()
+        setHiding(false)
+        setHideProgress(null)
+        setHideDialogOpen(false)
+      }
+    },
+    [fetchStats],
+  )
+
+  const handleToggleAutoHide = useCallback(async (checked) => {
+    if (!checked) {
+      setUnhideDialogOpen(true)
+      return
+    }
+    setHideDialogOpen(true)
+  }, [])
+
+  const onUnhideDialogOpenChange = useCallback(
+    (open) => {
+      if (!open && unhiding) return
+      setUnhideDialogOpen(open)
+    },
+    [unhiding],
+  )
+
+  const onHideDialogOpenChange = useCallback(
+    (open) => {
+      if (!open && hiding) return
+      setHideDialogOpen(open)
+    },
+    [hiding],
+  )
 
   const handleToggleBlurThumbnails = useCallback(async (checked) => {
     setBlurThumbnails(checked)
@@ -401,9 +504,111 @@ export default function SettingsView() {
                 Automatically hide content items from dependency packages so only directly installed content is visible.
               </div>
             </div>
-            <Switch checked={autoHideDeps} onCheckedChange={handleToggleAutoHide} />
+            <Switch checked={autoHideDeps} onCheckedChange={handleToggleAutoHide} disabled={unhiding || hiding} />
           </label>
         </Section>
+
+        <AlertDialog open={hideDialogOpen} onOpenChange={onHideDialogOpenChange}>
+          <AlertDialogContent className="max-w-md" size="default">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Hide dependency content?</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="text-[11px] text-text-tertiary space-y-2">
+                  <p>Would you like to hide content from existing dependency packages now?</p>
+                  <p>
+                    You can enable auto-hide for new installs only — choose &quot;Turn on&quot; and hide existing items
+                    later from the Content browser.
+                  </p>
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            {hiding && hideProgress && hideProgress.total > 0 && (
+              <div className="space-y-2">
+                <div className="flex justify-between text-[11px] text-text-tertiary">
+                  <span className="truncate pr-2">
+                    Hiding dependency content — {hideProgress.current.toLocaleString()} of{' '}
+                    {hideProgress.total.toLocaleString()} packages
+                  </span>
+                  <span className="shrink-0 text-text-secondary/90">
+                    {Math.min(100, Math.round((hideProgress.current / hideProgress.total) * 100))}%
+                  </span>
+                </div>
+                <Progress
+                  value={Math.min(100, Math.round((hideProgress.current / hideProgress.total) * 100))}
+                  className="h-[5px] bg-white/8"
+                  indicatorClassName="bg-linear-to-r from-accent-blue to-[#c040ee]"
+                />
+              </div>
+            )}
+            {hiding && (!hideProgress || hideProgress.total === 0) && (
+              <div className="flex items-center gap-2 text-[11px] text-text-tertiary">
+                <Loader2 size={14} className="animate-spin shrink-0" />
+                Hiding dependency content…
+              </div>
+            )}
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={hiding}>Cancel</AlertDialogCancel>
+              <Button type="button" variant="outline" onClick={handleTurnOnAutoHideOnly} disabled={hiding}>
+                Turn on
+              </Button>
+              <AlertDialogAction onClick={handleTurnOnAndHide} disabled={hiding} className="gap-1.5">
+                {hiding ? <Loader2 size={14} className="animate-spin" /> : null}
+                Turn on and hide all
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog open={unhideDialogOpen} onOpenChange={onUnhideDialogOpenChange}>
+          <AlertDialogContent className="max-w-md" size="default">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Unhide dependency content?</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="text-[11px] text-text-tertiary space-y-2">
+                  <p>Would you like to also unhide all hidden content from dependency packages?</p>
+                  <p>
+                    You can keep them hidden and only turn off auto-hide for future installs — choose &quot;Turn
+                    off&quot;.
+                  </p>
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            {unhiding && unhideProgress && unhideProgress.total > 0 && (
+              <div className="space-y-2">
+                <div className="flex justify-between text-[11px] text-text-tertiary">
+                  <span className="truncate pr-2">
+                    Unhiding dependency content — {unhideProgress.current.toLocaleString()} of{' '}
+                    {unhideProgress.total.toLocaleString()} packages
+                  </span>
+                  <span className="shrink-0 text-text-secondary/90">
+                    {Math.min(100, Math.round((unhideProgress.current / unhideProgress.total) * 100))}%
+                  </span>
+                </div>
+                <Progress
+                  value={Math.min(100, Math.round((unhideProgress.current / unhideProgress.total) * 100))}
+                  className="h-[5px] bg-white/8"
+                  indicatorClassName="bg-linear-to-r from-accent-blue to-[#c040ee]"
+                />
+              </div>
+            )}
+            {unhiding && (!unhideProgress || unhideProgress.total === 0) && (
+              <div className="flex items-center gap-2 text-[11px] text-text-tertiary">
+                <Loader2 size={14} className="animate-spin shrink-0" />
+                Unhiding dependency content…
+              </div>
+            )}
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={unhiding}>Cancel</AlertDialogCancel>
+              <Button type="button" variant="outline" onClick={handleTurnOffAutoHideOnly} disabled={unhiding}>
+                Turn off
+              </Button>
+              <AlertDialogAction onClick={handleTurnOffAutoHideAndUnhide} disabled={unhiding} className="gap-1.5">
+                {unhiding ? <Loader2 size={14} className="animate-spin" /> : null}
+                Turn off and unhide all
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* Privacy */}
         <Section title="Privacy" description="Options to obscure sensitive content in the UI.">
