@@ -1010,7 +1010,12 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
               title={urlCopied ? 'Copied!' : 'Copy URL'}
               className="shrink-0 relative"
               onClick={() => {
-                navigator.clipboard.writeText(displayUrl).then(() => {
+                // Strip trailing *-panel segment so the copied URL is shareable (e.g. …/overview-panel → …/).
+                const url = displayUrl.replace(
+                  /^(https:\/\/hub\.virtamate\.com\/(?:resources|threads)\/[^/]+)\/[^/]+-panel\/?$/,
+                  '$1/',
+                )
+                navigator.clipboard.writeText(url).then(() => {
                   setUrlCopied(true)
                   setTimeout(() => setUrlCopied(false), 1500)
                 })
