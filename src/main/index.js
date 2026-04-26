@@ -15,6 +15,14 @@ import { setPendingStartupUnreadable } from './ipc/scanner.js'
 import { fetchPackagesJson, loadPackagesJsonFromCache } from './hub/packages-json.js'
 import { scanHubDetails } from './hub/scanner.js'
 import { initAutoUpdater } from './updater.js'
+import {
+  attachMainWindowStatePersistence,
+  loadMainWindowState,
+  DEFAULT_WIDTH,
+  DEFAULT_HEIGHT,
+  MIN_WIDTH,
+  MIN_HEIGHT,
+} from './window-state.js'
 
 // Electron logs unhandled IPC rejections for aborted/failed guest navigations to stderr;
 // these are benign noise when switching Hub detail tabs rapidly.
@@ -89,12 +97,14 @@ function registerWebviewWindowOpenHandler() {
 }
 
 function createWindow() {
+  const saved = loadMainWindowState()
   mainWindow = new BrowserWindow({
     title: 'VaM Backstage',
-    width: 1280,
-    height: 820,
-    minWidth: 800,
-    minHeight: 500,
+    width: saved?.width ?? DEFAULT_WIDTH,
+    height: saved?.height ?? DEFAULT_HEIGHT,
+    ...(saved && { x: saved.x, y: saved.y }),
+    minWidth: MIN_WIDTH,
+    minHeight: MIN_HEIGHT,
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#0a0b10',
@@ -105,8 +115,10 @@ function createWindow() {
       webviewTag: true,
     },
   })
+  attachMainWindowStatePersistence(mainWindow)
 
   mainWindow.on('ready-to-show', () => {
+    if (saved?.isMaximized) mainWindow.maximize()
     mainWindow.show()
   })
 

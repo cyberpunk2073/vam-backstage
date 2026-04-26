@@ -26,6 +26,7 @@
 - more test coverage
 - updates tab in hub is hidden for some reason
 - when no known content, still should be a button to browse file
+- add extract appearance/outfit presets to scene items in content gallery, same with convert to appearance preset for legacy looks
 
 ## Features with low priority:
 
