@@ -183,6 +183,25 @@ const api = {
   },
 }
 
+// Mirror main-process logs into the renderer DevTools console. Errors sent
+// from the main process arrive as { __mainLogError, name, message, stack };
+// rehydrate to a real Error so DevTools renders them with a clickable stack.
+ipcRenderer.on('main:log', (_e, payload) => {
+  if (!payload) return
+  const { level, args } = payload
+  const fn = console[level] || console.log
+  const restored = (args || []).map((a) => {
+    if (a && typeof a === 'object' && a.__mainLogError) {
+      const err = new Error(a.message)
+      err.name = a.name || 'Error'
+      err.stack = a.stack
+      return err
+    }
+    return a
+  })
+  fn('%c[main]', 'color:#888', ...restored)
+})
+
 // When the browser detects network recovery, notify the main process so
 // downloads waiting on retry backoff can resume immediately.
 window.addEventListener('online', () => {

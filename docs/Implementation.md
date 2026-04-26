@@ -1317,6 +1317,8 @@ Handlers live under `src/main/ipc/` split per domain (`packages.js`, `contents.j
 
 Always registered, but destructive handlers (`dev:nuke-database`) are gated behind either `is.dev` or the `developer_options_unlocked` setting (toggled by seven taps on the version string).
 
+When developer options are unlocked, **F12** (and Ctrl+Shift+I / Cmd+Alt+I) toggle Chromium DevTools on the main window — the hotkeys are gated in `attachDevToolsHotkeys` (`src/main/index.js`) so they work in packaged builds, not just `npm run dev`. All main-process `console.*` output is also mirrored into the renderer DevTools console with a `[main]` prefix via `src/main/log-forward.js` and a preload-side `main:log` listener; messages emitted before the renderer finishes loading are buffered (last 500) and flushed on `did-finish-load`.
+
 | Channel                         | Purpose                                    |
 | ------------------------------- | ------------------------------------------ |
 | `dev:is-dev`                    | Whether the app is running in dev mode     |

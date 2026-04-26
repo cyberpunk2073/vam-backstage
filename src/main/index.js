@@ -10,6 +10,7 @@ import { initDownloadManager, onNetworkOnline } from './downloads/manager.js'
 import { startWatcher, stopWatcher } from './watcher.js'
 import { resolvePackageThumbnails } from './thumb-resolver.js'
 import { initNotify, notify } from './notify.js'
+import { initLogForward, forwardLogToRenderer, flushBufferedLogs } from './log-forward.js'
 import { runScan } from './scanner/index.js'
 import { setPendingStartupUnreadable } from './ipc/scanner.js'
 import { fetchPackagesJson, loadPackagesJsonFromCache } from './hub/packages-json.js'
@@ -24,10 +25,20 @@ import {
   MIN_HEIGHT,
 } from './window-state.js'
 
-// Electron logs unhandled IPC rejections for aborted/failed guest navigations to stderr;
-// these are benign noise when switching Hub detail tabs rapidly.
+// Wrap console.* once, very early, so that:
+//   1. Benign GUEST_VIEW_MANAGER_CALL abort noise (from rapid Hub tab switches)
+//      is dropped before reaching stderr.
+//   2. Every remaining call is mirrored into the renderer DevTools console
+//      via main:log, so opening DevTools (F12 in dev mode) shows main + renderer
+//      logs interleaved.
 {
-  const orig = { error: console.error.bind(console), warn: console.warn.bind(console) }
+  const nativeConsole = {
+    log: console.log.bind(console),
+    info: console.info.bind(console),
+    warn: console.warn.bind(console),
+    error: console.error.bind(console),
+    debug: console.debug.bind(console),
+  }
   const isGuestAbortNoise = (args) => {
     const s = args.map((a) => (a instanceof Error ? a.message : typeof a === 'string' ? a : String(a))).join(' ')
     return (
@@ -35,12 +46,23 @@ import {
       (s.includes('ERR_ABORTED') || s.includes('ERR_FAILED') || /\(-[23]\)/.test(s))
     )
   }
-  console.error = (...a) => {
-    if (!isGuestAbortNoise(a)) orig.error(...a)
-  }
-  console.warn = (...a) => {
-    if (!isGuestAbortNoise(a)) orig.warn(...a)
-  }
+  // The forward call is the only thing that can plausibly throw (IPC clone
+  // failure, dead webContents). Catching it here keeps log calls side-effect-
+  // only without burying real bugs in the noise filter or the native console.
+  const wrap =
+    (level) =>
+    (...args) => {
+      if ((level === 'warn' || level === 'error') && isGuestAbortNoise(args)) return
+      nativeConsole[level](...args)
+      try {
+        forwardLogToRenderer(level, args)
+      } catch {}
+    }
+  console.log = wrap('log')
+  console.info = wrap('info')
+  console.warn = wrap('warn')
+  console.error = wrap('error')
+  console.debug = wrap('debug')
 }
 
 let mainWindow = null
@@ -96,6 +118,29 @@ function registerWebviewWindowOpenHandler() {
   })
 }
 
+/**
+ * In dev (`is.dev`), `@electron-toolkit/utils`'s `optimizer.watchWindowShortcuts`
+ * already wires F12. In packaged builds it doesn't, and additionally blocks
+ * Ctrl+Shift+I / Cmd+Alt+I. Re-enable both when developer options are unlocked
+ * so support users can open DevTools without a dev build. Setting is re-read
+ * each press so the 7-tap unlock takes effect immediately.
+ */
+function attachDevToolsHotkeys(window) {
+  if (is.dev) return
+  window.webContents.on('before-input-event', (_event, input) => {
+    if (input.type !== 'keyDown') return
+    const isF12 = input.code === 'F12'
+    const isInspector = input.code === 'KeyI' && input.shift && (input.control || input.meta || input.alt)
+    if (!isF12 && !isInspector) return
+    let unlocked = false
+    try {
+      unlocked = getSetting('developer_options_unlocked') === '1'
+    } catch {}
+    if (!unlocked) return
+    window.webContents.toggleDevTools()
+  })
+}
+
 function createWindow() {
   const saved = loadMainWindowState()
   mainWindow = new BrowserWindow({
@@ -128,6 +173,9 @@ function createWindow() {
   })
 
   attachNativeTextContextMenu(mainWindow.webContents, mainWindow)
+  attachDevToolsHotkeys(mainWindow)
+
+  mainWindow.webContents.on('did-finish-load', () => flushBufferedLogs())
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -149,6 +197,7 @@ function initBackend() {
   openDatabase()
   loadPackagesJsonFromCache()
   initNotify(() => mainWindow)
+  initLogForward(() => mainWindow)
   registerAllHandlers()
   setupHubConsent()
   initDownloadManager()
