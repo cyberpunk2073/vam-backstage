@@ -2,8 +2,9 @@ import Database from 'better-sqlite3'
 import { existsSync, unlinkSync } from 'fs'
 import { app } from 'electron'
 import { join } from 'path'
+import { LOCAL_PACKAGE_FILENAME } from '../shared/local-package.js'
 
-const SCHEMA_VERSION = 17
+const SCHEMA_VERSION = 18
 
 let db
 
@@ -54,14 +55,18 @@ function migrate() {
 
   if (current === 0) {
     createSchema()
-  } else if (current < LEGACY_SCHEMA_CUTOFF) {
-    throw new Error(
-      `Schema version ${current} is from a pre-release build and cannot be migrated. ` +
-        `Delete "${getDatabasePath()}" and restart the app.`,
-    )
-  } else if (current < 17) {
-    applyV17()
+  } else {
+    if (current < LEGACY_SCHEMA_CUTOFF) {
+      throw new Error(
+        `Schema version ${current} is from a pre-release build and cannot be migrated. ` +
+          `Delete "${getDatabasePath()}" and restart the app.`,
+      )
+    }
+    if (current < 17) applyV17()
+    if (current < 18) applyV18()
   }
+
+  ensureLocalPackage()
 
   db.prepare('DELETE FROM schema_version').run()
   db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION)
@@ -70,6 +75,36 @@ function migrate() {
 function applyV17() {
   db.exec('ALTER TABLE contents ADD COLUMN person_atom_ids TEXT')
   db.prepare('UPDATE packages SET file_mtime = 0').run()
+}
+
+/**
+ * v18 — add `file_mtime` + `size_bytes` to `contents`. Used only for loose
+ * (`__local__`) rows: lets the local scanner skip `readFile` + JSON parse for
+ * scene-like items whose stat hasn't moved since the last scan, mirroring the
+ * package-level mtime gate `.var` packages already get in `runScan()`.
+ * Var-owned rows leave both at 0 — the package gate covers them.
+ */
+function applyV18() {
+  db.exec(`
+    ALTER TABLE contents ADD COLUMN file_mtime REAL NOT NULL DEFAULT 0;
+    ALTER TABLE contents ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0;
+  `)
+}
+
+/**
+ * Ensure the synthetic "local content" package row exists. Loose files under
+ * `vamDir/Saves` and `vamDir/Custom` are stored as `contents` rows that point
+ * at this sentinel so the foreign key holds without nullable columns. The
+ * sentinel is filtered out of every user-visible Library iteration in
+ * `store.js`. Idempotent — safe to call on every open.
+ */
+export function ensureLocalPackage() {
+  db.prepare(
+    `INSERT OR IGNORE INTO packages (
+      filename, creator, package_name, version, type, title, description, license,
+      size_bytes, file_mtime, is_direct, is_enabled, dep_refs, first_seen_at
+    ) VALUES (?, '', '', '', NULL, 'Local content', NULL, NULL, 0, 0, 1, 1, '[]', unixepoch())`,
+  ).run(LOCAL_PACKAGE_FILENAME)
 }
 
 /** Full schema as of LEGACY_SCHEMA_CUTOFF — new installs skip incremental migrations. */
@@ -113,6 +148,8 @@ function createSchema() {
       type TEXT NOT NULL,
       thumbnail_path TEXT,
       person_atom_ids TEXT,
+      file_mtime REAL NOT NULL DEFAULT 0,
+      size_bytes INTEGER NOT NULL DEFAULT 0,
       UNIQUE(package_filename, internal_path)
     );
 
@@ -229,12 +266,19 @@ export function getAllPackagesForHubScan() {
 
 // Contents
 export function insertContents(rows) {
+  if (rows.length === 0) return
   const ins = stmt(`
-    INSERT OR IGNORE INTO contents (package_filename, internal_path, display_name, type, thumbnail_path, person_atom_ids)
-    VALUES (@packageFilename, @internalPath, @displayName, @type, @thumbnailPath, @personAtomIds)
+    INSERT OR IGNORE INTO contents (
+      package_filename, internal_path, display_name, type, thumbnail_path,
+      person_atom_ids, file_mtime, size_bytes
+    )
+    VALUES (
+      @packageFilename, @internalPath, @displayName, @type, @thumbnailPath,
+      @personAtomIds, @fileMtime, @sizeBytes
+    )
   `)
   const tx = db.transaction((items) => {
-    for (const item of items) ins.run(item)
+    for (const item of items) ins.run({ fileMtime: 0, sizeBytes: 0, ...item })
   })
   tx(rows)
 }
@@ -247,8 +291,78 @@ export function getPersonAtomIds(packageFilename, internalPath) {
   )
 }
 
+/**
+ * Per-row metadata for the loose-content sentinel — the inputs the local
+ * scanner needs to decide whether each item is "unchanged" since its last row
+ * write. Includes the stat gate (`mtime`, `size`), the cached
+ * `person_atom_ids` JSON, and the classification fields (`displayName`,
+ * `type`, `thumbnailPath`) so we can also catch sibling-thumbnail additions
+ * that don't move the content file's mtime.
+ * @returns {Map<string, { mtime: number, size: number, personAtomIds: string|null, displayName: string, type: string, thumbnailPath: string|null }>}
+ */
+export function getLocalContentMeta(packageFilename) {
+  const rows = stmt(
+    `SELECT internal_path, file_mtime, size_bytes, person_atom_ids, display_name, type, thumbnail_path
+       FROM contents WHERE package_filename = ?`,
+  ).all(packageFilename)
+  return new Map(
+    rows.map((r) => [
+      r.internal_path,
+      {
+        mtime: r.file_mtime,
+        size: r.size_bytes,
+        personAtomIds: r.person_atom_ids,
+        displayName: r.display_name,
+        type: r.type,
+        thumbnailPath: r.thumbnail_path,
+      },
+    ]),
+  )
+}
+
+/**
+ * Insert-or-update a batch of `contents` rows, keyed on
+ * `(package_filename, internal_path)`. Preserves `contents.id` on update —
+ * unlike `INSERT OR REPLACE` (which is delete+insert under the hood) — so
+ * future joins against `contents.id` stay stable across rescans.
+ */
+export function upsertContents(rows) {
+  if (rows.length === 0) return
+  const ins = stmt(`
+    INSERT INTO contents (
+      package_filename, internal_path, display_name, type, thumbnail_path,
+      person_atom_ids, file_mtime, size_bytes
+    )
+    VALUES (
+      @packageFilename, @internalPath, @displayName, @type, @thumbnailPath,
+      @personAtomIds, @fileMtime, @sizeBytes
+    )
+    ON CONFLICT(package_filename, internal_path) DO UPDATE SET
+      display_name = excluded.display_name,
+      type = excluded.type,
+      thumbnail_path = excluded.thumbnail_path,
+      person_atom_ids = excluded.person_atom_ids,
+      file_mtime = excluded.file_mtime,
+      size_bytes = excluded.size_bytes
+  `)
+  const tx = db.transaction((items) => {
+    for (const item of items) ins.run({ fileMtime: 0, sizeBytes: 0, ...item })
+  })
+  tx(rows)
+}
+
 export function deleteContentsForPackage(filename) {
   stmt('DELETE FROM contents WHERE package_filename = ?').run(filename)
+}
+
+/** Targeted bulk delete of specific `internal_path`s under one package, in a transaction. */
+export function deleteContentsForPackagePaths(packageFilename, paths) {
+  if (paths.length === 0) return
+  const del = stmt('DELETE FROM contents WHERE package_filename = ? AND internal_path = ?')
+  const tx = db.transaction((ps) => {
+    for (const p of ps) del.run(packageFilename, p)
+  })
+  tx(paths)
 }
 
 export function getAllContents() {

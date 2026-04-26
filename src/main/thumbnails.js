@@ -2,6 +2,7 @@ import { join } from 'path'
 import { readFile, access } from 'fs/promises'
 import { constants } from 'fs'
 import { ADDON_PACKAGES } from '../shared/paths.js'
+import { isLocalPackage } from '../shared/local-package.js'
 import { app } from 'electron'
 import { getSetting, getContentThumbnailPath } from './db.js'
 import { extractFile, extractFiles } from './scanner/var-reader.js'
@@ -72,6 +73,13 @@ export async function getThumbnails(keys) {
     if (key.startsWith('pkg:')) {
       const filename = key.slice(4)
 
+      if (isLocalPackage(filename)) {
+        // No companion .var or hub thumbnail; loose content has no aggregate package thumb.
+        cache.set(key, null)
+        results[key] = null
+        continue
+      }
+
       // 1. Companion .jpg next to the .var (always named with .var stem, never .disabled)
       let buf = await tryReadFile(join(addonDir, filename.replace(/\.var$/i, '.jpg')))
 
@@ -102,6 +110,12 @@ export async function getThumbnails(keys) {
       if (!thumbPath) {
         cache.set(key, null)
         results[key] = null
+        continue
+      }
+      if (isLocalPackage(filename)) {
+        const buf = await tryReadFile(join(vamDir, thumbPath))
+        cache.set(key, buf || null)
+        results[key] = buf || null
         continue
       }
       const varPath = resolveVarPath(addonDir, filename)

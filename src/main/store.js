@@ -25,6 +25,27 @@ import {
 } from '../shared/content-types.js'
 import { haystacksMatchAllTerms, searchAndTerms } from '../shared/search-text.js'
 import { getPackagesIndex, loadPackagesJsonFromCache } from './hub/packages-json.js'
+import { isLocalPackage } from '../shared/local-package.js'
+
+/**
+ * Iterate packages excluding the synthetic `__local__` sentinel that owns loose
+ * Saves/Custom content. Use everywhere we surface package data (Library, facets,
+ * stats, counts) so the sentinel never appears as a card or affects totals.
+ * Internal graph/content-by-package lookups still see it via `packageIndex` so
+ * sentinel-owned content rows can resolve their owner without a special case.
+ */
+function* userPackageEntries() {
+  for (const entry of packageIndex) {
+    if (isLocalPackage(entry[0])) continue
+    yield entry
+  }
+}
+
+function userPackageValues() {
+  const arr = []
+  for (const [, pkg] of userPackageEntries()) arr.push(pkg)
+  return arr
+}
 
 /** Scanned / Hub `type` column, optionally replaced by user `type_override`. */
 export function effectivePackageType(pkg) {
@@ -240,7 +261,7 @@ export function buildFromDb({ skipGraph = false } = {}) {
   buildNonDownloadableRids()
 
   creatorsNeedingUserId = new Map()
-  for (const [filename, pkg] of packageIndex) {
+  for (const [filename, pkg] of userPackageEntries()) {
     if (pkg.hub_user_id) continue
     const key = pkg.creator.toLowerCase()
     let arr = creatorsNeedingUserId.get(key)
@@ -252,7 +273,7 @@ export function buildFromDb({ skipGraph = false } = {}) {
   }
 
   tagCounts = {}
-  for (const pkg of packageIndex.values()) {
+  for (const pkg of userPackageValues()) {
     if (!pkg.hub_tags) continue
     for (const raw of pkg.hub_tags.split(',')) {
       const t = raw.trim().toLowerCase()
@@ -261,7 +282,7 @@ export function buildFromDb({ skipGraph = false } = {}) {
   }
 
   authorCounts = {}
-  for (const pkg of packageIndex.values()) {
+  for (const pkg of userPackageValues()) {
     const a = typeof pkg.creator === 'string' ? pkg.creator.trim() : ''
     if (a) authorCounts[a] = (authorCounts[a] || 0) + 1
   }
@@ -321,13 +342,15 @@ function computeTransitiveMissing() {
 function computeStats() {
   let directCount = 0,
     depCount = 0,
+    totalCount = 0,
     totalSize = 0,
     directSize = 0,
     depSize = 0,
     brokenCount = 0
   const contentByType = {}
 
-  for (const [filename, pkg] of packageIndex) {
+  for (const [filename, pkg] of userPackageEntries()) {
+    totalCount++
     if (pkg.is_direct) {
       directCount++
       directSize += pkg.size_bytes
@@ -355,7 +378,7 @@ function computeStats() {
   stats = {
     directCount,
     depCount,
-    totalCount: packageIndex.size,
+    totalCount,
     brokenCount,
     totalContent: contentItems.length,
     totalSize,
@@ -454,7 +477,7 @@ export function updatePref(packageFilename, internalPath, field, value) {
 // --- Filtered queries ---
 
 export function getFilteredPackages(filters = {}) {
-  let results = [...packageIndex.values()]
+  let results = userPackageValues()
 
   if (filters.search?.trim()) {
     const terms = searchAndTerms(filters.search)
@@ -574,6 +597,7 @@ function buildDepTree(rootFilename, visited = new Set()) {
 }
 
 export function getPackageDetail(filename) {
+  if (isLocalPackage(filename)) return null
   const pkg = packageIndex.get(filename)
   if (!pkg) return null
 
@@ -698,7 +722,7 @@ export function getStatusCounts() {
     broken = 0,
     orphan = orphanSet.size,
     local = 0
-  for (const [filename, pkg] of packageIndex) {
+  for (const [filename, pkg] of userPackageEntries()) {
     if (pkg.is_direct) direct++
     else dependency++
     if ((transitiveMissingMap.get(filename) || 0) > 0 || pkg.is_corrupted) broken++
@@ -706,7 +730,7 @@ export function getStatusCounts() {
   }
 
   const missingGroups = new Set()
-  for (const [filename] of packageIndex) {
+  for (const [filename] of userPackageEntries()) {
     for (const d of forwardDeps.get(filename) || []) {
       if (d.resolved && d.resolution !== 'fallback') continue
       const parsed = parseDepRef(d.ref)
@@ -737,7 +761,7 @@ export function getOrphanTotalSize() {
  */
 export function getMissingDeps(hubPackagesIndex, hubFilenameIndex) {
   const groups = new Map() // ref -> { neededBy: Set, parsed, fallbackVersion }
-  for (const [filename] of packageIndex) {
+  for (const [filename] of userPackageEntries()) {
     for (const d of forwardDeps.get(filename) || []) {
       if (d.resolved && d.resolution !== 'fallback') continue
       const parsed = parseDepRef(d.ref)
@@ -818,7 +842,7 @@ export function getMissingDeps(hubPackagesIndex, hubFilenameIndex) {
 
 export function getTypeCounts() {
   const counts = {}
-  for (const pkg of packageIndex.values()) {
+  for (const pkg of userPackageValues()) {
     const t = effectivePackageType(pkg)
     if (t) counts[t] = (counts[t] || 0) + 1
   }
@@ -849,13 +873,14 @@ export function getContentVisibilityCounts() {
 
 export function findLocalByHubResourceId(resourceId) {
   const rid = String(resourceId)
-  for (const pkg of packageIndex.values()) {
+  for (const pkg of userPackageValues()) {
     if (pkg.hub_resource_id === rid) return pkg
   }
   return null
 }
 
 export function findLocalByFilename(filename) {
+  if (isLocalPackage(filename)) return null
   return packageIndex.get(filename) || null
 }
 

@@ -1,4 +1,5 @@
 import { ipcMain, shell } from 'electron'
+import { join } from 'path'
 
 const ALLOWED_PROTOCOLS = new Set(['http:', 'https:'])
 
@@ -23,8 +24,11 @@ export function registerShellHandlers() {
     }
   })
 
-  ipcMain.handle('shell:showItemInFolder', (_, fullPath) => {
-    if (typeof fullPath !== 'string' || !fullPath.trim()) return
-    shell.showItemInFolder(fullPath.trim())
+  ipcMain.handle('shell:showItemInFolder', (_, pathOrSegments) => {
+    const parts = (Array.isArray(pathOrSegments) ? pathOrSegments : [pathOrSegments]).filter(
+      (s) => typeof s === 'string' && s.length > 0,
+    )
+    if (!parts.length) return
+    shell.showItemInFolder(join(...parts))
   })
 }

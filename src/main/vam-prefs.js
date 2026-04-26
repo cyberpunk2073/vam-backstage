@@ -2,12 +2,17 @@ import { readdir, writeFile, unlink, mkdir, rename } from 'fs/promises'
 import { join, dirname, extname } from 'path'
 import { existsSync } from 'fs'
 import { ADDON_PACKAGES_FILE_PREFS } from '../shared/paths.js'
+import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_ROOTS, isLocalPackage } from '../shared/local-package.js'
 import { suppressPath } from './watcher.js'
 
 /**
  * VaM stores content visibility preferences as sidecar files:
  *   {vamDir}/AddonPackagesFilePrefs/{packageStem}/{internalPath}.hide
  *   {vamDir}/AddonPackagesFilePrefs/{packageStem}/{internalPath}.fav
+ *
+ * For loose content (the `__local__` sentinel) VaM uses **sibling** sidecars
+ * placed next to the source file, e.g. `{vamDir}/Saves/scene/Foo/Foo.json.hide`,
+ * matching the on-disk convention that the game itself reads.
  *
  * These are empty files — existence alone is the flag.
  */
@@ -17,6 +22,9 @@ function prefsDir(vamDir) {
 }
 
 function sidecarPath(vamDir, packageFilename, internalPath, ext) {
+  if (isLocalPackage(packageFilename)) {
+    return join(vamDir, internalPath + ext)
+  }
   const stem = packageFilename.replace(/\.var$/i, '')
   return join(prefsDir(vamDir), stem, internalPath + ext)
 }
@@ -41,13 +49,27 @@ export async function readAllPrefs(vamDir) {
     if (!dir.isDirectory()) continue
     const pkgStem = dir.name
     const pkgFilename = pkgStem + '.var'
-    await walkPrefsDir(join(root, pkgStem), '', pkgFilename, prefs)
+    await walkSidecarDir(join(root, pkgStem), '', pkgFilename, prefs, { requireSiblingTarget: false })
+  }
+
+  for (const localRoot of LOCAL_CONTENT_ROOTS) {
+    await walkSidecarDir(join(vamDir, localRoot), localRoot, LOCAL_PACKAGE_FILENAME, prefs, {
+      requireSiblingTarget: true,
+    })
   }
 
   return prefs
 }
 
-async function walkPrefsDir(dirPath, relativePath, pkgFilename, prefs) {
+/**
+ * Walk a directory tree looking for `.hide`/`.fav` sidecars and merge them into
+ * `prefs` keyed as `<keyPrefix>/<internalPath>`. Set `requireSiblingTarget` for
+ * loose-content roots: VaM places sidecars next to the content file, so an
+ * orphan sidecar (no sibling content) should be ignored. The packaged-content
+ * `AddonPackagesFilePrefs/<stem>/...` layout has no such sibling, so the flag
+ * is off there.
+ */
+async function walkSidecarDir(dirPath, relativePath, keyPrefix, prefs, { requireSiblingTarget }) {
   let entries
   try {
     entries = await readdir(dirPath, { withFileTypes: true })
@@ -55,32 +77,31 @@ async function walkPrefsDir(dirPath, relativePath, pkgFilename, prefs) {
     return
   }
 
+  const siblingFiles = requireSiblingTarget ? new Set(entries.filter((e) => e.isFile()).map((e) => e.name)) : null
+
   for (const entry of entries) {
     const relPath = relativePath ? relativePath + '/' + entry.name : entry.name
-
     if (entry.isDirectory()) {
-      await walkPrefsDir(join(dirPath, entry.name), relPath, pkgFilename, prefs)
+      await walkSidecarDir(join(dirPath, entry.name), relPath, keyPrefix, prefs, { requireSiblingTarget })
       continue
     }
-
     if (!entry.isFile()) continue
 
     const isHide = entry.name.endsWith('.hide')
     const isFav = entry.name.endsWith('.fav')
     if (!isHide && !isFav) continue
 
-    // Strip the sidecar extension to get the content path
     const ext = isHide ? '.hide' : '.fav'
-    const contentPath = relPath.slice(0, -ext.length)
-    const key = pkgFilename + '/' + contentPath
+    const targetName = entry.name.slice(0, -ext.length)
+    if (siblingFiles && !siblingFiles.has(targetName)) continue // orphaned sidecar
 
+    const contentPath = relPath.slice(0, -ext.length)
+    const key = keyPrefix + '/' + contentPath
     if (!prefs.has(key)) prefs.set(key, { hidden: false, favorite: false })
     const p = prefs.get(key)
     if (isHide) p.hidden = true
     if (isFav) p.favorite = true
   }
-
-  return prefs
 }
 
 /**

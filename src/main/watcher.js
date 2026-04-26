@@ -3,8 +3,10 @@ import chokidar from 'chokidar'
 import { join, extname, basename, relative, sep } from 'path'
 import { stat, mkdir, rename as fsRename } from 'fs/promises'
 import { ADDON_PACKAGES, ADDON_PACKAGES_FILE_PREFS } from '../shared/paths.js'
+import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_ROOTS } from '../shared/local-package.js'
 import { isVarFilename, canonicalVarFilename } from './scanner/var-reader.js'
 import { scanAndUpsert } from './scanner/ingest.js'
+import { runLocalScan } from './scanner/local.js'
 import { deletePackage, getPackageCacheInfo, setPackageEnabled } from './db.js'
 import { buildFromDb, getPrefsMap, setPrefsMap, getPackageIndex, getForwardDeps, patchEnabled } from './store.js'
 import { computeCascadeEnable } from './scanner/graph.js'
@@ -15,10 +17,13 @@ const DEBOUNCE_MS = 500
 
 let packageWatcher = null
 let prefsWatcher = null
+let localWatcher = null
 let prefsDirPath = null
 let vamDirPath = null
 let pendingPackageEvents = new Map() // fullPath -> 'add'|'change'|'unlink'
 let pendingPrefsEvents = new Map() // fullPath -> 'check'
+let pendingLocalContent = false
+let pendingLocalPrefs = new Map() // fullPath -> 'check'
 let debounceTimer = null
 let processing = false
 
@@ -65,8 +70,46 @@ export async function startWatcher(vamDir) {
     .on('error', (err) => console.warn('Package watcher error:', err.message))
 
   initPrefsWatcher(prefsDir)
+  initLocalWatcher(vamDir)
 
   console.log('FS watcher started:', addonDir)
+}
+
+/**
+ * Watch loose-content roots (`Saves/`, `Custom/`) for both content changes and
+ * sibling `.hide`/`.fav` sidecars. Content files trigger a debounced
+ * `runLocalScan()` to reconcile the `__local__`-owned `contents` rows; sidecar
+ * files update the in-memory prefs map directly so the UI flips without a
+ * full rescan.
+ */
+function initLocalWatcher(vamDir) {
+  if (localWatcher) {
+    localWatcher.close()
+    localWatcher = null
+  }
+  const roots = LOCAL_CONTENT_ROOTS.map((r) => join(vamDir, r))
+  localWatcher = chokidar.watch(roots, {
+    ignoreInitial: true,
+    depth: 20,
+    awaitWriteFinish: { stabilityThreshold: 1000, pollInterval: 200 },
+  })
+  localWatcher
+    .on('add', (p) => onLocalEvent(p))
+    .on('change', (p) => onLocalEvent(p))
+    .on('unlink', (p) => onLocalEvent(p))
+    .on('error', (err) => console.warn('Local watcher error:', err.message))
+}
+
+function onLocalEvent(fullPath) {
+  if (suppressedPaths.delete(fullPath)) return
+  const ext = extname(fullPath).toLowerCase()
+  if (ext === '.hide' || ext === '.fav') {
+    pendingLocalPrefs.set(fullPath, 'check')
+    scheduleBatch()
+    return
+  }
+  pendingLocalContent = true
+  scheduleBatch()
 }
 
 function initPrefsWatcher(prefsDir) {
@@ -99,12 +142,18 @@ export function stopWatcher() {
     prefsWatcher.close()
     prefsWatcher = null
   }
+  if (localWatcher) {
+    localWatcher.close()
+    localWatcher = null
+  }
   if (debounceTimer) {
     clearTimeout(debounceTimer)
     debounceTimer = null
   }
   pendingPackageEvents.clear()
   pendingPrefsEvents.clear()
+  pendingLocalPrefs.clear()
+  pendingLocalContent = false
   vamDirPath = null
 }
 
@@ -145,8 +194,12 @@ async function processBatch() {
 
   const pkgEvents = new Map(pendingPackageEvents)
   const prefsEvents = new Map(pendingPrefsEvents)
+  const localPrefsEvents = new Map(pendingLocalPrefs)
+  const localContentChanged = pendingLocalContent
   pendingPackageEvents.clear()
   pendingPrefsEvents.clear()
+  pendingLocalPrefs.clear()
+  pendingLocalContent = false
 
   let packagesChanged = false
   let contentsChanged = false
@@ -284,6 +337,44 @@ async function processBatch() {
     setPrefsMap(prefsMap)
     contentsChanged = true
   }
+
+  // --- Local content events ---
+  if (localContentChanged && vamDirPath) {
+    try {
+      const result = await runLocalScan(vamDirPath)
+      if (result.added > 0 || result.removed > 0) contentsChanged = true
+    } catch (err) {
+      console.warn('Watcher: local scan failed:', err.message)
+    }
+  }
+
+  // --- Local sibling sidecars ---
+  if (localPrefsEvents.size > 0 && vamDirPath) {
+    const prefsMap = getPrefsMap()
+    for (const [fullPath] of localPrefsEvents) {
+      try {
+        const rel = relative(vamDirPath, fullPath).split(sep).join('/')
+        const sidecarExt = extname(rel).toLowerCase()
+        const internalPath = rel.slice(0, -sidecarExt.length)
+        const key = LOCAL_PACKAGE_FILENAME + '/' + internalPath
+        let exists = false
+        try {
+          await stat(fullPath)
+          exists = true
+        } catch {}
+        if (!prefsMap.has(key)) prefsMap.set(key, { hidden: false, favorite: false })
+        const prefs = prefsMap.get(key)
+        if (sidecarExt === '.hide') prefs.hidden = exists
+        else if (sidecarExt === '.fav') prefs.favorite = exists
+      } catch (err) {
+        console.warn('Watcher: local prefs event failed:', err.message)
+      }
+    }
+    setPrefsMap(prefsMap)
+    contentsChanged = true
+  }
+
+  if (localContentChanged) buildFromDb()
 
   // --- Notify renderer ---
   if (packagesChanged) notify('packages:updated')

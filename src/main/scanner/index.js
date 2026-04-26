@@ -1,6 +1,7 @@
 import { readdir, stat } from 'fs/promises'
 import { join } from 'path'
 import { ADDON_PACKAGES } from '../../shared/paths.js'
+import { isLocalPackage } from '../../shared/local-package.js'
 import { isVarFilename, canonicalVarFilename } from './var-reader.js'
 import { detectLeaves } from './graph.js'
 import { scanAndUpsert } from './ingest.js'
@@ -14,6 +15,7 @@ import {
   setSetting,
 } from '../db.js'
 import { readAllPrefs, hidePackageContent, unhidePackageContent, migratePrefsExtensions } from '../vam-prefs.js'
+import { runLocalScan } from './local.js'
 import {
   buildFromDb,
   buildGraphOnly,
@@ -78,7 +80,7 @@ export async function runScan(vamDir, onProgress = () => {}) {
   onProgress({ phase: 'graph', step: 0, total: 1, message: 'Detecting removed packages…' })
   const diskFilenames = new Set(varFiles.map((v) => v.filename))
   const dbFilenames = getAllDbFilenames()
-  const removed = dbFilenames.filter((f) => !diskFilenames.has(f))
+  const removed = dbFilenames.filter((f) => !isLocalPackage(f) && !diskFilenames.has(f))
   if (removed.length > 0) deletePackages(removed)
 
   const needsLeafDetection = isInitialScan || newFilenames.size > 0 || removed.length > 0
@@ -102,6 +104,14 @@ export async function runScan(vamDir, onProgress = () => {}) {
     }
   }
   onProgress({ phase: 'graph', step: 1, total: 1, message: 'Dependency graph built' })
+
+  onProgress({ phase: 'local', step: 0, total: 1, message: 'Indexing loose Saves/Custom…' })
+  try {
+    await runLocalScan(vamDir)
+  } catch (err) {
+    console.warn('Local content scan failed:', err.message)
+  }
+  onProgress({ phase: 'local', step: 1, total: 1, message: 'Loose content indexed' })
 
   // Phase 6: Finalize — rebuild in-memory store
   onProgress({ phase: 'finalizing', step: 0, total: 1, message: 'Loading preferences…' })

@@ -14,6 +14,7 @@ import { readFile } from 'fs/promises'
 import { join } from 'path'
 import JSON5 from 'json5'
 import { ADDON_PACKAGES } from '../../shared/paths.js'
+import { isLocalPackage } from '../../shared/local-package.js'
 import { extractFiles } from '../scanner/var-reader.js'
 import { getPackageIndex } from '../store.js'
 
@@ -51,7 +52,7 @@ export async function readScene({ vamDir, packageFilename, internalPath }) {
 
   const thumbPath = thumbPathFor(internalPath)
 
-  if (packageFilename) {
+  if (packageFilename && !isLocalPackage(packageFilename)) {
     const addonDir = join(vamDir, ADDON_PACKAGES)
     const varPath = resolveVarPath(addonDir, packageFilename)
     const extracted = await extractFiles(varPath, [internalPath, thumbPath])

@@ -303,7 +303,7 @@ Cross-package deduplication also occurs: when multiple versions of the same pack
 
 ## 7. Database Schema
 
-SQLite with WAL journaling, managed by `better-sqlite3` in the main process. Current schema version: **16**. New databases are created at this version in one step (`createSchema` in `db.js`); incremental migrations from pre-release builds (versions 1–15) are no longer supported—delete `backstage.db` under the app userData directory if you hit that error. The `migrate()` framework remains in place for future version bumps (see "Future migrations" below).
+SQLite with WAL journaling, managed by `better-sqlite3` in the main process. Current schema version: **18**. New databases are created at the legacy cutoff (version 16) in one step (`createSchema` in `db.js`) and then walked through incremental migrations to the current version; pre-release builds at versions 1–15 cannot be upgraded — delete `backstage.db` under the app userData directory if you hit that error. The `migrate()` framework adds new steps in place; v17 added `contents.person_atom_ids`, v18 added `contents.file_mtime` + `contents.size_bytes` (used by the loose-content scan to mtime-gate scene re-parses). The `__local__` sentinel package row that owns loose Saves/Custom content (see §7.x and §11) is seeded by `ensureLocalPackage()` on every open — no schema change, just an idempotent data fixup that works on both new installs and existing DBs.
 
 ### `packages` — Package Scan Cache
 
@@ -434,9 +434,17 @@ CREATE TABLE settings (
 
 - `packages.thumb_checked` is still written when a Hub thumbnail is stored but is no longer read; the thumb resolver selects on `image_url IS NULL` instead. The column stays for backward compatibility with the on-disk schema.
 
+### Local content sentinel (`__local__`)
+
+Loose user files under `vamDir/Saves` and `vamDir/Custom` (scenes, looks, poses, presets, morphs, plugins, …) are indexed into the same `contents` table used for packaged content, but the table requires `package_filename` to point at a real `packages` row. To avoid a schema-wide nullable column or a separate join table, every install gets a synthetic row with `filename = '__local__'` (creator/`package_name`/`version` empty, `is_direct = 1`, `is_enabled = 1`). Loose-content rows reference this sentinel.
+
+The sentinel is filtered out of every user-visible iteration in `store.js` via `userPackageEntries()` / `userPackageValues()` — it never appears in the Library view, in package facets, or in stats. Internal code that joins from `contents.package_filename` back to a package (scene reader, thumbnail resolver, content-by-package lookups) still sees it via the unfiltered `packageIndex`. `db.js#ensureLocalPackage()` is idempotent and runs from `migrate()` on every open, so the sentinel re-appears even if it was manually deleted.
+
+Loose `.hide` / `.fav` sidecars live next to the source file (e.g. `Saves/scene/Foo/Foo.json.hide`), matching VaM's native convention; this differs from the `AddonPackagesFilePrefs/{stem}/...` layout used for packaged content. `vam-prefs.js` picks the right layout based on `packageFilename === '__local__'`.
+
 ### Future migrations
 
-Schema version 16 is the starting point. To evolve the schema, bump `SCHEMA_VERSION` and add an incremental step in `migrate()` after the `createSchema` / legacy-cutoff logic — do not modify `createSchema` itself, or new installs and upgrades will diverge.
+To evolve the schema, bump `SCHEMA_VERSION` and add an incremental step in `migrate()` after the `createSchema` / legacy-cutoff logic — do not modify `createSchema` itself, or new installs and upgrades will diverge. Migrations should be idempotent for the post-`createSchema` path so that fresh installs running each step in turn end up identical to upgraded ones.
 
 ---
 
@@ -724,13 +732,14 @@ VaM stores hidden/favorite state as empty sidecar files alongside content items:
 
 ### Scan Phases
 
-`runScan(vamDir, onProgress)` runs on startup and on user request, emitting four phases via `scan:progress` (see `scanner/index.js`):
+`runScan(vamDir, onProgress)` runs on startup and on user request, emitting phases via `scan:progress` (see `scanner/index.js`):
 
 | Phase        | What it does                                                                                                                                      | Key operations                                     |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
 | `indexing`   | Walk `AddonPackages/` recursively for `.var` and `.var.disabled` files                                                                            | directory traversal                                |
 | `reading`    | Per-file: skip if `file_mtime` + `size_bytes` match cache; otherwise read the ZIP, extract `meta.json`, classify and dedup content, write DB rows | `scanAndUpsert`                                    |
 | `graph`      | Drop DB rows for files no longer on disk; on initial scan / structural changes, rebuild graph and run leaf detection                              | `buildGraphOnly`, `detectLeaves`, `batchSetDirect` |
+| `local`      | Walk `Saves/` and `Custom/` for loose user content; classify with the same rules as packaged content; upsert under the `__local__` sentinel       | `runLocalScan`                                     |
 | `finalizing` | Optional prefs extension migration; reload prefs; rebuild in-memory state                                                                         | `readAllPrefs`, `buildFromDb()`                    |
 
 Hub metadata enrichment is driven separately by the first-run wizard via `wizard:enrich-hub`, which emits `hub-scan:progress` events (`lookup` / `cache` / `fetching` / `hub-finalize`). Outside first-run, enrichment is incremental and background-only.
@@ -759,6 +768,16 @@ The package's `type` field is set to the first matching visible category found i
 ### Integrity Checking
 
 `verifyPackageFull(varPath)` opens the ZIP, decompresses every entry, and verifies CRC32 against the central directory. Corrupted packages are flagged with `is_corrupted=1` in the database and shown with a "Corrupted" badge in the UI.
+
+### Local Content Scan
+
+`runLocalScan(vamDir)` (in `scanner/local.js`) walks `Saves/` and `Custom/` recursively, builds the same `[{ path, size, mtime }]` shape the `.var` reader produces, and runs it through `classifyContents()` — so loose scenes/looks/poses/clothing/morphs/etc. light up with the same types and sibling-thumbnail logic as their packaged counterparts. Rows are written under `package_filename = '__local__'` (see §7's "Local content sentinel"). For scenes / legacy looks the scan also stores `person_atom_ids` by reading the loose JSON directly (no `SELF:/` rewrite — loose files don't use that prefix).
+
+The loose scan is incremental in the same shape as the var scan, just at item granularity instead of package granularity. The var scanner's `(file_mtime, size_bytes)` gate on `packages` lets it skip an unchanged `.var` end-to-end — no zip open, no classify, no parse, no row writes. The loose scanner does the same with `(file_mtime, size_bytes)` on `contents`: every file is `stat`ed during the walk, and items whose stat **and** classification (display name, type, thumbnail) match the existing row are skipped entirely — no `readFile`, no parse, no DB write. Only changed/new items hit `upsertContents` (`ON CONFLICT DO UPDATE`, preserving `contents.id`); only paths that vanished from disk hit `deleteContentsForPackagePaths`.
+
+The classification fields are part of the gate (not just stat) so that sibling-thumbnail additions still update the row when a content file's own mtime didn't move — `classifyContents` is sibling-aware, so a scene's `thumbnail_path` can shift purely from a `.jpg` being added next to it.
+
+`chokidar` watches `Saves/` and `Custom/` at runtime; content-file events trigger a debounced `runLocalScan`, while sibling `.hide` / `.fav` events update the in-memory `prefsMap` directly without a rescan. The watcher is also how extractor output (`Custom/Atom/Person/.../extracted/*.vap` files written by `scenes/extract.js`) gets indexed — the file event causes a debounced `runLocalScan` like any other loose-file write.
 
 ---
 

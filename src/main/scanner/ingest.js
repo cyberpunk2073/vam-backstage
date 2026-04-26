@@ -7,16 +7,23 @@ import { upsertPackage, insertContents, deleteContentsForPackage } from '../db.j
 import { parseSceneJson } from '../scenes/scene-source.js'
 import { getPersonAtoms } from '../scenes/extractor.js'
 
-const PERSON_ATOM_ID_CONTENT_TYPES = new Set(['scene', 'legacyScene', 'legacyLook'])
+export const PERSON_ATOM_ID_CONTENT_TYPES = new Set(['scene', 'legacyScene', 'legacyLook'])
 
-function personAtomIdsJsonFromBuffer(buf, packageFilename) {
+/**
+ * Parse a scene/legacy-look JSON buffer and return its Person atom ids as a
+ * JSON-encoded string array (the storage shape used by `contents.person_atom_ids`).
+ * If `packageFilename` is provided the buffer is treated as .var-sourced and
+ * `SELF:/` references are rewritten to the package's stem; for loose files
+ * (no package), the buffer is parsed as-is.
+ */
+export function personAtomIdsJsonFromBuffer(buf, packageFilename = null) {
   if (!buf || buf.length === 0) return '[]'
   try {
-    const selfName = packageFilename.replace(/\.var$/i, '')
-    const raw = buf
-      .toString('utf-8')
-      .split('SELF:/')
-      .join(selfName + ':/')
+    let raw = buf.toString('utf-8')
+    if (packageFilename) {
+      const selfName = packageFilename.replace(/\.var$/i, '')
+      raw = raw.split('SELF:/').join(selfName + ':/')
+    }
     const sceneJson = parseSceneJson(raw)
     const atoms = getPersonAtoms(sceneJson)
     return JSON.stringify(atoms.map((a) => a.id))

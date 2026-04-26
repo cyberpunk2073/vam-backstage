@@ -10,6 +10,7 @@ import {
   Star,
   X,
   Loader2,
+  FolderOpen,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { toast } from '../components/Toast'
@@ -40,6 +41,7 @@ import { useKeyboardNav } from '../hooks/useKeyboardNav'
 import { usePersistedPanelWidth } from '../hooks/usePersistedPanelWidth'
 import { openLightbox } from '../components/ThumbnailLightbox'
 import { haystacksMatchAllTerms, searchAndTerms } from '../../../shared/search-text.js'
+import { isLocalPackage } from '../../../shared/local-package.js'
 
 const SORT_OPTIONS = ['Recently installed', 'Name A-Z', 'Package', 'Type']
 const isEffectivelyHidden = (c) => c.hidden || !c.isEnabled
@@ -953,6 +955,9 @@ function ContentDetailPanel({
   const itemThumbUrl = useThumbnail(itemThumbKey)
   const pkgThumbUrl = useThumbnail(pkg ? `pkg:${pkg.filename}` : null)
 
+  const isLocal = isLocalPackage(item.packageFilename)
+  const allContents = useContentStore((s) => s.contents)
+
   const moreGrouped = useMemo(() => {
     if (!pkg) return {}
     const g = {}
@@ -964,6 +969,32 @@ function ContentDetailPanel({
   }, [pkg])
 
   const moreCount = useMemo(() => Object.values(moreGrouped).reduce((n, arr) => n + arr.length, 0), [moreGrouped])
+
+  const folderPath = useMemo(() => {
+    if (!isLocal) return ''
+    const segs = item.internalPath.split('/')
+    return segs.slice(0, -1).join('/')
+  }, [isLocal, item.internalPath])
+
+  const localSiblings = useMemo(() => {
+    if (!isLocal) return []
+    return allContents.filter(
+      (c) =>
+        isLocalPackage(c.packageFilename) &&
+        c.id !== item.id &&
+        c.internalPath.startsWith(folderPath + '/') &&
+        c.internalPath.indexOf('/', folderPath.length + 1) === -1,
+    )
+  }, [isLocal, allContents, item.id, folderPath])
+
+  const localGrouped = useMemo(() => {
+    const g = {}
+    for (const c of localSiblings) {
+      if (!g[c.category]) g[c.category] = []
+      g[c.category].push(c)
+    }
+    return g
+  }, [localSiblings])
 
   const pkgTitle = pkg ? displayName(pkg) : ''
   const pkgVersionStr = pkg && pkg.version != null && pkg.version !== '' ? String(pkg.version) : null
@@ -1021,8 +1052,49 @@ function ContentDetailPanel({
         </div>
 
         <div className="p-4 border-b border-border">
-          <div className="text-[9px] uppercase tracking-wider text-text-tertiary font-medium mb-2">From Package</div>
-          {pkg ? (
+          <div className="text-[9px] uppercase tracking-wider text-text-tertiary font-medium mb-2">
+            {isLocal ? 'Local File' : 'From Package'}
+          </div>
+          {isLocal ? (
+            <>
+              <div className="flex items-start gap-2.5">
+                <div className="w-10 h-10 rounded shrink-0 bg-elevated flex items-center justify-center">
+                  <FolderOpen size={18} className="text-text-tertiary" strokeWidth={1.5} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-text-primary truncate select-text cursor-text">
+                    {item.internalPath
+                      .split('/')
+                      .pop()
+                      .replace(/\.[^.]+$/, '')}
+                  </div>
+                  <div
+                    className="text-[10px] text-text-tertiary mt-0.5 truncate select-text cursor-text"
+                    title={item.internalPath}
+                  >
+                    {folderPath.split('/').map((seg, i, arr) => (
+                      <span key={i}>
+                        {seg}
+                        {i < arr.length - 1 && <span className="mx-1 opacity-50">/</span>}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  const vamDir = await window.api.settings.get('vam_dir')
+                  if (!vamDir) return
+                  window.api.shell.showItemInFolder([vamDir, item.internalPath])
+                }}
+                className="w-full text-[10px] text-accent-blue mt-3"
+              >
+                <FolderOpen size={12} /> Show in folder
+              </Button>
+            </>
+          ) : pkg ? (
             <>
               <div className="flex items-start gap-2.5">
                 <div
@@ -1129,6 +1201,21 @@ function ContentDetailPanel({
               grouped={moreGrouped}
               onSelectRelated={onSelectRelated}
               disabled={!pkg.isEnabled}
+              suppressHiddenRowStyle={suppressHiddenRowStyle}
+            />
+          </div>
+        )}
+
+        {isLocal && localSiblings.length > 0 && (
+          <div className="p-4 border-b border-border">
+            <div className="text-[11px] font-medium text-text-primary mb-2">
+              Other content in this folder{' '}
+              <span className="text-text-tertiary font-normal">({localSiblings.length})</span>
+            </div>
+            <MoreFromPackage
+              grouped={localGrouped}
+              onSelectRelated={onSelectRelated}
+              disabled={false}
               suppressHiddenRowStyle={suppressHiddenRowStyle}
             />
           </div>
