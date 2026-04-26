@@ -369,7 +369,12 @@ export default function LibraryView({ onNavigate, navContext }) {
         onChange: setStatusFilter,
         listCollapsible: false,
         items: [
-          { value: 'direct', label: 'Installed', count: statusCounts.direct },
+          {
+            value: 'direct',
+            label: 'Installed',
+            count: statusCounts.direct,
+            title: 'Installed directly (not pulled in only as dependencies)',
+          },
           { value: 'dependency', label: 'Dependencies', count: statusCounts.dependency },
           {
             value: 'orphan',
@@ -390,7 +395,12 @@ export default function LibraryView({ onNavigate, navContext }) {
             count: statusCounts.broken,
             title: 'Have missing or corrupted dependencies',
           },
-          { value: 'missing', label: 'Missing', count: backendCounts?.missingUnique ?? '…' },
+          {
+            value: 'missing',
+            label: 'Missing',
+            count: backendCounts?.missingUnique ?? '…',
+            title: 'Dependencies referenced by your packages but not installed locally',
+          },
           { value: 'updates', label: 'Updates', count: updateFacetCount },
         ],
       },
@@ -1273,12 +1283,32 @@ function missingDepStatusTag(hub, hubDetailsLoading, dlStatus, dlProgress, onIns
   }
   if (dlStatus === 'queued')
     return <span className={`${MTAG} text-text-tertiary bg-white/4 animate-pulse`}>Queued</span>
-  if (dlStatus === 'failed') return <span className={`${MTAG} text-error bg-error/8`}>Failed</span>
-  if (hub?.installedLocally) return <span className={`${MTAG} text-warning bg-warning/8`}>Fallback</span>
+  if (dlStatus === 'failed')
+    return (
+      <span title="Last download attempt failed" className={`${MTAG} text-error bg-error/8`}>
+        Failed
+      </span>
+    )
+  if (hub?.installedLocally)
+    return (
+      <span
+        title="Required version isn't available — using a different installed version as fallback"
+        className={`${MTAG} text-warning bg-warning/8`}
+      >
+        Fallback
+      </span>
+    )
   if (hub?.filename && !hub.downloadUrl && hubDetailsLoading)
     return <span className={`${MTAG} text-text-tertiary bg-white/4 animate-pulse`}>Checking</span>
   if (hub?.filename && hub.downloadUrl === null)
-    return <span className={`${MTAG} text-text-tertiary bg-white/4`}>Unavailable</span>
+    return (
+      <span
+        title="Listed on the hub but not directly downloadable (paid or external)"
+        className={`${MTAG} text-text-tertiary bg-white/4`}
+      >
+        Unavailable
+      </span>
+    )
   if (hub?.filename) {
     return (
       <button
@@ -1290,7 +1320,12 @@ function missingDepStatusTag(hub, hubDetailsLoading, dlStatus, dlProgress, onIns
       </button>
     )
   }
-  if (hub === null) return <span className={`${MTAG} text-error bg-error/8`}>Missing</span>
+  if (hub === null)
+    return (
+      <span title="Not found on the hub — no install source available" className={`${MTAG} text-error bg-error/8`}>
+        Missing
+      </span>
+    )
   return null
 }
 

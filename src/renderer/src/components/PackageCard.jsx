@@ -432,14 +432,25 @@ export function LibraryCard({
               </div>
             )}
             {!pkg.isDirect && (
-              <div className={`${THUMB_OVERLAY_CHIP} bg-accent-blue/30 text-accent-blue backdrop-blur-sm`}>DEP</div>
+              <div
+                className={`${THUMB_OVERLAY_CHIP} bg-accent-blue/30 text-accent-blue backdrop-blur-sm`}
+                title="Installed only as a dependency of another package, not directly"
+              >
+                DEP
+              </div>
             )}
             {pkg.isLocalOnly && (
-              <div className={`${THUMB_OVERLAY_CHIP} bg-white/15 text-white/75 backdrop-blur-sm`}>LOCAL</div>
+              <div
+                className={`${THUMB_OVERLAY_CHIP} bg-white/15 text-white/75 backdrop-blur-sm`}
+                title="Not available on the hub"
+              >
+                LOCAL
+              </div>
             )}
             {minimal && pkg.missingDeps > 0 && !bulkMode && (
               <div
                 className={`${THUMB_OVERLAY_CHIP} bg-warning/20 text-warning backdrop-blur-sm flex items-center gap-0.5`}
+                title={`${pkg.missingDeps} missing dependencies`}
               >
                 <AlertTriangle size={10} className="shrink-0" /> {pkg.missingDeps}
               </div>
@@ -453,7 +464,12 @@ export function LibraryCard({
             </div>
           )}
           {pkg.isCorrupted && (
-            <div className={`${THUMB_OVERLAY_CHIP} bg-error/25 text-error backdrop-blur-sm`}>CORRUPTED</div>
+            <div
+              className={`${THUMB_OVERLAY_CHIP} bg-error/25 text-error backdrop-blur-sm`}
+              title="Package file is unreadable or has invalid metadata"
+            >
+              CORRUPTED
+            </div>
           )}
           {pkg.favoriteContentCount > 0 && (
             <span
@@ -613,7 +629,12 @@ export function LibraryTableRow({
       )}
       <div className="flex-1 py-2 px-3 flex items-center gap-1 flex-wrap min-w-0">
         {pkg.isCorrupted ? (
-          <span className="text-[10px] text-error font-medium">Corrupted</span>
+          <span
+            className="text-[10px] text-error font-medium"
+            title="Package file is unreadable or has invalid metadata"
+          >
+            Corrupted
+          </span>
         ) : disabled ? (
           <span className="text-[10px] text-warning flex items-center gap-1">
             <EyeOff size={10} /> Disabled
@@ -621,9 +642,18 @@ export function LibraryTableRow({
         ) : pkg.isDirect ? (
           <span className="text-[10px] text-success">Installed</span>
         ) : (
-          <span className="text-[10px] text-accent-blue">Dep</span>
+          <span
+            className="text-[10px] text-accent-blue"
+            title="Installed only as a dependency of another package, not directly"
+          >
+            Dep
+          </span>
         )}
-        {pkg.isLocalOnly && <span className="text-[10px] text-text-tertiary"> · Local</span>}
+        {pkg.isLocalOnly && (
+          <span className="text-[10px] text-text-tertiary" title="Not available on the hub">
+            {' · Local'}
+          </span>
+        )}
         {pkg.noLookPresetTag && (
           <span
             className={`${THUMB_OVERLAY_CHIP} text-text-tertiary bg-border/40 shrink-0`}
@@ -933,8 +963,15 @@ function depStatusTag(dep, dlStatus, dlProgress) {
   // Installed status always takes priority over stale download data
   if (dep.resolution === 'exact' || dep.resolution === 'latest')
     return <span className={`${TAG} text-success bg-success/8`}>Installed</span>
-  if (dep.resolution === 'fallback') return <span className={`${TAG} text-warning bg-warning/8`}>Fallback</span>
-  // Not installed — show download progress if actively downloading
+  if (dep.resolution === 'fallback')
+    return (
+      <span
+        title="Required version isn't available — using a different installed version as fallback"
+        className={`${TAG} text-warning bg-warning/8`}
+      >
+        Fallback
+      </span>
+    )
   if (dlStatus === 'active')
     return (
       <span className={`${TAG} relative overflow-hidden bg-white/6`}>
@@ -946,10 +983,23 @@ function depStatusTag(dep, dlStatus, dlProgress) {
       </span>
     )
   if (dlStatus === 'queued') return <span className={`${TAG} text-text-tertiary bg-white/4 animate-pulse`}>Queued</span>
-  if (dlStatus === 'failed') return <span className={`${TAG} text-error bg-error/8`}>Failed</span>
-  // Not installed, no active download
-  if (dep.resolution === 'hub') return <span className={`${TAG} text-accent-blue bg-accent-blue/8`}>On Hub</span>
-  return <span className={`${TAG} text-error bg-error/8`}>Missing</span>
+  if (dlStatus === 'failed')
+    return (
+      <span title="Last download attempt failed" className={`${TAG} text-error bg-error/8`}>
+        Failed
+      </span>
+    )
+  if (dep.resolution === 'hub')
+    return (
+      <span title="Available to install from the hub" className={`${TAG} text-accent-blue bg-accent-blue/8`}>
+        On Hub
+      </span>
+    )
+  return (
+    <span title="Not found on the hub — no install source available" className={`${TAG} text-error bg-error/8`}>
+      Missing
+    </span>
+  )
 }
 
 /** Ellipsis via CSS; native tooltip only when text overflows (no :overflow in CSS). */
