@@ -1,11 +1,13 @@
 import { app, ipcMain } from 'electron'
+import { is } from '@electron-toolkit/utils'
 import { autoUpdater } from 'electron-updater'
 import { notify } from './notify.js'
 import { getSetting, setSetting } from './db.js'
 
 const DEV_ROLLING_TAG = 'dev-latest'
 
-let registered = false
+let ipcHandlersRegistered = false
+let fullUpdaterInitialized = false
 let dailyCheckTimer = null
 
 // Dev uses the generic provider pointed at a fixed rolling release URL, so we never hit
@@ -51,8 +53,33 @@ async function runCheck(extra = {}) {
 }
 
 export function initAutoUpdater() {
-  if (registered) return
-  registered = true
+  if (!ipcHandlersRegistered) {
+    ipcHandlersRegistered = true
+    ipcMain.handle('updater:install', () => {
+      if (is.dev) return
+      autoUpdater.quitAndInstall(false, true)
+    })
+    ipcMain.handle('updater:check', () =>
+      is.dev ? Promise.resolve({ ok: true, disabled: true, dev: true }) : runCheck(),
+    )
+    ipcMain.handle('updater:getChannel', () => readChannel())
+    ipcMain.handle('updater:setChannel', async (_, channel) => {
+      if (channel !== 'stable' && channel !== 'dev') {
+        return { ok: false, error: `invalid channel: ${String(channel)}` }
+      }
+      setSetting('update_channel', channel)
+      if (is.dev) {
+        return { ok: true, channel }
+      }
+      void applyChannel(channel)
+        .then(() => runCheck({ channel }))
+        .catch(() => {})
+      return { ok: true, channel }
+    })
+  }
+
+  if (is.dev || fullUpdaterInitialized) return
+  fullUpdaterInitialized = true
 
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
@@ -62,22 +89,6 @@ export function initAutoUpdater() {
   })
   autoUpdater.on('update-downloaded', (info) => {
     notify('updater:update-downloaded', { version: info.version })
-  })
-
-  ipcMain.handle('updater:install', () => {
-    autoUpdater.quitAndInstall(false, true)
-  })
-  ipcMain.handle('updater:check', () => runCheck())
-  ipcMain.handle('updater:getChannel', () => readChannel())
-  ipcMain.handle('updater:setChannel', async (_, channel) => {
-    if (channel !== 'stable' && channel !== 'dev') {
-      return { ok: false, error: `invalid channel: ${String(channel)}` }
-    }
-    setSetting('update_channel', channel)
-    void applyChannel(channel)
-      .then(() => runCheck({ channel }))
-      .catch(() => {})
-    return { ok: true, channel }
   })
 
   void applyChannel(readChannel())

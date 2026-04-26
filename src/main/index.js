@@ -217,7 +217,7 @@ app.whenReady().then(async () => {
   powerMonitor.on('resume', onNetworkOnline)
   registerWebviewWindowOpenHandler()
   createWindow()
-  if (!is.dev) initAutoUpdater()
+  initAutoUpdater()
   startupScan()
 
   app.on('activate', () => {
