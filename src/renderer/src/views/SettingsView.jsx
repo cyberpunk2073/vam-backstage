@@ -375,21 +375,23 @@ export default function SettingsView() {
       <div className="max-w-[640px] mx-auto py-8 px-6 space-y-6">
         <h1 className="text-lg font-semibold text-text-primary">Settings</h1>
 
-        {/* VaM Directory */}
-        <Section title="VaM Directory" description="Location of your VaM installation containing AddonPackages.">
-          <div className="flex items-center gap-2">
-            <div className="flex-1 min-w-0 h-9 bg-elevated border border-border rounded-lg px-3 flex items-center text-xs text-text-secondary font-mono truncate select-text cursor-text">
-              {vamDir || <span className="text-text-tertiary italic">Not configured</span>}
+        {/* Library */}
+        <Section title="Library">
+          <div>
+            <div className="text-xs text-text-primary font-medium">VaM Directory</div>
+            <div className="text-[11px] text-text-tertiary mt-0.5">
+              Location of your VaM installation containing AddonPackages.
             </div>
-            <Button variant="outline" size="lg" onClick={handleBrowseDir}>
-              <FolderOpen size={14} /> Browse
-            </Button>
+            <div className="flex items-center gap-2 mt-2">
+              <div className="flex-1 min-w-0 h-9 bg-elevated border border-border rounded-lg px-3 flex items-center text-xs text-text-secondary font-mono truncate select-text cursor-text">
+                {vamDir || <span className="text-text-tertiary italic">Not configured</span>}
+              </div>
+              <Button variant="outline" size="lg" onClick={handleBrowseDir}>
+                <FolderOpen size={14} /> Browse
+              </Button>
+            </div>
           </div>
-        </Section>
-
-        {/* Library Management */}
-        <Section title="Library" description="Manage your local package library.">
-          <div className="space-y-3">
+          <div className="space-y-3 border-t border-border pt-3">
             <div className="flex items-center gap-3 text-xs">
               <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 flex-1">
                 <StatRow label="Packages total" value={stats.totalCount ?? 0} />
@@ -495,17 +497,29 @@ export default function SettingsView() {
           </div>
         </Section>
 
-        {/* Content Visibility */}
-        <Section title="Content Visibility" description="Control how dependency content appears in your library.">
-          <label className="flex items-center gap-3 cursor-pointer">
-            <div className="flex-1 min-w-0">
-              <div className="text-xs text-text-primary font-medium">Auto-hide dependency content</div>
-              <div className="text-[11px] text-text-tertiary mt-0.5">
-                Automatically hide content items from dependency packages so only directly installed content is visible.
+        {/* Display */}
+        <Section title="Display" description="Control how library content appears.">
+          <div className="space-y-3">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-text-primary font-medium">Auto-hide dependency content</div>
+                <div className="text-[11px] text-text-tertiary mt-0.5">
+                  Automatically hide content items from dependency packages so only directly installed content is
+                  visible.
+                </div>
               </div>
-            </div>
-            <Switch checked={autoHideDeps} onCheckedChange={handleToggleAutoHide} disabled={unhiding || hiding} />
-          </label>
+              <Switch checked={autoHideDeps} onCheckedChange={handleToggleAutoHide} disabled={unhiding || hiding} />
+            </label>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-text-primary font-medium">Blur thumbnails</div>
+                <div className="text-[11px] text-text-tertiary mt-0.5">
+                  Apply a blur to all package and content thumbnail images to keep it SFW.
+                </div>
+              </div>
+              <Switch checked={blurThumbnails} onCheckedChange={handleToggleBlurThumbnails} />
+            </label>
+          </div>
         </Section>
 
         <AlertDialog open={hideDialogOpen} onOpenChange={onHideDialogOpenChange}>
@@ -610,22 +624,10 @@ export default function SettingsView() {
           </AlertDialogContent>
         </AlertDialog>
 
-        {/* Privacy */}
-        <Section title="Privacy" description="Options to obscure sensitive content in the UI.">
-          <label className="flex items-center gap-3 cursor-pointer">
-            <div className="flex-1 min-w-0">
-              <div className="text-xs text-text-primary font-medium">Blur thumbnails</div>
-              <div className="text-[11px] text-text-tertiary mt-0.5">
-                Apply a strong blur to all package and content thumbnail images.
-              </div>
-            </div>
-            <Switch checked={blurThumbnails} onCheckedChange={handleToggleBlurThumbnails} />
-          </label>
-        </Section>
-
         {showDevSection && (
           <Section
             title="Developer"
+            danger
             description="Debug logging, BrowserAssist sync, and database tools. In release builds, tap the app version below seven times to show this section."
           >
             <div className="space-y-4">
@@ -787,9 +789,6 @@ export default function SettingsView() {
             >
               VaM Backstage v{appVersion ? `${appVersion} Beta` : '—'}
             </button>
-            <div className="select-text cursor-text">
-              Electron {window.electron?.process?.versions?.electron || '—'} · React 19 · SQLite
-            </div>
           </div>
         </div>
       </div>
@@ -797,14 +796,26 @@ export default function SettingsView() {
   )
 }
 
-function Section({ title, description, children }) {
+function Section({ title, description, danger, children }) {
   return (
-    <div className="p-4 bg-surface border border-border rounded-xl space-y-3">
-      <div>
-        <h2 className="text-sm font-medium text-text-primary">{title}</h2>
-        {description && <p className="text-[11px] text-text-tertiary mt-0.5">{description}</p>}
+    <div className="rounded-xl border border-border bg-surface overflow-hidden">
+      {danger && (
+        <div
+          aria-hidden
+          className="h-2"
+          style={{
+            backgroundImage:
+              'repeating-linear-gradient(-45deg, color-mix(in oklab, var(--color-warning) 55%, transparent) 0 10px, transparent 10px 20px)',
+          }}
+        />
+      )}
+      <div className="p-4 space-y-3">
+        <div>
+          <h2 className="text-sm font-medium text-text-primary">{title}</h2>
+          {description && <p className="text-[11px] mt-0.5 text-text-tertiary">{description}</p>}
+        </div>
+        {children}
       </div>
-      {children}
     </div>
   )
 }
