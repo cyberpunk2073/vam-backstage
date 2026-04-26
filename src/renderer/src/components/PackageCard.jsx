@@ -30,6 +30,7 @@ import {
   extractDomainLabel,
   THUMB_OVERLAY_CHIP,
 } from '../lib/utils'
+import { isLocalPackage } from '../../../shared/local-package.js'
 import { Button } from './ui/button'
 import { Avatar, AvatarImage, AvatarFallback } from './ui/avatar'
 import { useThumbnail } from '../hooks/useThumbnail'
@@ -627,39 +628,31 @@ export function LibraryTableRow({
           </span>
         </div>
       )}
-      <div className="flex-1 py-2 px-3 flex items-center gap-1 flex-wrap min-w-0">
+      <div className="flex-1 py-2 px-3 flex items-center justify-start gap-0 flex-nowrap text-[10px]">
         {pkg.isCorrupted ? (
           <span
-            className="text-[10px] text-error font-medium"
+            className="whitespace-nowrap text-error font-medium"
             title="Package file is unreadable or has invalid metadata"
           >
             Corrupted
           </span>
         ) : disabled ? (
-          <span className="text-[10px] text-warning flex items-center gap-1">
-            <EyeOff size={10} /> Disabled
+          <span className="whitespace-nowrap text-warning inline-flex items-center gap-1">
+            <EyeOff size={10} className="shrink-0" /> Disabled
           </span>
         ) : pkg.isDirect ? (
-          <span className="text-[10px] text-success">Installed</span>
+          <span className="whitespace-nowrap text-success">Installed</span>
         ) : (
           <span
-            className="text-[10px] text-accent-blue"
+            className="whitespace-nowrap text-accent-blue"
             title="Installed only as a dependency of another package, not directly"
           >
             Dep
           </span>
         )}
         {pkg.isLocalOnly && (
-          <span className="text-[10px] text-text-tertiary" title="Not available on the hub">
+          <span className="whitespace-nowrap text-text-tertiary" title="Not available on the hub">
             {' · Local'}
-          </span>
-        )}
-        {pkg.noLookPresetTag && (
-          <span
-            className={`${THUMB_OVERLAY_CHIP} text-text-tertiary bg-border/40 shrink-0`}
-            title="No Custom/Atom appearance, Saves/Person/Appearance, or Custom/Atom/Person/Skin items in this package"
-          >
-            no preset
           </span>
         )}
       </div>
@@ -719,6 +712,7 @@ export function ContentTableRow({
   const dimHiddenChrome = isDisabledPkg || (isHidden && !suppressHiddenDimming)
   const thumbKey = item.thumbnailPath ? `ct:${item.packageFilename}\0${item.thumbnailPath}` : null
   const thumbUrl = useThumbnail(thumbKey)
+  const isLocalContent = isLocalPackage(item.packageFilename)
   const pkgLabel = displayName({
     hubDisplayName: item.packageHubDisplayName,
     title: item.packageTitle,
@@ -774,25 +768,35 @@ export function ContentTableRow({
         {item.creator}
       </div>
       {!hideType && (
-        <div className={`flex-2 min-w-0 py-2 px-3 ${dimHiddenChrome ? 'opacity-45' : ''}`}>
-          <div className="flex w-full min-w-0 flex-nowrap items-center gap-1 overflow-x-auto [scrollbar-width:thin]">
-            <span className={THUMB_OVERLAY_CHIP} style={{ color: typeColor, background: typeColor + '18' }}>
-              {item.category}
-            </span>
-            {item.tag && (
-              <span
-                className={THUMB_OVERLAY_CHIP}
-                style={{
-                  color: item.tag.color,
-                  background: `color-mix(in srgb, ${item.tag.color} 14%, transparent)`,
-                }}
-              >
-                {item.tag.label}
-              </span>
-            )}
-          </div>
+        <div className={`flex-1 min-w-0 py-2 px-3 ${dimHiddenChrome ? 'opacity-45' : ''}`}>
+          <span className={THUMB_OVERLAY_CHIP} style={{ color: typeColor, background: typeColor + '18' }}>
+            {item.category}
+          </span>
         </div>
       )}
+      <div className={`flex-1 min-w-0 py-2 px-3 ${dimHiddenChrome ? 'opacity-45' : ''}`}>
+        <div className="flex w-full min-w-0 flex-nowrap items-center gap-1 overflow-x-auto [scrollbar-width:thin]">
+          {item.tag && (
+            <span
+              className={THUMB_OVERLAY_CHIP}
+              style={{
+                color: item.tag.color,
+                background: `color-mix(in srgb, ${item.tag.color} 14%, transparent)`,
+              }}
+            >
+              {item.tag.label}
+            </span>
+          )}
+          {isLocalContent && (
+            <span
+              className={`${THUMB_OVERLAY_CHIP} bg-white/12 text-white/80 shrink-0`}
+              title="Loose file in your VaM folder, not from a .var package"
+            >
+              local
+            </span>
+          )}
+        </div>
+      </div>
       <div className="w-14 py-2 px-3 text-[11px]">
         {isDisabledPkg ? (
           <span className="text-warning opacity-60" title="Package is disabled">
@@ -861,6 +865,7 @@ export function ContentCard({
   const thumbKey = item.thumbnailPath ? `ct:${item.packageFilename}\0${item.thumbnailPath}` : null
   const thumbUrl = useThumbnail(thumbKey)
   const showBulk = bulkMode || bulkSelected
+  const isLocalContent = isLocalPackage(item.packageFilename)
 
   return (
     <div
@@ -885,7 +890,7 @@ export function ContentCard({
           )}
         </div>
         {bulkSelected && <div className="absolute inset-0 bg-accent-blue/10 pointer-events-none z-1" />}
-        {(showBulk || !hideType || item.tag) && (
+        {(showBulk || !hideType || item.tag || isLocalContent) && (
           <div className="absolute top-2 left-2 z-2 flex max-w-[calc(100%-2.75rem)] items-center gap-1 overflow-x-auto [scrollbar-width:thin] flex-nowrap">
             {bulkMode && <BulkSelectChip checked={bulkSelected} />}
             {!hideType && (
@@ -903,6 +908,14 @@ export function ContentCard({
                 }}
               >
                 {item.tag.label}
+              </span>
+            )}
+            {isLocalContent && (
+              <span
+                className={`${THUMB_OVERLAY_CHIP} bg-white/15 text-white/80 backdrop-blur-sm`}
+                title="Loose file in your VaM folder, not from a .var package"
+              >
+                local
               </span>
             )}
           </div>

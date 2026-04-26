@@ -56,6 +56,14 @@ function contentMatchesSelectedTags(c, selectedTags) {
   return selectedTags.every((st) => tags.includes(st))
 }
 
+function matchesContentPackageFilter(c, packageFilter) {
+  if (packageFilter === 'all') return true
+  if (packageFilter === 'local') return isLocalPackage(c.packageFilename)
+  if (isLocalPackage(c.packageFilename)) return false
+  if (packageFilter === 'installed') return c.isDirect
+  return !c.isDirect
+}
+
 export default function ContentView({ onNavigate, navContext }) {
   const {
     contents,
@@ -178,8 +186,7 @@ export default function ContentView({ onNavigate, navContext }) {
         return ptSet.has(label)
       })
     }
-    if (packageFilter === 'installed') items = items.filter((c) => c.isDirect)
-    else if (packageFilter === 'dependency') items = items.filter((c) => !c.isDirect)
+    items = items.filter((c) => matchesContentPackageFilter(c, packageFilter))
     if (visibilityFilter === 'visible') items = items.filter((c) => !isEffectivelyHidden(c))
     else if (visibilityFilter === 'hidden') items = items.filter((c) => isEffectivelyHidden(c))
     else if (visibilityFilter === 'favorites') items = items.filter((c) => c.favorite)
@@ -195,8 +202,7 @@ export default function ContentView({ onNavigate, navContext }) {
       const typeSet = new Set(selectedTypes)
       items = items.filter((c) => typeSet.has(c.category))
     }
-    if (packageFilter === 'installed') items = items.filter((c) => c.isDirect)
-    else if (packageFilter === 'dependency') items = items.filter((c) => !c.isDirect)
+    items = items.filter((c) => matchesContentPackageFilter(c, packageFilter))
     if (visibilityFilter === 'visible') items = items.filter((c) => !isEffectivelyHidden(c))
     else if (visibilityFilter === 'hidden') items = items.filter((c) => isEffectivelyHidden(c))
     else if (visibilityFilter === 'favorites') items = items.filter((c) => c.favorite)
@@ -227,12 +233,14 @@ export default function ContentView({ onNavigate, navContext }) {
     else if (visibilityFilter === 'favorites') items = items.filter((c) => c.favorite)
     items = items.filter((c) => contentMatchesSelectedTags(c, selectedTags))
     let installed = 0,
-      dependency = 0
+      dependency = 0,
+      local = 0
     for (const c of items) {
-      if (c.isDirect) installed++
+      if (isLocalPackage(c.packageFilename)) local++
+      else if (c.isDirect) installed++
       else dependency++
     }
-    return { all: installed + dependency, installed, dependency }
+    return { all: items.length, installed, dependency, local }
   }, [baseFiltered, selectedTypes, selectedPackageTypes, visibilityFilter, selectedTags])
 
   const visibilityCounts = useMemo(() => {
@@ -248,8 +256,7 @@ export default function ContentView({ onNavigate, navContext }) {
         return ptSet.has(libraryTypeBadgeLabel(c.parentPackageType))
       })
     }
-    if (packageFilter === 'installed') items = items.filter((c) => c.isDirect)
-    else if (packageFilter === 'dependency') items = items.filter((c) => !c.isDirect)
+    items = items.filter((c) => matchesContentPackageFilter(c, packageFilter))
     items = items.filter((c) => contentMatchesSelectedTags(c, selectedTags))
     let visible = 0,
       hidden = 0,
@@ -275,8 +282,7 @@ export default function ContentView({ onNavigate, navContext }) {
         return ptSet.has(libraryTypeBadgeLabel(c.parentPackageType))
       })
     }
-    if (packageFilter === 'installed') result = result.filter((c) => c.isDirect)
-    else if (packageFilter === 'dependency') result = result.filter((c) => !c.isDirect)
+    result = result.filter((c) => matchesContentPackageFilter(c, packageFilter))
     if (visibilityFilter === 'visible') result = result.filter((c) => !isEffectivelyHidden(c))
     else if (visibilityFilter === 'hidden') result = result.filter((c) => isEffectivelyHidden(c))
     else if (visibilityFilter === 'favorites') result = result.filter((c) => c.favorite)
@@ -374,6 +380,7 @@ export default function ContentView({ onNavigate, navContext }) {
           { value: 'all', label: 'All', count: packageFilterCounts.all },
           { value: 'installed', label: 'Installed', count: packageFilterCounts.installed },
           { value: 'dependency', label: 'Dependencies', count: packageFilterCounts.dependency },
+          { value: 'local', label: 'Local', count: packageFilterCounts.local },
         ],
       },
       {
@@ -843,7 +850,8 @@ export default function ContentView({ onNavigate, navContext }) {
                 )}
                 <div className="flex-3 py-2 px-3 font-medium">Content</div>
                 <div className="flex-2 py-2 px-3 font-medium">Author</div>
-                {selectedTypes.length !== 1 && <div className="flex-2 min-w-0 py-2 px-3 font-medium">Type</div>}
+                {selectedTypes.length !== 1 && <div className="flex-1 min-w-0 py-2 px-3 font-medium">Type</div>}
+                <div className="flex-1 min-w-0 py-2 px-3 font-medium">Tags</div>
                 <div className="w-14 py-2 px-3 font-medium">Show</div>
                 <div className="w-12 py-2 px-3 font-medium">Fav</div>
               </div>
@@ -981,11 +989,10 @@ function ContentDetailPanel({
     return allContents.filter(
       (c) =>
         isLocalPackage(c.packageFilename) &&
-        c.id !== item.id &&
         c.internalPath.startsWith(folderPath + '/') &&
         c.internalPath.indexOf('/', folderPath.length + 1) === -1,
     )
-  }, [isLocal, allContents, item.id, folderPath])
+  }, [isLocal, allContents, folderPath])
 
   const localGrouped = useMemo(() => {
     const g = {}
