@@ -105,6 +105,10 @@ export async function scanHubDetails(onProgress) {
   let found = 0
   let enriched = 0
 
+  // Per-row progress would emit ~1700 IPC events on cold startup; the renderer's
+  // status bar can't display per-row anyway. Stride the lookup-phase emits and
+  // drop the per-cache-hit emit entirely.
+  const LOOKUP_PROGRESS_STRIDE = 50
   const report = (extra = {}) => {
     onProgress?.({ current: extra.current ?? 0, total, found, phase: extra.phase ?? 'lookup', ...extra })
   }
@@ -114,7 +118,9 @@ export async function scanHubDetails(onProgress) {
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
     const current = i + 1
-    report({ current, phase: 'lookup' })
+    if (current % LOOKUP_PROGRESS_STRIDE === 0 || current === total) {
+      report({ current, phase: 'lookup' })
+    }
 
     if (!index) continue
 
@@ -129,7 +135,6 @@ export async function scanHubDetails(onProgress) {
 
     if (applyCachedDetail(row.filename, rid)) {
       enriched++
-      report({ current, phase: 'cache' })
       continue
     }
 

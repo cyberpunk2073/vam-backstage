@@ -444,9 +444,7 @@ export default function SettingsView() {
                 {hubScanProgress.found != null && (
                   <span className="ml-1.5 text-text-tertiary/80">
                     · {hubScanProgress.found} on Hub
-                    {hubScanProgress.phase === 'fetch' && ' · fetching details'}
-                    {hubScanProgress.phase === 'cache' && ' · from cache'}
-                    {hubScanProgress.phase === 'skip-remote' && ' · dep (no remote)'}
+                    {hubScanProgress.phase === 'fetching' && ' · fetching details'}
                   </span>
                 )}
               </div>

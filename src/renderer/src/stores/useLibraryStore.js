@@ -5,6 +5,16 @@ import { typeFilterSlice } from './typeFilterSlice'
 let missingDepsNonce = 0
 let updateCheckNonce = 0
 
+// Coalesces concurrent fetchPackages requests. During startup the main process
+// fires several `packages:updated` events back-to-back (post-scan notify,
+// scanHubDetails interim, scanHubDetails final), and each would otherwise
+// serialize 1700+ rows through IPC and replace the entire packages array,
+// re-rendering every visible card. With this gate, repeated requests while one
+// is in flight collapse into a single trailing refetch — at most 2 fetches per
+// burst regardless of how many notifies arrive.
+let packagesFetchInFlight = null
+let packagesFetchQueued = false
+
 function _mergeUpdateEnrichment(prev, next) {
   if (!prev) return
   for (const [filename, entry] of Object.entries(next)) {
@@ -115,13 +125,27 @@ export const useLibraryStore = create((set, get) => ({
   },
 
   fetchPackages: async () => {
-    try {
-      const packages = await window.api.packages.list({})
-      set({ packages, packagesLoaded: true })
-    } catch (err) {
-      console.error('Failed to fetch packages:', err)
-      set({ packagesLoaded: true })
+    if (packagesFetchInFlight) {
+      packagesFetchQueued = true
+      return packagesFetchInFlight
     }
+    packagesFetchInFlight = (async () => {
+      try {
+        do {
+          packagesFetchQueued = false
+          try {
+            const packages = await window.api.packages.list({})
+            set({ packages, packagesLoaded: true })
+          } catch (err) {
+            console.error('Failed to fetch packages:', err)
+            set({ packagesLoaded: true })
+          }
+        } while (packagesFetchQueued)
+      } finally {
+        packagesFetchInFlight = null
+      }
+    })()
+    return packagesFetchInFlight
   },
 
   fetchBackendCounts: async () => {

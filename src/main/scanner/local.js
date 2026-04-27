@@ -2,8 +2,13 @@ import { readdir, readFile, stat } from 'fs/promises'
 import { join, relative, sep } from 'path'
 import { classifyContents } from './classifier.js'
 import { personAtomIdsJsonFromBuffer, PERSON_ATOM_ID_CONTENT_TYPES } from './ingest.js'
+import { pLimit } from '../p-limit.js'
 import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_ROOTS } from '../../shared/local-package.js'
 import { ensureLocalPackage, getLocalContentMeta, upsertContents, deleteContentsForPackagePaths } from '../db.js'
+
+// Default libuv pool is 4 workers; 8 is 2× headroom for transient bursts.
+// See VAR_STAT_CONCURRENCY in scanner/index.js for the same reasoning.
+const LOCAL_STAT_CONCURRENCY = 8
 
 /**
  * Walk loose-content roots — `Saves/` and `Custom/` under the VaM dir — and
@@ -91,7 +96,37 @@ export async function runLocalScan(vamDir) {
   return { added, removed: toDelete.length, total: items.length }
 }
 
+/**
+ * Two-pass walk: cheap recursive `readdir` collects every file path, then
+ * `stat`s run under bounded concurrency. Pushes `{path, size, mtime}` records
+ * into `out`. Returns false only if the root `readdir` itself fails (transient
+ * EACCES, missing root) — sub-tree readdir failures are silently skipped.
+ */
 async function walk(dir, vamDir, out) {
+  const files = []
+  const ok = await collectLocalFiles(dir, files)
+  if (!ok) return false
+  if (files.length === 0) return true
+
+  const limit = pLimit(LOCAL_STAT_CONCURRENCY)
+  const records = await Promise.all(
+    files.map((full) =>
+      limit(async () => {
+        try {
+          const s = await stat(full)
+          const rel = relative(vamDir, full).split(sep).join('/')
+          return { path: rel, size: s.size, mtime: s.mtimeMs / 1000 }
+        } catch {
+          return null
+        }
+      }),
+    ),
+  )
+  for (const r of records) if (r) out.push(r)
+  return true
+}
+
+async function collectLocalFiles(dir, out) {
   let entries
   try {
     entries = await readdir(dir, { withFileTypes: true })
@@ -101,16 +136,14 @@ async function walk(dir, vamDir, out) {
   for (const entry of entries) {
     const full = join(dir, entry.name)
     if (entry.isDirectory()) {
-      await walk(full, vamDir, out)
+      await collectLocalFiles(full, out)
+    } else if (entry.isSymbolicLink()) {
+      // Belt-and-braces against directory symlinks (e.g. JayJayWon's
+      // BrowserAssist drops them under Saves/). On Windows, isDirectory()
+      // returns false for these — explicit skip survives a future refactor.
+      continue
     } else if (entry.isFile()) {
-      let s
-      try {
-        s = await stat(full)
-      } catch {
-        continue
-      }
-      const rel = relative(vamDir, full).split(sep).join('/')
-      out.push({ path: rel, size: s.size, mtime: s.mtimeMs / 1000 })
+      out.push(full)
     }
   }
   return true

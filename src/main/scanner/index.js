@@ -16,6 +16,7 @@ import {
 } from '../db.js'
 import { readAllPrefs, hidePackageContent, unhidePackageContent, migratePrefsExtensions } from '../vam-prefs.js'
 import { runLocalScan } from './local.js'
+import { pLimit } from '../p-limit.js'
 import {
   buildFromDb,
   buildGraphOnly,
@@ -132,37 +133,72 @@ export async function runScan(vamDir, onProgress = () => {}) {
   return { scanned, added, removed: removed.length, unreadable }
 }
 
+// Default libuv pool is 4 workers; 8 is 2× headroom for transient bursts.
+// Higher values just pad the queue without adding parallelism. The limiter is
+// call-scoped (one per walkForVars call) — a recursive per-directory limiter
+// would compound and reproduce the cross-phase contention failure mode.
+const VAR_STAT_CONCURRENCY = 8
+
 /**
  * Recursively find all .var and .var.disabled files under a directory.
  * Returns [{ filename, fullPath, mtime, size, isEnabled }]
  * filename is always the canonical .var form.
  * Within a single directory, .var takes precedence if both .var and .var.disabled exist.
+ *
+ * Two-pass: first walk dirents (cheap, single-threaded by directory) collecting
+ * candidate paths, then `stat` them under bounded concurrency to mask per-call
+ * AV / FS latency without thrashing the libuv pool.
  */
 async function walkForVars(dir) {
-  const results = []
-  try {
-    const entries = await readdir(dir, { withFileTypes: true })
-    const localFiles = new Map()
-    for (const entry of entries) {
-      const fullPath = join(dir, entry.name)
-      if (entry.isDirectory()) {
-        results.push(...(await walkForVars(fullPath)))
-      } else if (entry.isFile() && isVarFilename(entry.name)) {
-        const isDisabled = /\.disabled$/i.test(entry.name)
-        const canonical = isDisabled ? canonicalVarFilename(entry.name) : entry.name
-        const existing = localFiles.get(canonical)
-        if (existing && !existing.isDisabled) continue // .var already found, skip .var.disabled
-        localFiles.set(canonical, { fullPath, isDisabled })
-      }
-    }
-    for (const [canonical, { fullPath, isDisabled }] of localFiles) {
-      try {
-        const s = await stat(fullPath)
-        results.push({ filename: canonical, fullPath, mtime: s.mtimeMs / 1000, size: s.size, isEnabled: !isDisabled })
-      } catch {}
-    }
-  } catch {}
+  const t0 = Date.now()
+  const candidates = []
+  await collectVarCandidates(dir, candidates)
+  const limit = pLimit(VAR_STAT_CONCURRENCY)
+  const records = await Promise.all(
+    candidates.map(({ canonical, fullPath, isDisabled }) =>
+      limit(async () => {
+        try {
+          const s = await stat(fullPath)
+          return { filename: canonical, fullPath, mtime: s.mtimeMs / 1000, size: s.size, isEnabled: !isDisabled }
+        } catch {
+          return null
+        }
+      }),
+    ),
+  )
+  const results = records.filter(Boolean)
+  console.info(`Library scan: indexed ${results.length} .var files in ${Date.now() - t0} ms`)
   return results
+}
+
+async function collectVarCandidates(dir, out) {
+  let entries
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch {
+    return
+  }
+  const localFiles = new Map()
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name)
+    if (entry.isDirectory()) {
+      await collectVarCandidates(fullPath, out)
+    } else if (entry.isSymbolicLink()) {
+      // Belt-and-braces: the load-bearing Windows quirk is that isDirectory()
+      // returns false for directory symlinks (so we skip them by accident);
+      // explicit check survives any future refactor that resolves symlinks.
+      continue
+    } else if (entry.isFile() && isVarFilename(entry.name)) {
+      const isDisabled = /\.disabled$/i.test(entry.name)
+      const canonical = isDisabled ? canonicalVarFilename(entry.name) : entry.name
+      const existing = localFiles.get(canonical)
+      if (existing && !existing.isDisabled) continue // .var already found, skip .var.disabled
+      localFiles.set(canonical, { fullPath, isDisabled })
+    }
+  }
+  for (const [canonical, { fullPath, isDisabled }] of localFiles) {
+    out.push({ canonical, fullPath, isDisabled })
+  }
 }
 
 /**

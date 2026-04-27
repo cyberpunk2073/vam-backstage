@@ -4,6 +4,13 @@ import { existsSync } from 'fs'
 import { ADDON_PACKAGES_FILE_PREFS } from '../shared/paths.js'
 import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_ROOTS, isLocalPackage } from '../shared/local-package.js'
 import { suppressPath } from './watcher.js'
+import { pLimit } from './p-limit.js'
+
+// Bounded concurrency for the per-package-stem sidecar walk. Each stem owns a
+// disjoint key range in the prefs Map (`pkgFilename/...`) so writes don't
+// race. Default libuv pool is 4 workers; 8 is 2× headroom for transient bursts
+// of `readdir` calls without flooding the file-handle table.
+const PREFS_STEM_CONCURRENCY = 8
 
 /**
  * VaM stores content visibility preferences as sidecar files:
@@ -45,12 +52,18 @@ export async function readAllPrefs(vamDir) {
     return prefs
   }
 
-  for (const dir of packageDirs) {
-    if (!dir.isDirectory()) continue
-    const pkgStem = dir.name
-    const pkgFilename = pkgStem + '.var'
-    await walkSidecarDir(join(root, pkgStem), '', pkgFilename, prefs, { requireSiblingTarget: false })
-  }
+  const limit = pLimit(PREFS_STEM_CONCURRENCY)
+  await Promise.all(
+    packageDirs
+      .filter((d) => d.isDirectory())
+      .map((dir) =>
+        limit(() => {
+          const pkgStem = dir.name
+          const pkgFilename = pkgStem + '.var'
+          return walkSidecarDir(join(root, pkgStem), '', pkgFilename, prefs, { requireSiblingTarget: false })
+        }),
+      ),
+  )
 
   for (const localRoot of LOCAL_CONTENT_ROOTS) {
     await walkSidecarDir(join(vamDir, localRoot), localRoot, LOCAL_PACKAGE_FILENAME, prefs, {
@@ -85,6 +98,8 @@ async function walkSidecarDir(dirPath, relativePath, keyPrefix, prefs, { require
       await walkSidecarDir(join(dirPath, entry.name), relPath, keyPrefix, prefs, { requireSiblingTarget })
       continue
     }
+    // Belt-and-braces: skip symlinks (matches walkForVars / runLocalScan).
+    if (entry.isSymbolicLink()) continue
     if (!entry.isFile()) continue
 
     const isHide = entry.name.endsWith('.hide')

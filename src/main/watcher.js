@@ -58,6 +58,7 @@ export async function startWatcher(vamDir) {
   // Ensure prefs dir exists so chokidar can watch it
   await mkdir(prefsDir, { recursive: true }).catch(() => {})
 
+  const packageWatcherT0 = Date.now()
   packageWatcher = chokidar.watch(addonDir, {
     ignoreInitial: true,
     depth: 10,
@@ -73,6 +74,15 @@ export async function startWatcher(vamDir) {
     .on('change', (p) => onPackageEvent(p, 'change'))
     .on('unlink', (p) => onPackageEvent(p, 'unlink'))
     .on('error', (err) => console.warn('Package watcher error:', err.message))
+    .on('ready', () => {
+      const watched = packageWatcher.getWatched()
+      let files = 0
+      for (const arr of Object.values(watched)) files += arr.length
+      const dirs = Object.keys(watched).length
+      console.info(
+        `FS watcher 'packageWatcher' ready in ${Date.now() - packageWatcherT0} ms (${files} files / ${dirs} dirs)`,
+      )
+    })
 
   initPrefsWatcher(prefsDir)
   initLocalWatcher(vamDir)
@@ -93,6 +103,7 @@ function initLocalWatcher(vamDir) {
     localWatcher = null
   }
   const roots = LOCAL_CONTENT_ROOTS.map((r) => join(vamDir, r))
+  const localWatcherT0 = Date.now()
   localWatcher = chokidar.watch(roots, {
     ignoreInitial: true,
     depth: 20,
@@ -106,6 +117,15 @@ function initLocalWatcher(vamDir) {
     .on('change', (p) => onLocalEvent(p))
     .on('unlink', (p) => onLocalEvent(p))
     .on('error', (err) => console.warn('Local watcher error:', err.message))
+    .on('ready', () => {
+      const watched = localWatcher.getWatched()
+      let files = 0
+      for (const arr of Object.values(watched)) files += arr.length
+      const dirs = Object.keys(watched).length
+      console.info(
+        `FS watcher 'localWatcher' ready in ${Date.now() - localWatcherT0} ms (${files} files / ${dirs} dirs)`,
+      )
+    })
 }
 
 function onLocalEvent(fullPath) {
