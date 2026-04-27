@@ -76,7 +76,7 @@ The application is built with Electron 39, React 19, SQLite (better-sqlite3), Zu
 │  ├── watcher.js ── FS monitoring (chokidar + fs.watch)    │
 │  ├── thumb-resolver.js ── Hub thumbnail fetching          │
 │  ├── avatar-cache.js ── Hub author avatar caching         │
-│  ├── updater.js ── electron-updater wiring (§20)          │
+│  ├── updater.js ── electron-updater wiring (§21)          │
 │  └── ipc/ ── handler modules per domain                   │
 └───────────────────────────────────────────────────────────┘
 ```
@@ -428,7 +428,7 @@ CREATE TABLE settings (
 - `hub_debug_requests` — `'1'` to log all Hub API requests
 - `hub_filters_json` — cached Hub filter metadata (types, tags, sort options)
 - `blur_thumbnails` — `'1'` when thumbnail blur (privacy) is enabled
-- `update_channel` — `'stable'` | `'dev'`; selects updater feed (see §20)
+- `update_channel` — `'stable'` | `'dev'`; selects updater feed (see §21)
 
 ### Legacy Fields
 
@@ -1134,7 +1134,74 @@ For the in-memory vs SQLite split, see §3.
 
 ---
 
-## 17. Reusable Components
+## 17. Performance
+
+The library scales from a few hundred packages on a fresh install to 50k+ on heavy users. The cost model is dominated by the filesystem: every startup walks `AddonPackages/` (~1700 `.var` files), `AddonPackagesFilePrefs/` (one stem dir per package, ~27k subdirs of `.hide`/`.fav` sidecars), and `Saves/` + `Custom/` (loose user content). Network and CPU are secondary. Several conventions exist to keep startup sub-second despite that working set; new code in adjacent areas must respect them or it will reproduce the failure modes summarized below.
+
+### Pool-disjoint principle
+
+Three resource pools that don't compete with each other:
+
+- **CPU / event loop** — manifest parsing, JSON, SQLite ops
+- **libuv FS pool** (default 4 workers, `UV_THREADPOOL_SIZE`) — every walker, every `readdir` / `stat`, plus all of chokidar
+- **Network** — Hub API, CDN
+
+The architectural goal is "**one consumer per pool at a time, branches across pools concurrent**" — _not_ "parallelize everything". Two FS walkers fighting over the libuv pool reproduces the 110-second startup bug investigated in [`.cursor/plans/startup-slowdown-report.md`](../.cursor/plans/startup-slowdown-report.md): chokidar's `localWatcher` followed a directory symlink dropped by JayJayWon's BrowserAssist plugin, walked 100k+ FilePrefs entries it had no business walking, and pinned all 4 libuv workers for ~108s while `walkForVars` queued behind it (mean per-stat went from 50 µs to 64 ms — a >1000× regression with no disk thrash; pure queue contention).
+
+Cross-pool concurrency is free and should always be used. The FS chain (`runScan` → `runLocalScan` → `readAllPrefs`) and the network chain (`fetchPackagesJson` → `scanHubDetails` → `resolvePackageThumbnails`) are intended to run as parallel branches in `startupScan`. Within the FS chain, phases run sequentially; within a phase, parallelize via a single shared `pLimit` (see "`pLimit(8)` shape" below).
+
+### Per-content vs per-var rule
+
+Two cardinalities matter:
+
+- **~1 700** `.var` files — per-var loops are cheap, can afford O(packages) IPC events, JSON parses, and DB statements at startup.
+- **~100 000+** content items, prefs sidecars, loose files — per-content loops can't.
+
+Per-content paths must:
+
+1. **Be cache-gated.** Don't re-do work that hasn't changed. Existing examples: `scanAndUpsert` skips `.var` open if `(file_mtime, size_bytes)` matches the cached `packages` row; `runLocalScan` skips re-classify + upsert if `(file_mtime, size_bytes)` _and_ classification fields all match the cached `contents` row; `walkForVars` collects dirents first and only `stat`s `.var` candidates, never every entry.
+2. **Batch DB writes.** Use prepared statements inside a transaction; per-row `INSERT` outside a transaction is ~100× slower at 100k items. `upsertContents` and `batchSetDirect` are the canonical shapes.
+3. **Never emit one IPC event per content item.** Renderer status bars can't display per-row anyway. Stride per-row progress (e.g. `scanHubDetails`'s `LOOKUP_PROGRESS_STRIDE = 50`) or skip per-item progress entirely; the renderer only needs phase-granular signals. `fetchPackages` in `useLibraryStore` coalesces concurrent refetches for the same reason — startup fires `packages:updated` multiple times in quick succession, and serializing 1700 rows through IPC per event is wasted work.
+
+### Dirty-check pattern
+
+When restoring "we already applied this cached data" state across launches:
+
+1. Store a per-row `_applied_at INTEGER` column mirroring the source's `_updated_at`.
+2. Bump source markers only on _real_ content change — guard `ON CONFLICT DO UPDATE` with `WHERE existing IS NOT excluded.…` so re-fetches that return identical bytes don't cascade into spurious re-applies.
+3. The work-list on each launch is the SQL join "**applied < updated**" — usually zero rows on warm steady state.
+
+The existing `packages.file_mtime` / `size_bytes` cache gate on `.var` re-reads is one instance of this pattern (source = on-disk file, applied = cached row), and `contents.file_mtime` / `size_bytes` is the same gate at item granularity for loose content. The same shape applies to mirroring database-resident sources too — for example, restoring cached `hub_resources` enrichment onto `packages` rows on every launch should walk a `WHERE applied_at < updated_at` work-list rather than every row unconditionally. The architectural payoff is that warm steady state hits zero rows: no JSON parses, no DB writes, no IPC events. Cold starts and source-data bumps walk only the rows that actually changed.
+
+### `pLimit(8)` shape
+
+The default libuv pool has 4 workers (`UV_THREADPOOL_SIZE`). All walks use [`src/main/p-limit.js`](../src/main/p-limit.js) with concurrency **8** — 2× headroom for transient bursts without padding the queue past usefulness. Higher values (16, 32) just add queue depth without adding throughput, since the bottleneck is the worker pool itself.
+
+Two non-negotiable rules:
+
+- **The limiter must be call-scoped, not recursive.** A per-directory `pLimit(8)` compounds: every directory spawns up to 8 stats _plus_ up to 8 sub-walks, each of which spawns its own 8. This blows the pool in milliseconds and reproduces the cross-phase contention failure mode. Earlier "let's parallelize `walkForVars`" attempts hit exactly this. Use one limiter per top-level call, share it across the entire recursion.
+- **Two-pass collect-then-act.** Cheap recursive `readdir` traversal first (single-threaded, O(dirs) syscalls), gathering all candidate paths into an array. Then `Promise.all` over `candidates.map(c => limit(act))` for the expensive operation. This isolates the parallelism boundary and makes the concurrency obvious. `walkForVars` ([`src/main/scanner/index.js`](../src/main/scanner/index.js)), `runLocalScan`'s walk ([`src/main/scanner/local.js`](../src/main/scanner/local.js)), and `readAllPrefs` ([`src/main/vam-prefs.js`](../src/main/vam-prefs.js)) all follow this shape.
+
+Concurrent walkers across phases remain forbidden — `pLimit(8)` per phase saturates the 4-worker pool fine, but two phases each running their own `pLimit(8)` against a 4-worker pool is effectively `pLimit(16)` against 4 workers, which is back to fighting.
+
+### `followSymlinks: false` everywhere chokidar runs
+
+`packageWatcher` and `localWatcher` (both in [`src/main/watcher.js`](../src/main/watcher.js)) hardcode `followSymlinks: false`. There is no plausible VaM use case for following symlinks during library indexing. JayJayWon's BrowserAssist plugin drops directory symlinks under `Saves/PluginData/.../SymLinks/` pointing back at `AddonPackages`, `AddonPackagesFilePrefs`, `Custom`, `Saves/Person`, `Saves/scene`. With `followSymlinks: true`, chokidar enumerates the entire 60k+ FilePrefs tree (the very thing `prefsWatcher` uses native `fs.watch(..., { recursive: true })` for); without, it sees the symlinks and stops.
+
+Our own walks (`walkForVars`, `runLocalScan`'s walk, `readAllPrefs.walkSidecarDir`) are implicitly safe because of a Windows quirk: `dirent.isDirectory()` returns **false** for directory symlinks, and `dirent.isFile()` returns **false** too — they fall through every branch. This is load-bearing. To survive any future refactor that resolves symlinks (e.g. moving to `realpath`-then-stat), each walk has an explicit `if (entry.isSymbolicLink()) continue` belt-and-braces.
+
+The `prefsWatcher` is unaffected — it uses native `fs.watch(..., { recursive: true })`, which doesn't traverse, just hooks into the kernel's `ReadDirectoryChangesW` IRP for the whole tree.
+
+### Reproduction (if it ever regresses)
+
+1. Ensure `<vamDir>\Saves\PluginData\JayJayWon\BrowserAssist\SymLinks\` exists with directory symlinks pointing back at `AddonPackages*` and `Custom` (BrowserAssist plugin installed).
+2. Move `startWatcher(vamDir)` from `startupScan`'s `finally` back to `initBackend`, OR remove `followSymlinks: false` from a chokidar watcher.
+3. `npm run dev`. Slow startup (>30 s) confirms the regression.
+4. Diagnostic: read the `FS watcher 'localWatcher' ready in <T> ms (<F> files / <D> dirs)` log emitted on `ready`. `F` should be ~1 051. If 100 000+, the symlink walk is back. The `Library scan: indexed N .var files in M ms` log emitted by `walkForVars` should also stay sub-second; if it's seconds, the libuv pool is contended.
+
+---
+
+## 18. Reusable Components
 
 ### VirtualGrid
 
@@ -1190,7 +1257,7 @@ Expandable/collapsible content type groups with batch hide/favorite toggle actio
 
 ---
 
-## 18. IPC Channel Reference
+## 19. IPC Channel Reference
 
 Handlers live under `src/main/ipc/` split per domain (`packages.js`, `contents.js`, `hub.js`, `downloads.js`, `scanner.js`, `settings.js`, `thumbnails.js`, `avatars.js`, `shell.js`, `dev.js`, `app.js`) plus the `updater:*` handlers in `src/main/updater.js`. The preload script (`src/preload/index.js`) exposes them verbatim on `window.api`.
 
@@ -1311,7 +1378,7 @@ Handlers live under `src/main/ipc/` split per domain (`packages.js`, `contents.j
 | `updater:check`      | Force an update check                                |
 | `updater:install`    | Quit-and-install a downloaded update                 |
 | `updater:getChannel` | Current update channel (`stable` / `dev`)            |
-| `updater:setChannel` | Switch channel and kick off a background check (§20) |
+| `updater:setChannel` | Switch channel and kick off a background check (§21) |
 
 #### Dev (`src/main/ipc/dev.js`)
 
@@ -1347,7 +1414,7 @@ When developer options are unlocked, **F12** (and Ctrl+Shift+I / Cmd+Alt+I) togg
 
 ---
 
-## 19. Tech Stack Summary
+## 20. Tech Stack Summary
 
 | Layer          | Technology                 | Version       |
 | -------------- | -------------------------- | ------------- |
@@ -1400,7 +1467,7 @@ src/
 
 ---
 
-## 20. Release Channels
+## 21. Release Channels
 
 Two GitHub Actions workflows publish to separate channels. The in-app setting `update_channel` (`stable` | `dev`, default `stable`) picks which feed `electron-updater` uses via [`src/main/updater.js`](../src/main/updater.js).
 
