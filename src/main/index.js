@@ -211,7 +211,9 @@ function initBackend() {
     try {
       buildFromDb()
     } catch {}
-    startWatcher(vamDir)
+    // startWatcher runs after startupScan (see startupScan finally) — starting chokidar
+    // before the full library scan contends on the same volume and can make walkForVars
+    // take minutes instead of sub-second.
   }
 }
 
@@ -225,32 +227,44 @@ async function startupScan() {
   }
 
   try {
-    const scanResult = await runScan(vamDir, (progress) => notify('scan:progress', progress))
-    setPendingStartupUnreadable(scanResult.unreadable?.length ? scanResult.unreadable : null)
-  } catch (err) {
-    console.warn('Startup scan failed:', err.message)
-    setPendingStartupUnreadable(null)
-    if (!getSetting('initial_scan_done')) setSetting('initial_scan_done', '1')
     try {
-      const prefs = await readAllPrefs(vamDir)
-      setPrefsMap(prefs)
-    } catch {}
-    buildFromDb()
+      const scanResult = await runScan(vamDir, (progress) => notify('scan:progress', progress))
+      setPendingStartupUnreadable(scanResult.unreadable?.length ? scanResult.unreadable : null)
+    } catch (err) {
+      console.warn('Startup scan failed:', err.message)
+      setPendingStartupUnreadable(null)
+      if (!getSetting('initial_scan_done')) setSetting('initial_scan_done', '1')
+      try {
+        const prefs = await readAllPrefs(vamDir)
+        setPrefsMap(prefs)
+      } catch {}
+      buildFromDb()
+    }
+
+    notify('packages:updated')
+    notify('contents:updated')
+
+    // Hub backfill chain: refresh packages.json → enrich local packages with
+    // hub_resource_id + hub detail (bounded by pLimit(10) in hub/scanner.js) →
+    // fetch any missing CDN thumbnails. Each step strictly follows the previous
+    // so scanHubDetails sees the fresh index and resolvePackageThumbnails sees
+    // the hub_resource_ids scanHubDetails just wrote.
+    try {
+      await fetchPackagesJson({ refreshTimestamp: true })
+    } catch (err) {
+      console.warn('[startup] packages.json refresh failed:', err.message)
+    }
+    try {
+      await scanHubDetails((data) => notify('hub-scan:progress', data))
+    } catch (err) {
+      console.warn('[startup] hub detail backfill failed:', err.message)
+    }
+    await resolvePackageThumbnails()
+  } finally {
+    if (vamDir && getSetting('initial_scan_done')) {
+      await startWatcher(vamDir)
+    }
   }
-
-  notify('packages:updated')
-  notify('contents:updated')
-
-  // Hub backfill chain: refresh packages.json → enrich local packages with
-  // hub_resource_id + hub detail (bounded by pLimit(10) in hub/scanner.js) →
-  // fetch any missing CDN thumbnails. Each step strictly follows the previous
-  // so scanHubDetails sees the fresh index and resolvePackageThumbnails sees
-  // the hub_resource_ids scanHubDetails just wrote.
-  fetchPackagesJson({ refreshTimestamp: true })
-    .catch((err) => console.warn('[startup] packages.json refresh failed:', err.message))
-    .then(() => scanHubDetails((data) => notify('hub-scan:progress', data)))
-    .catch((err) => console.warn('[startup] hub detail backfill failed:', err.message))
-    .finally(() => resolvePackageThumbnails())
 }
 
 app.whenReady().then(async () => {

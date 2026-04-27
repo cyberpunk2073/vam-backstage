@@ -61,6 +61,11 @@ export async function startWatcher(vamDir) {
   packageWatcher = chokidar.watch(addonDir, {
     ignoreInitial: true,
     depth: 10,
+    // Some VaM plugins (e.g. JayJayWon's BrowserAssist) drop directory symlinks under
+    // Saves/PluginData/.../SymLinks pointing back at AddonPackages, AddonPackagesFilePrefs,
+    // Custom, etc. Following them would have chokidar enumerate the 60k+ FilePrefs tree
+    // (the very thing prefsWatcher uses native fs.watch for), pinning libuv for ~100s.
+    followSymlinks: false,
     awaitWriteFinish: { stabilityThreshold: 2000, pollInterval: 300 },
   })
   packageWatcher
@@ -91,6 +96,9 @@ function initLocalWatcher(vamDir) {
   localWatcher = chokidar.watch(roots, {
     ignoreInitial: true,
     depth: 20,
+    // See packageWatcher comment — same reasoning, more critical here because Saves/
+    // is exactly where BrowserAssist drops the symlink farm.
+    followSymlinks: false,
     awaitWriteFinish: { stabilityThreshold: 1000, pollInterval: 200 },
   })
   localWatcher
