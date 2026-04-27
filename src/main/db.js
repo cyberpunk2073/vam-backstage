@@ -4,7 +4,7 @@ import { app } from 'electron'
 import { join } from 'path'
 import { LOCAL_PACKAGE_FILENAME } from '../shared/local-package.js'
 
-const SCHEMA_VERSION = 18
+const SCHEMA_VERSION = 19
 
 let db
 
@@ -64,6 +64,7 @@ function migrate() {
     }
     if (current < 17) applyV17()
     if (current < 18) applyV18()
+    if (current < 19) applyV19()
   }
 
   ensureLocalPackage()
@@ -89,6 +90,16 @@ function applyV18() {
     ALTER TABLE contents ADD COLUMN file_mtime REAL NOT NULL DEFAULT 0;
     ALTER TABLE contents ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0;
   `)
+}
+
+/**
+ * v19 — add `hub_detail_applied_at` to `packages`. Mirrors `hub_resources.updated_at`
+ * so `scanHubDetails` can skip rows whose cached detail has already been applied
+ * (zero-cost warm starts). Existing rows land at NULL — the first scan after
+ * deploy walks every linked row once, then steady state kicks in.
+ */
+function applyV19() {
+  db.exec(`ALTER TABLE packages ADD COLUMN hub_detail_applied_at INTEGER`)
 }
 
 /**
@@ -134,7 +145,8 @@ function createSchema() {
       hub_tags TEXT,
       promotional_link TEXT,
       type_override TEXT,
-      is_corrupted INTEGER NOT NULL DEFAULT 0
+      is_corrupted INTEGER NOT NULL DEFAULT 0,
+      hub_detail_applied_at INTEGER
     );
 
     CREATE INDEX IF NOT EXISTS idx_packages_package_name ON packages(package_name);
@@ -264,6 +276,37 @@ export function getAllPackagesForHubScan() {
   return stmt('SELECT filename, package_name, is_direct FROM packages').all()
 }
 
+/**
+ * Work-list for scanHubDetails apply step: rows whose linked hub_resources entry
+ * has been updated (or has never been applied) since the last apply. Warm steady
+ * state returns zero rows — no JSON parses, no DB writes, no IPC events.
+ */
+export function getPackagesNeedingHubDetailApply() {
+  return stmt(`
+    SELECT p.filename, hr.hub_json
+    FROM packages p
+    JOIN hub_resources hr ON hr.resource_id = p.hub_resource_id
+    WHERE p.hub_resource_id IS NOT NULL
+      AND hr.hub_json IS NOT NULL
+      AND (p.hub_detail_applied_at IS NULL OR p.hub_detail_applied_at < hr.updated_at)
+  `).all()
+}
+
+/**
+ * Linked packages whose hub detail JSON has never been fetched (or was wiped).
+ * Failed fetches store an `_unavailable` JSON, so they are NOT returned here —
+ * matching the previous applyCachedDetail-based behaviour of not retrying
+ * known-failed rids on every launch.
+ */
+export function getPackagesNeedingHubDetailFetch() {
+  return stmt(`
+    SELECT p.filename, p.hub_resource_id AS rid
+    FROM packages p
+    LEFT JOIN hub_resources hr ON hr.resource_id = p.hub_resource_id
+    WHERE p.hub_resource_id IS NOT NULL AND hr.hub_json IS NULL
+  `).all()
+}
+
 // Contents
 export function insertContents(rows) {
   if (rows.length === 0) return
@@ -379,8 +422,20 @@ export function setSetting(key, value) {
   stmt('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value)
 }
 
+/**
+ * No-op when the column already matches — keeps `scanHubDetails`'s pass-1
+ * link step from issuing ~1700 redundant UPDATEs on warm starts. Returns the
+ * number of rows actually changed (0 or 1) so callers can gate downstream
+ * `buildFromDb`/`notify` work on real changes.
+ * @returns {number}
+ */
 export function setHubResourceId(filename, resourceId) {
-  stmt('UPDATE packages SET hub_resource_id = ? WHERE filename = ?').run(resourceId, filename)
+  const r = stmt('UPDATE packages SET hub_resource_id = ? WHERE filename = ? AND hub_resource_id IS NOT ?').run(
+    resourceId,
+    filename,
+    resourceId,
+  )
+  return r.changes
 }
 
 export function setHubUserId(filename, userId) {
@@ -541,13 +596,23 @@ export function clearAllCorrupted() {
   stmt('UPDATE packages SET is_corrupted = 0 WHERE is_corrupted = 1').run()
 }
 
-// Hub auxiliary tables — raw JSON blob cache
+// Hub auxiliary tables — raw JSON blob cache.
+//
+// The three upserts share `updated_at`. Each gates its UPDATE on a real change
+// to the column it owns (`WHERE existing IS NOT excluded`), so unchanged Hub
+// responses don't bump the timestamp and don't trigger downstream re-applies
+// (see `packages.hub_detail_applied_at` dirty-check in scanHubDetails).
+// One side effect: a real change to search_json/find_json bumps the shared
+// `updated_at`, causing one spurious hub_detail re-apply per package whose
+// detail JSON happens to match byte-for-byte. Acceptable — re-apply is
+// idempotent and rare; the alternative (per-column timestamps) isn't worth it.
 
 export function upsertHubResourceDetail(resourceId, json) {
   stmt(`INSERT INTO hub_resources (resource_id, hub_json, updated_at)
     VALUES (?, ?, unixepoch())
     ON CONFLICT(resource_id) DO UPDATE SET
       hub_json = excluded.hub_json, updated_at = excluded.updated_at
+    WHERE hub_resources.hub_json IS NOT excluded.hub_json
   `).run(resourceId, JSON.stringify(json))
 }
 
@@ -556,6 +621,7 @@ export function upsertHubResourceSearch(resourceId, json) {
     VALUES (?, ?, unixepoch())
     ON CONFLICT(resource_id) DO UPDATE SET
       search_json = excluded.search_json, updated_at = excluded.updated_at
+    WHERE hub_resources.search_json IS NOT excluded.search_json
   `).run(resourceId, JSON.stringify(json))
 }
 
@@ -564,6 +630,7 @@ export function upsertHubResourceFind(resourceId, json) {
     VALUES (?, ?, unixepoch())
     ON CONFLICT(resource_id) DO UPDATE SET
       find_json = excluded.find_json, updated_at = excluded.updated_at
+    WHERE hub_resources.find_json IS NOT excluded.find_json
   `).run(resourceId, JSON.stringify(json))
 }
 
@@ -593,6 +660,36 @@ export function setPackageHubMeta(filename, { tags, promotionalLink }) {
     promotionalLink || null,
     filename,
   )
+}
+
+/**
+ * Bundle every Hub-detail-derived field write into a single UPDATE and stamp
+ * `hub_detail_applied_at`. Called on every successful detail apply (cached or
+ * freshly fetched) and also on `_unavailable` cache rows so they aren't
+ * re-checked on subsequent scans. Mirrors the COALESCE/null-clear rules of the
+ * scattered setters: missing user_id / display_name / type leave the existing
+ * column untouched; tags / promotional_link can be cleared.
+ */
+export function applyHubDetailToPackage(filename, detail) {
+  if (detail?._unavailable) {
+    stmt('UPDATE packages SET hub_detail_applied_at = unixepoch() WHERE filename = ?').run(filename)
+    return
+  }
+  const userId = detail?.user_id ? String(detail.user_id) : null
+  const displayName = detail?.title || null
+  const tags = detail?.tags || null
+  const promotionalLink = detail?.promotional_link || null
+  const hubType = typeof detail?.type === 'string' ? detail.type.trim() : ''
+  stmt(`
+    UPDATE packages SET
+      hub_user_id = COALESCE(?, hub_user_id),
+      hub_display_name = COALESCE(?, hub_display_name),
+      hub_tags = ?,
+      promotional_link = ?,
+      type = COALESCE(?, type),
+      hub_detail_applied_at = unixepoch()
+    WHERE filename = ?
+  `).run(userId, displayName, tags, promotionalLink, hubType || null, filename)
 }
 
 export function transact(fn) {
