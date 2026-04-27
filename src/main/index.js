@@ -194,11 +194,13 @@ async function setupHubConsent() {
 }
 
 function initBackend() {
+  // Register IPC before DB open so a failed migration/open still exposes handlers
+  // (renderer otherwise gets "No handler registered" for every channel).
+  registerAllHandlers()
   openDatabase()
   loadPackagesJsonFromCache()
   initNotify(() => mainWindow)
   initLogForward(() => mainWindow)
-  registerAllHandlers()
   setupHubConsent()
   initDownloadManager()
 
