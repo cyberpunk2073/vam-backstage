@@ -1,0 +1,10 @@
+---
+description: Assume project root as shell cwd; do not cd before commands
+alwaysApply: true
+---
+
+# Shell working directory
+
+The agent shell is already the project root. Run commands as-is; do not prefix with `cd` to this repo (no `cd c:\dev\vam-backstage && …` or similar).
+
+`working_directory` on the run tool is for exceptional cases (subprojects, one-off paths); default is the repo root.
