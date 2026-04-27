@@ -226,6 +226,7 @@ async function startupScan() {
     setSetting('needs_rescan', null)
   }
 
+  let hubBackfill = null
   try {
     try {
       const scanResult = await runScan(vamDir, (progress) => notify('scan:progress', progress))
@@ -249,21 +250,33 @@ async function startupScan() {
     // fetch any missing CDN thumbnails. Each step strictly follows the previous
     // so scanHubDetails sees the fresh index and resolvePackageThumbnails sees
     // the hub_resource_ids scanHubDetails just wrote.
-    try {
-      await fetchPackagesJson({ refreshTimestamp: true })
-    } catch (err) {
-      console.warn('[startup] packages.json refresh failed:', err.message)
-    }
-    try {
-      await scanHubDetails((data) => notify('hub-scan:progress', data))
-    } catch (err) {
-      console.warn('[startup] hub detail backfill failed:', err.message)
-    }
-    await resolvePackageThumbnails()
+    //
+    // The whole chain is detached from this try block: it uses the network
+    // pool, while startWatcher's chokidar setup uses the libuv FS pool. Pools
+    // are disjoint, so we run the two chains concurrently and await both in
+    // the finally below.
+    hubBackfill = (async () => {
+      try {
+        await fetchPackagesJson({ refreshTimestamp: true })
+      } catch (err) {
+        console.warn('[startup] packages.json refresh failed:', err.message)
+      }
+      try {
+        await scanHubDetails((data) => notify('hub-scan:progress', data))
+      } catch (err) {
+        console.warn('[startup] hub detail backfill failed:', err.message)
+      }
+      try {
+        await resolvePackageThumbnails()
+      } catch (err) {
+        console.warn('[startup] thumbnail resolution failed:', err.message)
+      }
+    })()
   } finally {
-    if (vamDir && getSetting('initial_scan_done')) {
-      await startWatcher(vamDir)
-    }
+    const branches = []
+    if (vamDir && getSetting('initial_scan_done')) branches.push(startWatcher(vamDir))
+    if (hubBackfill) branches.push(hubBackfill)
+    if (branches.length) await Promise.allSettled(branches)
   }
 }
 
