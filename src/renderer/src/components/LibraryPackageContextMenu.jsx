@@ -459,6 +459,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                         await window.api.packages.promote(updateInfo.localNewerFilename)
                         await useLibraryStore.getState().fetchPackages()
                         await useLibraryStore.getState().selectPackage(updateInfo.localNewerFilename)
+                        toast(`Updated to v${updateInfo.hubVersion}`, 'success', 2500)
                       } catch (err) {
                         toast(`Update failed: ${err.message}`)
                       }
@@ -478,15 +479,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                 (updateInfo?.hubResourceId || updateInfo?.packageName) && (
                   <ContextMenuItem
                     onSelect={() => {
-                      useDownloadStore
-                        .getState()
-                        .install(
-                          updateInfo.hubResourceId,
-                          null,
-                          false,
-                          updateInfo.packageName,
-                          !!updateInfo.isDepUpdate,
-                        )
+                      useDownloadStore.getState().installUpdate(p, updateInfo)
                     }}
                   >
                     <ArrowUpCircle size={12} className="shrink-0 text-accent-blue" />

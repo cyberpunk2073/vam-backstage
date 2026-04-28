@@ -182,19 +182,21 @@ export async function enqueueInstall(
   if (isPaid) throw new Error('Cannot download paid packages')
 
   const hubTitle = detail.title || null
-  let enqueued = 0
+  let inserted = 0
+  let alreadyLocal = 0
+  let alreadyQueued = 0
   for (const file of hubFiles) {
     const url = resolveDownloadUrl(file)
     const fn = ensureVarExt(file.filename)
     if (!url || !fn) continue
     if (findLocalByFilename(fn)) {
-      enqueued++
+      alreadyLocal++
       continue
     }
     const existing = getDownloadByRef(fn)
     if (existing) {
       if (existing.status === 'queued' || existing.status === 'active') {
-        enqueued++
+        alreadyQueued++
         continue
       }
       deleteDownload(existing.id)
@@ -209,9 +211,9 @@ export async function enqueueInstall(
       displayName: hubTitle,
       autoQueueDeps: autoQueueDeps ? 1 : 0,
     })
-    enqueued++
+    inserted++
   }
-  if (enqueued === 0) throw new Error('No download URL available')
+  if (inserted + alreadyLocal + alreadyQueued === 0) throw new Error('No download URL available')
 
   emitUpdated()
   processQueue()
@@ -221,7 +223,7 @@ export async function enqueueInstall(
 
   emitUpdated()
   processQueue()
-  return { ok: true, unresolvedDeps }
+  return { ok: true, inserted, alreadyLocal, alreadyQueued, paused, unresolvedDeps }
 }
 
 export async function enqueueInstallMissing(packageFilename, autoQueueDeps = true) {

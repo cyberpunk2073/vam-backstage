@@ -70,6 +70,7 @@ import { VirtualGrid, VirtualList } from '../components/VirtualGrid'
 import { ThumbnailSizeSlider } from '../components/ThumbnailSizeSlider'
 import { useKeyboardNav } from '../hooks/useKeyboardNav'
 import { usePersistedPanelWidth } from '../hooks/usePersistedPanelWidth'
+import { useLibraryUpdateState } from '../hooks/useLibraryUpdateState'
 import {
   COMMERCIAL_USE_ALLOWED_LICENSE_FILTER,
   LICENSE_FILTER_OPTIONS,
@@ -1103,15 +1104,27 @@ function ToolbarActions({
     if (!updateCheckResults) return
     const store = useDownloadStore.getState()
     let queued = 0
+    let alreadyKnown = 0
+    let pausedFlag = false
     for (const update of Object.values(updateCheckResults)) {
       if (update.localNewerFilename) continue
       if (!update.hubResourceId && !update.packageName) continue
       try {
-        await store.install(update.hubResourceId, null, true, update.packageName, !!update.isDepUpdate)
-        queued++
+        const r = await store.install(update.hubResourceId, null, true, update.packageName, !!update.isDepUpdate)
+        const ins = r?.inserted ?? 0
+        if (ins > 0) queued += ins
+        else if ((r?.alreadyLocal ?? 0) + (r?.alreadyQueued ?? 0) > 0) alreadyKnown++
+        if (r?.paused) pausedFlag = true
       } catch {}
     }
-    if (queued > 0) toast(`${queued} update${queued !== 1 ? 's' : ''} queued`, 'success', 3000)
+    if (queued > 0) {
+      const msg = pausedFlag
+        ? `${queued} update${queued !== 1 ? 's' : ''} queued — downloads are paused`
+        : `${queued} update${queued !== 1 ? 's' : ''} queued`
+      toast(msg, pausedFlag ? 'info' : 'success', pausedFlag ? 4000 : 3000)
+    } else if (alreadyKnown > 0) {
+      toast(`Nothing new to queue (${alreadyKnown} already on disk or queued)`, 'info', 3500)
+    }
   }
 
   const lastCheckedText = useMemo(() => {
@@ -1496,6 +1509,89 @@ function LibraryPackageTypeBadgeMenu({ pkg, kindLabel, kindIsCore }) {
   )
 }
 
+function UpdateActions({ pkg, updateInfo }) {
+  const [promoting, setPromoting] = useState(false)
+  const updateState = useLibraryUpdateState(pkg, updateInfo)
+
+  const handlePromote = async () => {
+    if (promoting) return
+    setPromoting(true)
+    try {
+      await window.api.packages.uninstall(pkg.filename)
+      await window.api.packages.promote(updateInfo.localNewerFilename)
+      await useLibraryStore.getState().fetchPackages()
+      await useLibraryStore.getState().selectPackage(updateInfo.localNewerFilename)
+      toast(`Updated to v${updateInfo.hubVersion}`, 'success', 2500)
+    } catch (err) {
+      toast(`Update failed: ${err.message}`)
+    } finally {
+      setPromoting(false)
+    }
+  }
+
+  if (updateInfo.localNewerFilename) {
+    return (
+      <div className="flex gap-1.5">
+        <Button
+          variant="gradient"
+          size="sm"
+          onClick={handlePromote}
+          disabled={promoting}
+          className="flex-1 min-w-0 text-[11px]"
+        >
+          {promoting ? (
+            <>
+              <Loader2 size={11} className="animate-spin" /> Updating…
+            </>
+          ) : (
+            <>
+              <ArrowUpCircle size={11} /> Update to v{updateInfo.hubVersion}
+            </>
+          )}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => useLibraryStore.getState().selectPackage(updateInfo.localNewerFilename)}
+          disabled={promoting}
+          className="shrink-0 text-[11px] px-2.5 border-text-secondary/25 text-text-primary"
+        >
+          <Eye size={11} /> Go to
+        </Button>
+      </div>
+    )
+  }
+
+  const busy = updateState.state === 'pending' || updateState.state === 'queued' || updateState.state === 'downloading'
+  return (
+    <Button
+      variant="gradient"
+      size="sm"
+      onClick={() => useDownloadStore.getState().installUpdate(pkg, updateInfo)}
+      disabled={busy || (!updateInfo.hubResourceId && !updateInfo.packageName)}
+      className="w-full text-[11px]"
+    >
+      {updateState.state === 'pending' ? (
+        <>
+          <Loader2 size={11} className="animate-spin" /> Queuing…
+        </>
+      ) : updateState.state === 'queued' ? (
+        <>
+          <Loader2 size={11} className="animate-spin" /> Queued
+        </>
+      ) : updateState.state === 'downloading' ? (
+        <>
+          <Loader2 size={11} className="animate-spin" /> Downloading {Math.round((updateState.progress ?? 0) * 100)}%
+        </>
+      ) : (
+        <>
+          <ArrowUpCircle size={11} /> Update to v{updateInfo.hubVersion}
+        </>
+      )}
+    </Button>
+  )
+}
+
 function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
   const galleryVisibilityFilter = useContentStore((s) => s.visibilityFilter)
   const [panelWidth, setPanelWidth] = usePersistedPanelWidth('panel_width_detail', {
@@ -1671,56 +1767,7 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
 
           {/* Actions */}
           <div className="mt-3 space-y-1.5">
-            {updateInfo &&
-              (updateInfo.localNewerFilename ? (
-                <div className="flex gap-1.5">
-                  <Button
-                    variant="gradient"
-                    size="sm"
-                    onClick={async () => {
-                      try {
-                        await window.api.packages.uninstall(pkg.filename)
-                        await window.api.packages.promote(updateInfo.localNewerFilename)
-                        await useLibraryStore.getState().fetchPackages()
-                        await useLibraryStore.getState().selectPackage(updateInfo.localNewerFilename)
-                      } catch (err) {
-                        toast(`Update failed: ${err.message}`)
-                      }
-                    }}
-                    className="flex-1 min-w-0 text-[11px]"
-                  >
-                    <ArrowUpCircle size={11} /> Update to v{updateInfo.hubVersion}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => useLibraryStore.getState().selectPackage(updateInfo.localNewerFilename)}
-                    className="shrink-0 text-[11px] px-2.5 border-text-secondary/25 text-text-primary"
-                  >
-                    <Eye size={11} /> Go to
-                  </Button>
-                </div>
-              ) : (
-                <Button
-                  variant="gradient"
-                  size="sm"
-                  onClick={() => {
-                    if (updateInfo.hubResourceId || updateInfo.packageName)
-                      useDownloadStore
-                        .getState()
-                        .install(
-                          updateInfo.hubResourceId,
-                          null,
-                          false,
-                          updateInfo.packageName,
-                          !!updateInfo.isDepUpdate,
-                        )
-                  }}
-                  className="w-full text-[11px]"
-                >
-                  <ArrowUpCircle size={11} /> Update to v{updateInfo.hubVersion}
-                </Button>
-              ))}
+            {updateInfo && <UpdateActions pkg={pkg} updateInfo={updateInfo} />}
             {pkg.isCorrupted && (
               <Button
                 variant="gradient"

@@ -45,6 +45,7 @@ export const useDownloadStore = create((set, get) => ({
   byHubResourceId: new Map(),
   byPackageRef: new Map(),
   pendingInstalls: new Set(), // hub resource IDs clicked but not yet in queue
+  pendingUpdates: new Set(), // library filenames whose Update click hasn't reached the queue yet
 
   init: () => {
     if (get().initialized) return
@@ -107,6 +108,52 @@ export const useDownloadStore = create((set, get) => ({
         return { pendingInstalls: next }
       })
     }
+  },
+
+  installUpdate: async (pkg, updateInfo) => {
+    if (!pkg?.filename || !updateInfo) return
+    if (!updateInfo.hubResourceId && !updateInfo.packageName) return
+    const filename = pkg.filename
+    set((s) => {
+      const next = new Set(s.pendingUpdates)
+      next.add(filename)
+      return { pendingUpdates: next }
+    })
+    let result = null
+    try {
+      result = await window.api.packages.install({
+        resourceId: updateInfo.hubResourceId,
+        hubDetail: null,
+        autoQueueDeps: false,
+        packageName: updateInfo.packageName,
+        asDependency: !!updateInfo.isDepUpdate,
+      })
+      if (result?.unresolvedDeps?.length > 0) toastUnresolvableDeps(result.unresolvedDeps)
+      // Successful inserts get visual feedback via the button state (Queuing/Queued/Downloading),
+      // so we only toast for cases that wouldn't otherwise be acknowledged.
+      const inserted = result?.inserted ?? 0
+      const alreadyLocal = result?.alreadyLocal ?? 0
+      const alreadyQueued = result?.alreadyQueued ?? 0
+      const ver = updateInfo.hubVersion ? `v${updateInfo.hubVersion}` : 'update'
+      if (inserted === 0 && alreadyQueued > 0) {
+        toast(`${ver} is already queued`, 'info', 3000)
+      } else if (inserted === 0 && alreadyLocal > 0) {
+        toast(`${ver} is already on disk — try a re-scan`, 'info', 3500)
+      } else if (inserted > 0 && result?.paused) {
+        toast(`${ver} queued — downloads are paused`, 'info', 4000)
+      }
+    } catch (err) {
+      toast(`Update failed: ${err.message}`)
+    } finally {
+      await get().fetchItems()
+      set((s) => {
+        if (!s.pendingUpdates.has(filename)) return s
+        const next = new Set(s.pendingUpdates)
+        next.delete(filename)
+        return { pendingUpdates: next }
+      })
+    }
+    return result
   },
 
   installMissing: async (filename) => {
