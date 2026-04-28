@@ -22,8 +22,6 @@ export const useContentStore = create((set, get) => ({
 
   ...FILTER_DEFAULTS,
   ...typeFilterSlice(set, get),
-  /** After first successful contents fetch: Scenes if any, else All (empty). */
-  typeFilterDefaultApplied: false,
   primarySort: 'Type',
   secondarySort: 'Recently installed',
   viewMode: 'grid',
@@ -44,7 +42,6 @@ export const useContentStore = create((set, get) => ({
       ...FILTER_DEFAULTS,
       search,
       visibilityFilter: 'all',
-      typeFilterDefaultApplied: true,
       selectedItem: null,
       selectedPackage: null,
       bulkSelectedIds: [],
@@ -106,14 +103,7 @@ export const useContentStore = create((set, get) => ({
   fetchContents: async () => {
     try {
       const contents = await window.api.contents.list({})
-      const { typeFilterDefaultApplied } = get()
-      const patch = { contents }
-      if (!typeFilterDefaultApplied) {
-        const sceneCount = contents.filter((c) => c.category === 'Scenes').length
-        patch.selectedTypes = sceneCount > 0 ? ['Scenes'] : []
-        patch.typeFilterDefaultApplied = true
-      }
-      set(patch)
+      set({ contents })
     } catch (err) {
       console.error('Failed to fetch contents:', err)
     }
