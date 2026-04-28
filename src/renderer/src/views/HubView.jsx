@@ -50,6 +50,8 @@ import { ThumbnailSizeSlider } from '../components/ThumbnailSizeSlider'
 
 /** Hub text search: avoid a network request on every keystroke */
 const HUB_SEARCH_DEBOUNCE_MS = 320
+/** Must match `gap-3` on the hub gallery grid (`0.75rem` = 12px) */
+const HUB_GALLERY_GRID_GAP_PX = 12
 
 export default function HubView({ onNavigate }) {
   const {
@@ -154,6 +156,24 @@ export default function HubView({ onNavigate }) {
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+
+  /** Mirror `repeat(auto-fill,minmax(min(cardWidth,100%),1fr))`: count how many columns fit. */
+  const columnCount = useMemo(() => {
+    if (!availableWidth || !cardWidth) return 1
+    const effectiveCardWidth = Math.min(cardWidth, availableWidth)
+    return Math.max(
+      1,
+      Math.floor((availableWidth + HUB_GALLERY_GRID_GAP_PX) / (effectiveCardWidth + HUB_GALLERY_GRID_GAP_PX)),
+    )
+  }, [availableWidth, cardWidth])
+
+  /** While more pages exist, hide the trailing partial row so the bottom is always full rows */
+  const visibleResources = useMemo(() => {
+    if (page >= totalPages) return resources
+    const fullRowCount = Math.floor(resources.length / columnCount) * columnCount
+    if (fullRowCount === 0) return resources
+    return resources.slice(0, fullRowCount)
+  }, [resources, page, totalPages, columnCount])
 
   // Filter changes → reset to page 1 and fetch
   useEffect(() => {
@@ -406,7 +426,7 @@ export default function HubView({ onNavigate }) {
                 className="grid gap-3 content-start"
                 style={{ gridTemplateColumns: `repeat(auto-fill,minmax(min(${cardWidth}px,100%),1fr))` }}
               >
-                {resources.map((r) => (
+                {visibleResources.map((r) => (
                   <HubCard
                     key={r.resource_id}
                     resource={r}
