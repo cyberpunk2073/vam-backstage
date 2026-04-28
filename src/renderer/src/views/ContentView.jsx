@@ -11,6 +11,8 @@ import {
   X,
   Loader2,
   FolderOpen,
+  ChevronDown,
+  Tag,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { toast } from '../components/Toast'
@@ -30,8 +32,15 @@ import {
 } from '../lib/utils'
 import { useThumbnail } from '../hooks/useThumbnail'
 import { useContentStore } from '../stores/useContentStore'
+import { useLabelsStore } from '../stores/useLabelsStore'
 import { AuthorAvatar, AuthorLink, ContentCard, ContentTableRow } from '../components/PackageCard'
 import { ContentItemContextMenu } from '../components/ContentItemContextMenu'
+import { LabelsRow } from '../components/labels/LabelsRow'
+import { LabelChip } from '../components/labels/LabelChip'
+import { LabelApplyPopover } from '../components/labels/LabelApplyPopover'
+import { useAddLabel } from '../components/labels/useAddLabel'
+import { useLabelObjects } from '../components/labels/useLabelObjects'
+import { bulkStateMap } from '../components/labels/labelApplyState'
 import { ContentCategory } from '../components/ContentCategory'
 import FilterPanel from '../components/FilterPanel'
 import ResizeHandle from '../components/ResizeHandle'
@@ -56,6 +65,24 @@ function contentMatchesSelectedTags(c, selectedTags) {
   return selectedTags.every((st) => tags.includes(st))
 }
 
+function contentLabelIds(c) {
+  const own = c.ownLabelIds || []
+  const parent = c.inheritedLabelIds || []
+  if (!own.length) return parent
+  if (!parent.length) return own
+  const set = new Set(own)
+  for (const id of parent) set.add(id)
+  return [...set]
+}
+
+function contentMatchesSelectedLabels(c, selectedLabelIds) {
+  if (selectedLabelIds.length === 0) return true
+  const ids = contentLabelIds(c)
+  if (!ids.length) return false
+  for (const id of selectedLabelIds) if (!ids.includes(id)) return false
+  return true
+}
+
 function matchesContentPackageFilter(c, packageFilter) {
   if (packageFilter === 'all') return true
   if (packageFilter === 'local') return isLocalPackage(c.packageFilename)
@@ -74,6 +101,7 @@ export default function ContentView({ onNavigate, navContext }) {
     selectedTypes,
     selectedPackageTypes,
     selectedTags,
+    selectedLabelIds,
     packageFilter,
     visibilityFilter,
     primarySort,
@@ -86,6 +114,7 @@ export default function ContentView({ onNavigate, navContext }) {
     togglePackageType,
     selectSinglePackageType,
     setSelectedTags,
+    setSelectedLabelIds,
     setPackageFilter,
     setVisibilityFilter,
     setPrimarySort,
@@ -100,6 +129,7 @@ export default function ContentView({ onNavigate, navContext }) {
     selectAllBulk,
     clearBulkSelection,
   } = useContentStore()
+  const labels = useLabelsStore((s) => s.labels)
 
   const [gridLayout, setGridLayout] = useState({ cols: 1, availableWidth: 0 })
   const [tagCounts, setTagCounts] = useState({})
@@ -191,10 +221,11 @@ export default function ContentView({ onNavigate, navContext }) {
     else if (visibilityFilter === 'hidden') items = items.filter((c) => isEffectivelyHidden(c))
     else if (visibilityFilter === 'favorites') items = items.filter((c) => c.favorite)
     items = items.filter((c) => contentMatchesSelectedTags(c, selectedTags))
+    items = items.filter((c) => contentMatchesSelectedLabels(c, selectedLabelIds))
     const counts = { _total: items.length }
     for (const c of items) counts[c.category] = (counts[c.category] || 0) + 1
     return counts
-  }, [baseFiltered, selectedPackageTypes, packageFilter, visibilityFilter, selectedTags])
+  }, [baseFiltered, selectedPackageTypes, packageFilter, visibilityFilter, selectedTags, selectedLabelIds])
 
   const packageTypeCounts = useMemo(() => {
     let items = baseFiltered
@@ -207,13 +238,14 @@ export default function ContentView({ onNavigate, navContext }) {
     else if (visibilityFilter === 'hidden') items = items.filter((c) => isEffectivelyHidden(c))
     else if (visibilityFilter === 'favorites') items = items.filter((c) => c.favorite)
     items = items.filter((c) => contentMatchesSelectedTags(c, selectedTags))
+    items = items.filter((c) => contentMatchesSelectedLabels(c, selectedLabelIds))
     const counts = { _total: items.length }
     for (const c of items) {
       const label = libraryTypeBadgeLabel(c.parentPackageType)
       counts[label] = (counts[label] || 0) + 1
     }
     return counts
-  }, [baseFiltered, selectedTypes, packageFilter, visibilityFilter, selectedTags])
+  }, [baseFiltered, selectedTypes, packageFilter, visibilityFilter, selectedTags, selectedLabelIds])
 
   const packageFilterCounts = useMemo(() => {
     let items = baseFiltered
@@ -232,6 +264,7 @@ export default function ContentView({ onNavigate, navContext }) {
     else if (visibilityFilter === 'hidden') items = items.filter((c) => isEffectivelyHidden(c))
     else if (visibilityFilter === 'favorites') items = items.filter((c) => c.favorite)
     items = items.filter((c) => contentMatchesSelectedTags(c, selectedTags))
+    items = items.filter((c) => contentMatchesSelectedLabels(c, selectedLabelIds))
     let installed = 0,
       dependency = 0,
       local = 0
@@ -241,7 +274,7 @@ export default function ContentView({ onNavigate, navContext }) {
       else dependency++
     }
     return { all: items.length, installed, dependency, local }
-  }, [baseFiltered, selectedTypes, selectedPackageTypes, visibilityFilter, selectedTags])
+  }, [baseFiltered, selectedTypes, selectedPackageTypes, visibilityFilter, selectedTags, selectedLabelIds])
 
   const visibilityCounts = useMemo(() => {
     let items = baseFiltered
@@ -258,6 +291,7 @@ export default function ContentView({ onNavigate, navContext }) {
     }
     items = items.filter((c) => matchesContentPackageFilter(c, packageFilter))
     items = items.filter((c) => contentMatchesSelectedTags(c, selectedTags))
+    items = items.filter((c) => contentMatchesSelectedLabels(c, selectedLabelIds))
     let visible = 0,
       hidden = 0,
       favorites = 0
@@ -267,7 +301,7 @@ export default function ContentView({ onNavigate, navContext }) {
       if (c.favorite) favorites++
     }
     return { all: visible + hidden, visible, hidden, favorites }
-  }, [baseFiltered, selectedTypes, selectedPackageTypes, packageFilter, selectedTags])
+  }, [baseFiltered, selectedTypes, selectedPackageTypes, packageFilter, selectedTags, selectedLabelIds])
 
   const filtered = useMemo(() => {
     let result = [...baseFiltered]
@@ -295,6 +329,9 @@ export default function ContentView({ onNavigate, navContext }) {
           .map((t) => t.trim())
         return selectedTags.every((st) => tags.includes(st))
       })
+    }
+    if (selectedLabelIds.length > 0) {
+      result = result.filter((c) => contentMatchesSelectedLabels(c, selectedLabelIds))
     }
 
     const sortFns = {
@@ -325,6 +362,7 @@ export default function ContentView({ onNavigate, navContext }) {
     selectedTypes,
     selectedPackageTypes,
     selectedTags,
+    selectedLabelIds,
     packageFilter,
     visibilityFilter,
     primarySort,
@@ -405,6 +443,19 @@ export default function ContentView({ onNavigate, navContext }) {
         suggestions: authorCounts,
         placeholder: 'Filter by author…',
       },
+      ...(labels.length
+        ? [
+            {
+              key: 'labels',
+              label: 'Labels',
+              type: 'labels-autocomplete',
+              value: selectedLabelIds,
+              onChange: setSelectedLabelIds,
+              labels,
+              placeholder: 'Filter by label…',
+            },
+          ]
+        : []),
       {
         key: 'hubTags',
         label: 'Tags',
@@ -442,6 +493,8 @@ export default function ContentView({ onNavigate, navContext }) {
       visibilityCounts,
       authorSearch,
       selectedTags,
+      selectedLabelIds,
+      labels,
       tagCounts,
       authorCounts,
       primarySort,
@@ -455,6 +508,7 @@ export default function ContentView({ onNavigate, navContext }) {
       setVisibilityFilter,
       setAuthorSearch,
       setSelectedTags,
+      setSelectedLabelIds,
       setPrimarySort,
       setSecondarySort,
     ],
@@ -488,7 +542,7 @@ export default function ContentView({ onNavigate, navContext }) {
 
   const bulkActive = bulkSelectedIds.length > 0
 
-  const scrollResetKey = `${search}\0${authorSearch}\0${selectedTypes.join(',')}\0${selectedPackageTypes.join(',')}\0${selectedTags.join(',')}\0${packageFilter}\0${visibilityFilter}\0${primarySort}\0${secondarySort}`
+  const scrollResetKey = `${search}\0${authorSearch}\0${selectedTypes.join(',')}\0${selectedPackageTypes.join(',')}\0${selectedTags.join(',')}\0${selectedLabelIds.join(',')}\0${packageFilter}\0${visibilityFilter}\0${primarySort}\0${secondarySort}`
 
   const lastSelectedIdxRef = useRef(0)
   const prevScrollResetKeyRef = useRef(scrollResetKey)
@@ -684,6 +738,45 @@ export default function ContentView({ onNavigate, navContext }) {
     else void runBulkFavorite(false)
   }, [bulkFavoriteState, runBulkFavorite])
 
+  const bulkLabelStateMap = useMemo(() => {
+    const items = filtered.filter((c) => bulkSelectedIds.includes(c.id))
+    return bulkStateMap(items.map((c) => c.ownLabelIds || []))
+  }, [filtered, bulkSelectedIds])
+
+  const bulkLabelTargets = useMemo(
+    () =>
+      filtered
+        .filter((c) => bulkSelectedIds.includes(c.id))
+        .map((c) => ({ packageFilename: c.packageFilename, internalPath: c.internalPath })),
+    [filtered, bulkSelectedIds],
+  )
+
+  const runBulkLabelToggle = useCallback(
+    async (label, currentState) => {
+      if (!bulkLabelTargets.length) return
+      const apply = currentState !== 'all'
+      try {
+        await window.api.labels.applyToContents({ id: label.id, items: bulkLabelTargets, applied: apply })
+      } catch (err) {
+        toast(`Failed to ${apply ? 'apply' : 'remove'} label: ${err.message}`)
+      }
+    },
+    [bulkLabelTargets],
+  )
+
+  const runBulkLabelCreate = useCallback(
+    async (name) => {
+      if (!bulkLabelTargets.length) return
+      try {
+        const created = await window.api.labels.create({ name })
+        await window.api.labels.applyToContents({ id: created.id, items: bulkLabelTargets, applied: true })
+      } catch (err) {
+        toast(`Failed to create label: ${err.message}`)
+      }
+    },
+    [bulkLabelTargets],
+  )
+
   const selectionAnnounced = bulkActive ? `${bulkSelectedIds.length} selected` : ''
 
   const contentTableSelectAllRef = useRef(null)
@@ -733,6 +826,22 @@ export default function ContentView({ onNavigate, navContext }) {
               />
               {bulkFavoriteState.allFav && !bulkFavoriteState.mixed ? 'Unfavorite' : 'Favorite'}
             </button>
+            <LabelApplyPopover
+              align="end"
+              labels={labels}
+              stateById={bulkLabelStateMap}
+              onToggle={runBulkLabelToggle}
+              onCreate={runBulkLabelCreate}
+            >
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 h-7 pl-2.5 pr-2 rounded-md cursor-pointer border border-border/90 bg-elevated/60 hover:bg-elevated hover:border-border text-[11px] font-medium text-text-primary shadow-sm transition-colors shrink-0"
+              >
+                <Tag size={12} className="text-text-tertiary shrink-0" />
+                Labels
+                <ChevronDown size={14} className="text-text-tertiary shrink-0 opacity-90" strokeWidth={2.25} />
+              </button>
+            </LabelApplyPopover>
             <span className="text-[11px] text-text-primary font-medium tabular-nums">
               {bulkSelectedIds.length} selected
             </span>
@@ -965,6 +1074,19 @@ function ContentDetailPanel({
 
   const isLocal = isLocalPackage(item.packageFilename)
   const allContents = useContentStore((s) => s.contents)
+  const allLabels = useLabelsStore((s) => s.labels)
+  const onApplyLabelToItem = useCallback(
+    (id, applied) =>
+      window.api.labels.applyToContents({
+        id,
+        items: [{ packageFilename: item.packageFilename, internalPath: item.internalPath }],
+        applied,
+      }),
+    [item.packageFilename, item.internalPath],
+  )
+  const { handleApply: handleApplyLabel, handleCreate: handleCreateLabel } = useAddLabel(onApplyLabelToItem)
+  const hasLabels = (item.ownLabelIds || []).length > 0
+  const inheritedLabels = useLabelObjects(item.inheritedLabelIds)
 
   const moreGrouped = useMemo(() => {
     if (!pkg) return {}
@@ -1037,6 +1159,24 @@ function ContentDetailPanel({
                 )}
               </div>
             </div>
+            {!hasLabels && (
+              <LabelApplyPopover
+                labels={allLabels}
+                appliedIds={[]}
+                onApply={handleApplyLabel}
+                onCreate={handleCreateLabel}
+                align="end"
+              >
+                <button
+                  type="button"
+                  title="Add label"
+                  aria-label="Add label"
+                  className="shrink-0 p-1 rounded cursor-pointer transition-colors text-text-tertiary hover:text-text-secondary data-[state=open]:text-text-secondary"
+                >
+                  <Tag size={14} />
+                </button>
+              </LabelApplyPopover>
+            )}
             {!item.isEnabled ? (
               <span className="shrink-0 p-1 text-warning opacity-60" title="Package is disabled">
                 <EyeOff size={14} />
@@ -1056,6 +1196,11 @@ function ContentDetailPanel({
               <Star size={14} fill={item.favorite ? 'currentColor' : 'none'} />
             </button>
           </div>
+          {hasLabels && (
+            <div className="mt-3">
+              <LabelsRow appliedIds={item.ownLabelIds} onApplyToTarget={onApplyLabelToItem} />
+            </div>
+          )}
         </div>
 
         <div className="p-4 border-b border-border">
@@ -1144,6 +1289,9 @@ function ContentDetailPanel({
                   <span className={`${THUMB_OVERLAY_CHIP} bg-accent-blue/20 text-accent-blue`}>DEP</span>
                 )}
                 {!pkg.isEnabled && <span className={`${THUMB_OVERLAY_CHIP} bg-warning/20 text-warning`}>DISABLED</span>}
+                {inheritedLabels.map((label) => (
+                  <LabelChip key={label.id} label={label} size="sm" outline />
+                ))}
                 <span
                   className="text-text-tertiary"
                   title={

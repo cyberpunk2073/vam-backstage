@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from 'react'
-import { Compass, Download, Eye, EyeOff, Library as LibraryIcon, Star } from 'lucide-react'
+import { Compass, Download, Eye, EyeOff, Library as LibraryIcon, Star, Tag } from 'lucide-react'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -13,6 +13,10 @@ import {
 import { toast } from '@/components/Toast'
 import { cn, displayName } from '@/lib/utils'
 import { useContentStore } from '@/stores/useContentStore'
+import { useLabelsStore } from '@/stores/useLabelsStore'
+import { LabelsApplyMenuItems } from '@/components/labels/LabelsApplyMenuItems'
+import { singleTargetStateMap, bulkStateMap } from '@/components/labels/labelApplyState'
+import { applyLabelToContentItems } from '@/components/labels/labelActions'
 
 const SCENE_SOURCE_TYPES = new Set(['scene', 'legacyScene'])
 const LOOK_SOURCE_TYPES = new Set(['legacyLook'])
@@ -72,6 +76,7 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
   const selectedPackage = useContentStore((s) => s.selectedPackage)
   const bulkSelectedIds = useContentStore((s) => s.bulkSelectedIds)
   const contents = useContentStore((s) => s.contents)
+  const labels = useLabelsStore((s) => s.labels)
   const [pkg, setPkg] = useState(null)
   const [probe, setProbe] = useState(null)
 
@@ -110,6 +115,25 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
     const label = allHidden ? 'Show' : 'Hide'
     return { label, allHidden, allVisible, mixed }
   }, [bulkSelectedIds, contents])
+
+  const labelTargetItems = useMemo(() => {
+    if (!showBulk) return [{ packageFilename: item.packageFilename, internalPath: item.internalPath }]
+    return bulkSelectedIds
+      .map((id) => contents.find((c) => c.id === id))
+      .filter(Boolean)
+      .map((c) => ({ packageFilename: c.packageFilename, internalPath: c.internalPath }))
+  }, [showBulk, bulkSelectedIds, contents, item.packageFilename, item.internalPath])
+
+  const labelStateMap = useMemo(() => {
+    if (!showBulk) return singleTargetStateMap(item.ownLabelIds || [])
+    const targets = bulkSelectedIds.map((id) => contents.find((c) => c.id === id)).filter(Boolean)
+    return bulkStateMap(targets.map((c) => c.ownLabelIds || []))
+  }, [showBulk, bulkSelectedIds, contents, item.ownLabelIds])
+
+  const handleLabelToggle = async (label, currentState) => {
+    const apply = currentState !== 'all'
+    await applyLabelToContentItems(label.id, labelTargetItems, apply)
+  }
 
   const bulkFavoriteUi = useMemo(() => {
     const items = bulkSelectedIds.map((id) => contents.find((c) => c.id === id)).filter(Boolean)
@@ -247,9 +271,19 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
   return (
     <ContextMenu onOpenChange={onOpenChange}>
       <ContextMenuTrigger className="contents">{children}</ContextMenuTrigger>
-      <ContextMenuContent className="min-w-52">
+      <ContextMenuContent className="min-w-52" onCloseAutoFocus={(e) => e.preventDefault()}>
         {showBulk ? (
           <>
+            <ContextMenuSub>
+              <ContextMenuSubTrigger>
+                <Tag size={12} className="shrink-0" />
+                Labels ({bulkSelectedIds.length})
+              </ContextMenuSubTrigger>
+              <ContextMenuSubContent>
+                <LabelsApplyMenuItems labels={labels} stateById={labelStateMap} onToggle={handleLabelToggle} />
+              </ContextMenuSubContent>
+            </ContextMenuSub>
+            <ContextMenuSeparator />
             <ContextMenuItem disabled={!bulkVisibilityEligible} onSelect={() => applyBulkVisibilityFromStore()}>
               {bulkVisibilityUi.allHidden ? (
                 <Eye size={12} className="shrink-0 text-text-secondary" />
@@ -362,6 +396,15 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
               {item.favorite ? 'Unfavorite' : 'Favorite'}
             </ContextMenuItem>
             <ContextMenuSeparator />
+            <ContextMenuSub>
+              <ContextMenuSubTrigger>
+                <Tag size={12} className="shrink-0" />
+                Labels
+              </ContextMenuSubTrigger>
+              <ContextMenuSubContent>
+                <LabelsApplyMenuItems labels={labels} stateById={labelStateMap} onToggle={handleLabelToggle} />
+              </ContextMenuSubContent>
+            </ContextMenuSub>
             <ContextMenuItem
               onSelect={() => {
                 onNavigate?.('library', { selectPackage: item.packageFilename })

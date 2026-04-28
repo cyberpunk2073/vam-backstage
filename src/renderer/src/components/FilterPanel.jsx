@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { Search, X, ChevronDown, ChevronRight, Check, Tag, User } from 'lucide-react'
+import { Search, X, ChevronDown, ChevronRight, Check, Tag, Hash, User } from 'lucide-react'
 import { usePersistedPanelWidth } from '../hooks/usePersistedPanelWidth'
 import ResizeHandle from './ResizeHandle'
 import { Input } from './ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 import { Button } from './ui/button'
+import { LabelChip } from './labels/LabelChip'
+import { LabelManageMenu } from './labels/LabelManageMenu'
+import { enableMatchingPackages } from './labels/labelActions'
+import { useLabelRename } from './labels/useLabelRename'
+import { labelColor } from '../lib/labels'
 
 export default function FilterPanel({
   search,
@@ -149,6 +154,15 @@ export default function FilterPanel({
               />
             )}
 
+            {section.type === 'labels-autocomplete' && (
+              <LabelsAutocomplete
+                value={section.value}
+                onChange={section.onChange}
+                labels={section.labels}
+                placeholder={section.placeholder}
+              />
+            )}
+
             {section.type === 'select' && (
               <Select value={section.value} onValueChange={section.onChange}>
                 <SelectTrigger className="w-full h-8 bg-elevated text-xs text-text-secondary">
@@ -278,7 +292,7 @@ function TagsAutocomplete({ value = [], onChange, suggestions = {}, placeholder 
         </div>
       )}
       <div className="relative">
-        <Tag size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-tertiary z-10" />
+        <Hash size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-tertiary z-10" />
         <Input
           ref={inputRef}
           type="text"
@@ -325,6 +339,195 @@ function TagsAutocomplete({ value = [], onChange, suggestions = {}, placeholder 
               <span className="text-text-tertiary text-[11px] shrink-0">{count}</span>
             </button>
           ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Labels filter widget — like `TagsAutocomplete` but values are label IDs and
+ * each chip / row gets a leading colored dot. No "Create" affordance — labels
+ * are born only by being applied (see UX plan §12). Right-click on a chip or
+ * row opens the management menu (rename / recolor / delete + enable/disable
+ * all packages).
+ */
+function LabelsAutocomplete({ value = [], onChange, labels = [], placeholder = 'Filter by label…' }) {
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState(false)
+  const [hlIndex, setHlIndex] = useState(-1)
+  const { renamingId, renameDraft, setRenameDraft, startRename, commitRename, cancelRename } = useLabelRename()
+  const containerRef = useRef(null)
+  const inputRef = useRef(null)
+  const listRef = useRef(null)
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const labelMap = useMemo(() => {
+    const m = new Map()
+    for (const l of labels) m.set(l.id, l)
+    return m
+  }, [labels])
+
+  const selected = useMemo(() => value.map((id) => labelMap.get(id)).filter(Boolean), [value, labelMap])
+
+  const matches = useMemo(() => {
+    const selectedSet = new Set(value)
+    const q = query.trim().toLowerCase()
+    const all = labels.filter((l) => !selectedSet.has(l.id))
+    if (!q) return all.slice(0, 30)
+    const prefix = []
+    const rest = []
+    for (const l of all) {
+      const lower = l.name.toLowerCase()
+      if (lower.startsWith(q)) prefix.push(l)
+      else if (lower.includes(q)) rest.push(l)
+    }
+    return [...prefix, ...rest].slice(0, 30)
+  }, [labels, value, query])
+
+  useEffect(() => setHlIndex(-1), [matches])
+
+  const addLabel = (id) => {
+    onChange([...value, id])
+    setQuery('')
+    inputRef.current?.focus()
+  }
+  const removeLabel = (id) => onChange(value.filter((x) => x !== id))
+
+  const onKeyDown = (e) => {
+    if (!open || matches.length === 0) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHlIndex((i) => {
+        const next = i < matches.length - 1 ? i + 1 : 0
+        listRef.current?.children[next]?.scrollIntoView({ block: 'nearest' })
+        return next
+      })
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHlIndex((i) => {
+        const next = i > 0 ? i - 1 : matches.length - 1
+        listRef.current?.children[next]?.scrollIntoView({ block: 'nearest' })
+        return next
+      })
+    } else if (e.key === 'Enter' && hlIndex >= 0 && hlIndex < matches.length) {
+      e.preventDefault()
+      addLabel(matches[hlIndex].id)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setOpen(false)
+    }
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-1.5">
+          {selected.map((label) => (
+            <LabelManageMenu
+              key={label.id}
+              label={label}
+              surface="sidebar"
+              applicationCount={(label.packageCount || 0) + (label.contentCount || 0)}
+              onStartRename={() => startRename(label)}
+              onEnableMatching={() => enableMatchingPackages(label.id, true)}
+              onDisableMatching={() => enableMatchingPackages(label.id, false)}
+              onDeleted={() => removeLabel(label.id)}
+            >
+              <LabelChip
+                label={label}
+                size="sm"
+                interactive
+                filled
+                onNameDoubleClick={() => startRename(label)}
+                onRemove={() => removeLabel(label.id)}
+                renaming={renamingId === label.id}
+                editValue={renameDraft}
+                onEditChange={setRenameDraft}
+                onCommit={commitRename}
+                onCancel={cancelRename}
+              />
+            </LabelManageMenu>
+          ))}
+          {selected.length > 1 && (
+            <button
+              type="button"
+              onClick={() => onChange([])}
+              className="text-[10px] text-text-tertiary hover:text-text-secondary cursor-pointer px-1"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+      <div className="relative">
+        <Tag size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-tertiary z-10" />
+        <Input
+          ref={inputRef}
+          type="text"
+          placeholder={placeholder}
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value)
+            setOpen(true)
+          }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={onKeyDown}
+          className="h-7 bg-elevated rounded pl-7 pr-7 text-xs"
+        />
+        {query && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            onClick={() => {
+              setQuery('')
+              setOpen(false)
+            }}
+            className="absolute right-1 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary"
+          >
+            <X size={12} />
+          </Button>
+        )}
+      </div>
+      {open && matches.length > 0 && (
+        <div
+          ref={listRef}
+          className="absolute z-30 left-0 right-0 mt-1 max-h-60 overflow-y-auto bg-popover border border-border rounded shadow-lg"
+        >
+          {matches.map((label, i) => {
+            const total = (label.packageCount || 0) + (label.contentCount || 0)
+            return (
+              <LabelManageMenu
+                key={label.id}
+                label={label}
+                surface="sidebar"
+                applicationCount={total}
+                onStartRename={() => startRename(label)}
+                onEnableMatching={() => enableMatchingPackages(label.id, true)}
+                onDisableMatching={() => enableMatchingPackages(label.id, false)}
+              >
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => addLabel(label.id)}
+                  onMouseEnter={() => setHlIndex(i)}
+                  className={`w-full text-left px-2.5 py-1.5 text-xs flex items-center gap-2 cursor-pointer transition-colors ${i === hlIndex ? 'bg-accent-blue/10 text-text-primary' : 'hover:bg-hover'}`}
+                >
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: labelColor(label) }} />
+                  <span className="truncate flex-1">{label.name}</span>
+                  {total > 0 && <span className="text-text-tertiary text-[11px] shrink-0">{total}</span>}
+                </button>
+              </LabelManageMenu>
+            )
+          })}
         </div>
       )}
     </div>

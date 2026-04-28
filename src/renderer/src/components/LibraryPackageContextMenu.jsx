@@ -9,6 +9,7 @@ import {
   Heart,
   LayoutGrid,
   Plus,
+  Tag,
   Trash2,
 } from 'lucide-react'
 import { toast } from '@/components/Toast'
@@ -22,6 +23,9 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
+import { LabelsApplyMenuItems } from '@/components/labels/LabelsApplyMenuItems'
+import { singleTargetStateMap, bulkStateMap } from '@/components/labels/labelApplyState'
+import { applyLabelToFilenames } from '@/components/labels/labelActions'
 import { AlertDialog } from '@/components/ui/alert-dialog'
 import {
   DisablePackageDialogContent,
@@ -32,6 +36,7 @@ import FileTreeDialog from '@/components/FileTreeDialog'
 import { displayName } from '@/lib/utils'
 import { useDownloadStore } from '@/stores/useDownloadStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
+import { useLabelsStore } from '@/stores/useLabelsStore'
 
 async function runLibraryBulkToggleEnabledFromStore() {
   const { packages, bulkSelectedFilenames } = useLibraryStore.getState()
@@ -142,6 +147,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
   const selectedDetail = useLibraryStore((s) => s.selectedDetail)
   const bulkSelectedFilenames = useLibraryStore((s) => s.bulkSelectedFilenames)
   const packages = useLibraryStore((s) => s.packages)
+  const labels = useLabelsStore((s) => s.labels)
   const [detail, setDetail] = useState(null)
   const [probe, setProbe] = useState(null)
   const [fileTreeOpen, setFileTreeOpen] = useState(false)
@@ -227,6 +233,21 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
   const bulkDepCount = showBulk
     ? packages.filter((x) => bulkSelectedFilenames.includes(x.filename) && !x.isDirect).length
     : 0
+
+  const labelTargetFilenames = useMemo(
+    () => (showBulk ? bulkSelectedFilenames : [pkg.filename]),
+    [showBulk, bulkSelectedFilenames, pkg.filename],
+  )
+  const labelStateMap = useMemo(() => {
+    if (!showBulk) return singleTargetStateMap(pkg.labelIds || [])
+    const targets = packages.filter((x) => bulkSelectedFilenames.includes(x.filename))
+    return bulkStateMap(targets.map((x) => x.labelIds || []))
+  }, [showBulk, packages, bulkSelectedFilenames, pkg.labelIds])
+
+  const handleLabelToggle = async (label, currentState) => {
+    const apply = currentState !== 'all'
+    await applyLabelToFilenames(label.id, labelTargetFilenames, apply)
+  }
 
   const bulkEnableUi = useMemo(() => {
     if (!showBulk) return null
@@ -384,9 +405,19 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
     <>
       <ContextMenu onOpenChange={onOpenChange}>
         <ContextMenuTrigger className="contents">{children}</ContextMenuTrigger>
-        <ContextMenuContent className="min-w-52">
+        <ContextMenuContent className="min-w-52" onCloseAutoFocus={(e) => e.preventDefault()}>
           {showBulk ? (
             <>
+              <ContextMenuSub>
+                <ContextMenuSubTrigger>
+                  <Tag size={12} className="shrink-0" />
+                  Labels ({bulkSelectedFilenames.length})
+                </ContextMenuSubTrigger>
+                <ContextMenuSubContent>
+                  <LabelsApplyMenuItems labels={labels} stateById={labelStateMap} onToggle={handleLabelToggle} />
+                </ContextMenuSubContent>
+              </ContextMenuSub>
+              <ContextMenuSeparator />
               <ContextMenuItem onSelect={() => void runLibraryBulkToggleEnabledFromStore()}>
                 {bulkEnableUi.allEnabled && !bulkEnableUi.mixed ? (
                   <EyeOff size={12} className="shrink-0 text-text-secondary" />
@@ -544,6 +575,15 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                 <FolderTree size={12} className="shrink-0" />
                 Browse package files
               </ContextMenuItem>
+              <ContextMenuSub>
+                <ContextMenuSubTrigger>
+                  <Tag size={12} className="shrink-0" />
+                  Labels
+                </ContextMenuSubTrigger>
+                <ContextMenuSubContent>
+                  <LabelsApplyMenuItems labels={labels} stateById={labelStateMap} onToggle={handleLabelToggle} />
+                </ContextMenuSubContent>
+              </ContextMenuSub>
               {renderPkgExtractEntries()}
               {!p.isDirect && (
                 <>

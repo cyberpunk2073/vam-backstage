@@ -4,7 +4,7 @@ import { app } from 'electron'
 import { join } from 'path'
 import { LOCAL_PACKAGE_FILENAME } from '../shared/local-package.js'
 
-const SCHEMA_VERSION = 19
+const SCHEMA_VERSION = 20
 
 let db
 
@@ -65,6 +65,7 @@ function migrate() {
     if (current < 17) applyV17()
     if (current < 18) applyV18()
     if (current < 19) applyV19()
+    if (current < 20) applyV20()
   }
 
   ensureLocalPackage()
@@ -100,6 +101,42 @@ function applyV18() {
  */
 function applyV19() {
   db.exec(`ALTER TABLE packages ADD COLUMN hub_detail_applied_at INTEGER`)
+}
+
+/**
+ * v20 — user-defined Labels. `labels.color` semantics:
+ *   `NULL`  → user picked "None" (muted gray)
+ *   `-1`    → user picked "Auto" (derive from id hash; default at creation)
+ *   `0..N`  → explicit palette index
+ * `name` uses `COLLATE NOCASE` so case-insensitive uniqueness is enforced at the SQL layer.
+ * Both junction tables cascade on `packages.filename` so uninstalling a package wipes its labels.
+ * `label_contents` keys on `(package_filename, internal_path)` rather than `contents.id` because
+ * `contents` rows can be REPLACEd during rescans (id changes); our composite is stable.
+ */
+function applyV20() {
+  db.exec(`
+    CREATE TABLE labels (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      color INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE label_packages (
+      label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+      package_filename TEXT NOT NULL REFERENCES packages(filename) ON DELETE CASCADE,
+      PRIMARY KEY (label_id, package_filename)
+    );
+    CREATE INDEX idx_label_packages_pkg ON label_packages(package_filename);
+
+    CREATE TABLE label_contents (
+      label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+      package_filename TEXT NOT NULL REFERENCES packages(filename) ON DELETE CASCADE,
+      internal_path TEXT NOT NULL,
+      PRIMARY KEY (label_id, package_filename, internal_path)
+    );
+    CREATE INDEX idx_label_contents_pkgpath ON label_contents(package_filename, internal_path);
+  `)
 }
 
 /**
@@ -205,6 +242,28 @@ function createSchema() {
       key TEXT PRIMARY KEY,
       value TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS labels (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      color INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS label_packages (
+      label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+      package_filename TEXT NOT NULL REFERENCES packages(filename) ON DELETE CASCADE,
+      PRIMARY KEY (label_id, package_filename)
+    );
+    CREATE INDEX IF NOT EXISTS idx_label_packages_pkg ON label_packages(package_filename);
+
+    CREATE TABLE IF NOT EXISTS label_contents (
+      label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+      package_filename TEXT NOT NULL REFERENCES packages(filename) ON DELETE CASCADE,
+      internal_path TEXT NOT NULL,
+      PRIMARY KEY (label_id, package_filename, internal_path)
+    );
+    CREATE INDEX IF NOT EXISTS idx_label_contents_pkgpath ON label_contents(package_filename, internal_path);
   `)
 }
 
@@ -694,4 +753,117 @@ export function applyHubDetailToPackage(filename, detail) {
 
 export function transact(fn) {
   db.transaction(fn)()
+}
+
+// --- Labels ---
+
+/**
+ * Insert or fetch by case-insensitive name. Returns `{ id, name, color, created }`.
+ * `created` is true when this call inserted the row, false when it already existed.
+ * Newly-created labels start with `color = -1` (Auto — derive from id hash).
+ */
+export function findOrCreateLabel(name) {
+  const existing = stmt('SELECT id, name, color FROM labels WHERE name = ?').get(name)
+  if (existing) return { ...existing, created: false }
+  const r = stmt('INSERT INTO labels (name, color) VALUES (?, -1)').run(name)
+  return { id: r.lastInsertRowid, name, color: -1, created: true }
+}
+
+export function getAllLabels() {
+  return stmt('SELECT id, name, color, created_at FROM labels ORDER BY name COLLATE NOCASE').all()
+}
+
+export function getAllLabelPackages() {
+  return stmt('SELECT label_id, package_filename FROM label_packages').all()
+}
+
+export function getAllLabelContents() {
+  return stmt('SELECT label_id, package_filename, internal_path FROM label_contents').all()
+}
+
+export function getLabelById(id) {
+  return stmt('SELECT id, name, color FROM labels WHERE id = ?').get(id)
+}
+
+/**
+ * Rename a label. Throws on case-insensitive collision with another label.
+ * Returns the updated row.
+ */
+export function renameLabel(id, name) {
+  const trimmed = String(name ?? '').trim()
+  if (!trimmed) throw new Error('Label name cannot be empty')
+  const existing = stmt('SELECT id FROM labels WHERE name = ? AND id != ?').get(trimmed, id)
+  if (existing) {
+    const err = new Error(`A label named "${trimmed}" already exists`)
+    err.code = 'LABEL_NAME_EXISTS'
+    throw err
+  }
+  stmt('UPDATE labels SET name = ? WHERE id = ?').run(trimmed, id)
+  return getLabelById(id)
+}
+
+/** `color = -1` means Auto (derive from id hash); `null` means None (muted); else palette index. */
+export function recolorLabel(id, color) {
+  stmt('UPDATE labels SET color = ? WHERE id = ?').run(color, id)
+  return getLabelById(id)
+}
+
+export function deleteLabel(id) {
+  stmt('DELETE FROM labels WHERE id = ?').run(id)
+}
+
+export function applyLabelToPackages(id, filenames) {
+  if (!filenames.length) return
+  const ins = stmt('INSERT OR IGNORE INTO label_packages (label_id, package_filename) VALUES (?, ?)')
+  const tx = db.transaction((items) => {
+    for (const fn of items) ins.run(id, fn)
+  })
+  tx(filenames)
+}
+
+export function removeLabelFromPackages(id, filenames) {
+  if (!filenames.length) return
+  const del = stmt('DELETE FROM label_packages WHERE label_id = ? AND package_filename = ?')
+  const tx = db.transaction((items) => {
+    for (const fn of items) del.run(id, fn)
+  })
+  tx(filenames)
+}
+
+export function applyLabelToContents(id, items) {
+  if (!items.length) return
+  const ins = stmt('INSERT OR IGNORE INTO label_contents (label_id, package_filename, internal_path) VALUES (?, ?, ?)')
+  const tx = db.transaction((arr) => {
+    for (const it of arr) ins.run(id, it.packageFilename, it.internalPath)
+  })
+  tx(items)
+}
+
+export function removeLabelFromContents(id, items) {
+  if (!items.length) return
+  const del = stmt('DELETE FROM label_contents WHERE label_id = ? AND package_filename = ? AND internal_path = ?')
+  const tx = db.transaction((arr) => {
+    for (const it of arr) del.run(id, it.packageFilename, it.internalPath)
+  })
+  tx(items)
+}
+
+/**
+ * Garbage-collect labels with zero applications.
+ *
+ * Run only at startup so abandoned labels don't accumulate long-term, while
+ * keeping in-session labels alive across mid-edit application count → 0
+ * transitions (see UX plan §12). Do not call this from CRUD handlers.
+ *
+ * @returns {number} rows removed
+ */
+export function gcOrphanLabels() {
+  const r = db
+    .prepare(
+      `DELETE FROM labels
+       WHERE id NOT IN (SELECT label_id FROM label_packages)
+         AND id NOT IN (SELECT label_id FROM label_contents)`,
+    )
+    .run()
+  return r.changes
 }

@@ -5,6 +5,7 @@ export const CHANGELOG = [
     date: '2026-04-27',
     notes: [
       'Loose files outside .var packages now show up in the library alongside your installs, with a filter to view local-only items.',
+      'User-defined labels for organizing packages and content items into your own groups, filterable in the library and content views.',
       'Faster startup, smoother browsing after scans, and quicker thumbnail loads.',
       'Window size and position are remembered between launches.',
     ],

@@ -37,6 +37,8 @@ import { useThumbnail } from '../hooks/useThumbnail'
 import { useHubInstallState } from '../hooks/useHubInstallState'
 import { useDownloadStore } from '../stores/useDownloadStore'
 import { useAvatar } from '../hooks/useAvatar'
+import { LabelDots } from './labels/LabelDots'
+import { useLabelObjects } from './labels/useLabelObjects'
 
 /** Non-interactive bulk-selection marker; whole card handles clicks */
 function BulkSelectChip({ checked }) {
@@ -44,11 +46,11 @@ function BulkSelectChip({ checked }) {
     <span
       role="checkbox"
       aria-checked={checked}
-      className={`shrink-0 inline-flex items-center justify-center w-5 h-5 rounded border pointer-events-none ${
+      className={`shrink-0 inline-flex items-center justify-center size-[18px] rounded border pointer-events-none ${
         checked ? 'bg-accent-blue border-accent-blue text-white' : 'border-white/35 bg-black/45 backdrop-blur-sm'
       }`}
     >
-      {checked ? <Check size={12} strokeWidth={3} /> : null}
+      {checked ? <Check size={11} strokeWidth={3} /> : null}
     </span>
   )
 }
@@ -390,6 +392,7 @@ export function LibraryCard({
   const thumbUrl = useThumbnail(`pkg:${pkg.filename}`)
   const versionStr = pkg.version != null && pkg.version !== '' ? String(pkg.version) : null
   const showBulk = bulkMode || bulkSelected
+  const labelObjs = useLabelObjects(pkg.labelIds)
 
   return (
     <button
@@ -504,6 +507,7 @@ export function LibraryCard({
             </div>
           </div>
         )}
+        <LabelDots labels={labelObjs} />
       </div>
       {!minimal && (
         <div className="p-3 min-w-0">
@@ -866,6 +870,8 @@ export function ContentCard({
   const thumbUrl = useThumbnail(thumbKey)
   const showBulk = bulkMode || bulkSelected
   const isLocalContent = isLocalPackage(item.packageFilename)
+  // Cards show *own* labels only — inherited (package) labels live on the package card.
+  const labelObjs = useLabelObjects(item.ownLabelIds)
 
   return (
     <div
@@ -965,6 +971,7 @@ export function ContentCard({
           <div className="text-[11px] font-medium text-white truncate leading-tight">{item.displayName}</div>
           <div className="text-[9px] text-white/50 truncate">{pkgLabel}</div>
         </div>
+        <LabelDots labels={labelObjs} />
       </div>
     </div>
   )

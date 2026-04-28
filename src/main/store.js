@@ -1,4 +1,12 @@
-import { getAllPackages, getAllContents, getHubResource, getAllHubResourceJsons } from './db.js'
+import {
+  getAllPackages,
+  getAllContents,
+  getHubResource,
+  getAllHubResourceJsons,
+  getAllLabels,
+  getAllLabelPackages,
+  getAllLabelContents,
+} from './db.js'
 import { getCachedDetail } from './hub/client.js'
 import {
   buildGroupIndex,
@@ -10,20 +18,7 @@ import {
   getTransitiveDeps,
   parseDepRef,
 } from './scanner/graph.js'
-import {
-  canonicalizeLicense,
-  COMMERCIAL_USE_ALLOWED_LICENSE_FILTER,
-  isCommercialUseAllowed,
-} from '../shared/licenses.js'
-import {
-  categoryOf,
-  isCorePackageCategory,
-  isGalleryVisible,
-  isVisible,
-  LOOK_ITEM_EXACT_TYPES,
-  tagOf,
-} from '../shared/content-types.js'
-import { haystacksMatchAllTerms, searchAndTerms } from '../shared/search-text.js'
+import { categoryOf, isGalleryVisible, isVisible, LOOK_ITEM_EXACT_TYPES, tagOf } from '../shared/content-types.js'
 import { getPackagesIndex, loadPackagesJsonFromCache } from './hub/packages-json.js'
 import { isLocalPackage } from '../shared/local-package.js'
 
@@ -91,6 +86,9 @@ let orphanSet = new Set() // filenames of all orphan deps (direct + cascade)
 let directOrphanSet = new Set() // filenames of direct orphans only (zero reverse deps)
 let tagCounts = {} // tag (lowercase) → count of packages that have it
 let authorCounts = {} // creator string → count of packages with that creator
+let labelIndex = new Map() // label_id → { id, name, color, packageCount, contentCount }
+let labelsByPackage = new Map() // package_filename → number[] of label ids
+let labelsByContent = new Map() // `${package_filename}\0${internal_path}` → number[] of label ids
 let nonDownloadableRids = new Set() // resource IDs known to be non-downloadable
 let stats = emptyStats()
 
@@ -286,6 +284,46 @@ export function buildFromDb({ skipGraph = false } = {}) {
     const a = typeof pkg.creator === 'string' ? pkg.creator.trim() : ''
     if (a) authorCounts[a] = (authorCounts[a] || 0) + 1
   }
+
+  buildLabels()
+}
+
+function buildLabels() {
+  const labels = getAllLabels()
+  labelIndex = new Map()
+  for (const l of labels)
+    labelIndex.set(l.id, { id: l.id, name: l.name, color: l.color, packageCount: 0, contentCount: 0 })
+
+  labelsByPackage = new Map()
+  for (const row of getAllLabelPackages()) {
+    if (!labelIndex.has(row.label_id)) continue
+    let arr = labelsByPackage.get(row.package_filename)
+    if (!arr) {
+      arr = []
+      labelsByPackage.set(row.package_filename, arr)
+    }
+    arr.push(row.label_id)
+    const entry = labelIndex.get(row.label_id)
+    if (entry) entry.packageCount++
+  }
+
+  labelsByContent = new Map()
+  for (const row of getAllLabelContents()) {
+    if (!labelIndex.has(row.label_id)) continue
+    const key = row.package_filename + '\0' + row.internal_path
+    let arr = labelsByContent.get(key)
+    if (!arr) {
+      arr = []
+      labelsByContent.set(key, arr)
+    }
+    arr.push(row.label_id)
+    const entry = labelIndex.get(row.label_id)
+    if (entry) entry.contentCount++
+  }
+}
+
+function packageLabelIds(filename) {
+  return labelsByPackage.get(filename) || []
 }
 
 function computeAllRemovableSizes() {
@@ -438,6 +476,10 @@ export function getAuthorCounts() {
   return authorCounts
 }
 
+export function getLabelList() {
+  return [...labelIndex.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+}
+
 export function getContentByPackage() {
   return contentByPackage
 }
@@ -476,49 +518,14 @@ export function updatePref(packageFilename, internalPath, field, value) {
 
 // --- Filtered queries ---
 
-export function getFilteredPackages(filters = {}) {
-  let results = userPackageValues()
-
-  if (filters.search?.trim()) {
-    const terms = searchAndTerms(filters.search)
-    results = results.filter((p) => haystacksMatchAllTerms([p.filename, p.creator, p.title, p.hub_display_name], terms))
-  }
-  if (filters.status === 'direct') results = results.filter((p) => p.is_direct)
-  else if (filters.status === 'dependency') results = results.filter((p) => !p.is_direct)
-  else if (filters.status === 'broken') {
-    results = results.filter((p) => (transitiveMissingMap.get(p.filename) || 0) > 0 || p.is_corrupted)
-  } else if (filters.status === 'orphan') {
-    results = results.filter((p) => orphanSet.has(p.filename))
-  } else if (filters.status === 'local') {
-    results = results.filter((p) => isNotDownloadable(p))
-  }
-  if (filters.types?.length) {
-    const typeSet = new Set(filters.types)
-    results = results.filter((p) => {
-      const t = effectivePackageType(p)
-      const isOther = !isCorePackageCategory(t)
-      if (typeSet.has('Other') && isOther) return true
-      return t && typeSet.has(t)
-    })
-  }
-  if (filters.license) {
-    if (filters.license === COMMERCIAL_USE_ALLOWED_LICENSE_FILTER) {
-      results = results.filter((p) => isCommercialUseAllowed(p.license) === true)
-    } else {
-      const want = canonicalizeLicense(filters.license)
-      results = results.filter((p) => canonicalizeLicense(p.license) === want)
-    }
-  }
-
-  const sort = filters.sort || 'name'
-  results.sort((a, b) => {
-    if (sort === 'name') return a.filename.localeCompare(b.filename)
-    if (sort === 'size') return b.size_bytes - a.size_bytes
-    if (sort === 'date') return (b.first_seen_at || 0) - (a.first_seen_at || 0)
-    return 0
-  })
-
-  return results.map((p) => enrichPackageSummary(p))
+/**
+ * Returns every user-visible package, enriched. The renderer does all
+ * filtering / sorting client-side off `useLibraryStore.packages`, so the
+ * `packages:list` IPC still forwards filters from the preload bridge; they are
+ * ignored here because the renderer filters client-side.
+ */
+export function getFilteredPackages() {
+  return userPackageValues().map((p) => enrichPackageSummary(p))
 }
 
 function enrichPackageSummary(pkg) {
@@ -568,6 +575,7 @@ function enrichPackageSummary(pkg) {
     isCascadeOrphan: orphanSet.has(pkg.filename) && !directOrphanSet.has(pkg.filename),
     isLocalOnly: isNotDownloadable(pkg),
     noLookPresetTag,
+    labelIds: packageLabelIds(pkg.filename),
   }
 }
 
@@ -624,6 +632,7 @@ export function getPackageDetail(filename) {
       hidden: c.hidden,
       favorite: c.favorite,
       thumbnailPath: c.thumbnail_path,
+      ownLabelIds: labelsByContent.get(c.package_filename + '\0' + c.internal_path) || [],
     }))
 
   const { removableFilenames, removableSize } = computeRemovableDeps(filename, packageIndex, forwardDeps, reverseDeps)
@@ -665,31 +674,19 @@ export function getPackageDetail(filename) {
   }
 }
 
+/**
+ * Returns enriched content rows. The renderer does all search / type /
+ * visibility / labels / sort filtering client-side off `useContentStore.contents`,
+ * so most filter keys are intentionally ignored. `packageFilename` is the
+ * exception — `useContentStore.refreshSelection` uses it to fetch a single
+ * package's rows (and that path also wants the un-deduplicated list, since
+ * cross-version dedup hides items the caller is asking for by filename).
+ */
 export function getFilteredContents(filters = {}) {
-  let results = [...(filters.packageFilename ? contentItems : contentItemsDeduped)]
-
-  if (filters.search?.trim()) {
-    const terms = searchAndTerms(filters.search)
-    results = results.filter((c) => haystacksMatchAllTerms([c.display_name, c.package_filename, c.creator], terms))
-  }
-  if (filters.types?.length) {
-    const typeSet = new Set(filters.types)
-    results = results.filter((c) => typeSet.has(c.category))
-  }
-  if (filters.visibility === 'visible') results = results.filter((c) => !c.hidden)
-  else if (filters.visibility === 'hidden') results = results.filter((c) => c.hidden)
-  else if (filters.visibility === 'favorites') results = results.filter((c) => c.favorite)
-
-  if (filters.packageFilename) results = results.filter((c) => c.package_filename === filters.packageFilename)
-
-  const sort = filters.sort || 'name'
-  results.sort((a, b) => {
-    if (sort === 'name') return a.display_name.localeCompare(b.display_name)
-    if (sort === 'type') return a.category.localeCompare(b.category)
-    if (sort === 'package') return a.package_filename.localeCompare(b.package_filename)
-    if (sort === 'date') return (b.first_seen_at || 0) - (a.first_seen_at || 0)
-    return 0
-  })
+  const source = filters.packageFilename ? contentItems : contentItemsDeduped
+  const results = filters.packageFilename
+    ? source.filter((c) => c.package_filename === filters.packageFilename)
+    : source
 
   return results.map((c) => ({
     id: c.id,
@@ -711,6 +708,8 @@ export function getFilteredContents(filters = {}) {
     isEnabled: c.isEnabled,
     firstSeenAt: c.first_seen_at,
     parentPackageType: effectivePackageType(packageIndex.get(c.package_filename)),
+    ownLabelIds: labelsByContent.get(c.package_filename + '\0' + c.internal_path) || [],
+    inheritedLabelIds: labelsByPackage.get(c.package_filename) || [],
   }))
 }
 
@@ -922,4 +921,35 @@ export function refreshPackage() {
 
 export function refreshAll() {
   buildFromDb()
+}
+
+/**
+ * Rebuild only the label maps. Cheap (no graph / dedup / stats / orphan recompute).
+ * Use after label CRUD where package and content tables haven't changed.
+ */
+export function refreshLabels() {
+  buildLabels()
+}
+
+/**
+ * Refresh only label name/color and the label set (insert created ids, drop
+ * deleted ones). Leaves `labelsByPackage` / `labelsByContent` and the cached
+ * counts on existing entries untouched. Use after rename / recolor / create
+ * where neither junction table changed; for delete and apply-* keep using
+ * `refreshLabels()` since junctions actually move.
+ */
+export function refreshLabelMeta() {
+  const labels = getAllLabels()
+  const seen = new Set()
+  for (const l of labels) {
+    seen.add(l.id)
+    const existing = labelIndex.get(l.id)
+    if (existing) {
+      existing.name = l.name
+      existing.color = l.color
+    } else {
+      labelIndex.set(l.id, { id: l.id, name: l.name, color: l.color, packageCount: 0, contentCount: 0 })
+    }
+  }
+  for (const id of [...labelIndex.keys()]) if (!seen.has(id)) labelIndex.delete(id)
 }

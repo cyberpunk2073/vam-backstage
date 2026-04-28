@@ -20,6 +20,7 @@ import { useDownloadStore } from './stores/useDownloadStore'
 import { useHubStore } from './stores/useHubStore'
 import { useLibraryStore } from './stores/useLibraryStore'
 import { useContentStore } from './stores/useContentStore'
+import { useLabelsStore } from './stores/useLabelsStore'
 
 const NAV_ITEMS = [
   { id: 'hub', icon: Compass, label: 'Hub' },
@@ -42,6 +43,23 @@ export default function App() {
     useHubStore.getState().hydrateHubFilterPreferences()
     useLibraryStore.getState().hydrateLibraryVisualPreferences()
     useContentStore.getState().hydrateContentVisualPreferences()
+    // Labels are app-wide reference data; load once here (not per-view) and
+    // refresh on the broadcast event. Each view used to own a copy + listener,
+    // which meant whichever view was unmounted at mutation time stayed stale.
+    void useLabelsStore.getState().fetchLabels()
+    const cleanupLabels = window.api.onLabelsUpdated(async () => {
+      await useLabelsStore.getState().fetchLabels()
+      // GC dead ids from view-scoped filter selections so a deleted label
+      // doesn't silently zero-match a list. Lives here (not in the labels
+      // store) to keep that store free of view-coupling.
+      const valid = new Set(useLabelsStore.getState().labels.map((l) => l.id))
+      for (const store of [useLibraryStore, useContentStore]) {
+        const ids = store.getState().selectedLabelIds
+        if (ids.some((id) => !valid.has(id))) {
+          store.setState({ selectedLabelIds: ids.filter((id) => valid.has(id)) })
+        }
+      }
+    })
     const cleanupUnreadable = window.api.onScanUnreadable(({ filename }) => {
       toast(`Corrupted package skipped: ${filename}`)
     })
@@ -53,7 +71,10 @@ export default function App() {
       const tail = more > 0 ? ` (+${more} more)` : ''
       toast(`Startup scan: ${listed}${tail} could not be read (corrupted or invalid).`, 'error')
     })
-    return cleanupUnreadable
+    return () => {
+      cleanupLabels()
+      cleanupUnreadable()
+    }
   }, [])
 
   useEffect(() => {

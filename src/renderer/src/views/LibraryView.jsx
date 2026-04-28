@@ -56,13 +56,19 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu'
+import { LabelApplyPopover } from '../components/labels/LabelApplyPopover'
+import { bulkStateMap } from '../components/labels/labelApplyState'
+import { Tag } from 'lucide-react'
 import { useThumbnail } from '../hooks/useThumbnail'
 import { useLibraryStore } from '../stores/useLibraryStore'
+import { useLabelsStore } from '../stores/useLabelsStore'
 import { useContentStore } from '../stores/useContentStore'
 import { useDownloadStore } from '../stores/useDownloadStore'
 import FilterPanel from '../components/FilterPanel'
 import ResizeHandle from '../components/ResizeHandle'
 import { LibraryCard, LibraryTableRow, DepRow, AuthorAvatar, AuthorLink } from '../components/PackageCard'
+import { LabelsRow } from '../components/labels/LabelsRow'
+import { AddLabelButton } from '../components/labels/AddLabelButton'
 import { ContentCategory } from '../components/ContentCategory'
 import FileTreeDialog from '../components/FileTreeDialog'
 import { openLightbox } from '../components/ThumbnailLightbox'
@@ -99,6 +105,14 @@ function packageMatchesSelectedTags(p, selectedTags) {
   return selectedTags.every((st) => tags.includes(st))
 }
 
+function packageMatchesSelectedLabels(p, selectedLabelIds) {
+  if (selectedLabelIds.length === 0) return true
+  const ids = p.labelIds
+  if (!ids?.length) return false
+  for (const id of selectedLabelIds) if (!ids.includes(id)) return false
+  return true
+}
+
 export default function LibraryView({ onNavigate, navContext }) {
   const {
     packages,
@@ -109,6 +123,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     enabledFilter,
     selectedTypes,
     selectedTags,
+    selectedLabelIds,
     primarySort,
     secondarySort,
     license,
@@ -130,6 +145,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     toggleType,
     selectSingleType,
     setSelectedTags,
+    setSelectedLabelIds,
     setPrimarySort,
     setSecondarySort,
     setLicense,
@@ -146,6 +162,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     selectAllBulk,
     clearBulkSelection,
   } = useLibraryStore()
+  const labels = useLabelsStore((s) => s.labels)
 
   const [gridLayout, setGridLayout] = useState({ cols: 1, availableWidth: 0 })
   const [tagCounts, setTagCounts] = useState({})
@@ -250,6 +267,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     if (enabledFilter === 'enabled') items = items.filter((p) => p.isEnabled)
     else if (enabledFilter === 'disabled') items = items.filter((p) => !p.isEnabled)
     items = items.filter((p) => packageMatchesSelectedTags(p, selectedTags))
+    items = items.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
     let direct = 0,
       dependency = 0,
       broken = 0,
@@ -263,7 +281,7 @@ export default function LibraryView({ onNavigate, navContext }) {
       if (p.isLocalOnly) local++
     }
     return { direct, dependency, broken, orphan, local }
-  }, [packagesLoaded, baseFiltered, selectedTypes, enabledFilter, selectedTags])
+  }, [packagesLoaded, baseFiltered, selectedTypes, enabledFilter, selectedTags, selectedLabelIds])
 
   const updateFacetCount = useMemo(() => {
     if (!updateCheckResults) return updateCheckLoading ? '…' : '?'
@@ -279,12 +297,21 @@ export default function LibraryView({ onNavigate, navContext }) {
     if (enabledFilter === 'enabled') items = items.filter((p) => p.isEnabled)
     else if (enabledFilter === 'disabled') items = items.filter((p) => !p.isEnabled)
     items = items.filter((p) => packageMatchesSelectedTags(p, selectedTags))
+    items = items.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
     let n = 0
     for (const p of items) {
       if (updateCheckResults[p.filename]) n++
     }
     return n
-  }, [baseFiltered, selectedTypes, enabledFilter, selectedTags, updateCheckResults, updateCheckLoading])
+  }, [
+    baseFiltered,
+    selectedTypes,
+    enabledFilter,
+    selectedTags,
+    selectedLabelIds,
+    updateCheckResults,
+    updateCheckLoading,
+  ])
 
   const typeCounts = useMemo(() => {
     let items = baseFiltered
@@ -298,13 +325,14 @@ export default function LibraryView({ onNavigate, navContext }) {
     if (enabledFilter === 'enabled') items = items.filter((p) => p.isEnabled)
     else if (enabledFilter === 'disabled') items = items.filter((p) => !p.isEnabled)
     items = items.filter((p) => packageMatchesSelectedTags(p, selectedTags))
+    items = items.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
     const counts = { _total: items.length }
     for (const p of items) {
       const label = libraryTypeBadgeLabel(p.type)
       counts[label] = (counts[label] || 0) + 1
     }
     return counts
-  }, [baseFiltered, statusFilter, enabledFilter, selectedTags, updateCheckResults])
+  }, [baseFiltered, statusFilter, enabledFilter, selectedTags, selectedLabelIds, updateCheckResults])
 
   const filtered = useMemo(() => {
     if (statusFilter === 'missing') return []
@@ -335,6 +363,9 @@ export default function LibraryView({ onNavigate, navContext }) {
         return selectedTags.every((st) => tags.includes(st))
       })
     }
+    if (selectedLabelIds.length > 0) {
+      result = result.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
+    }
 
     const sortFns = {
       'Recently installed': (a, b) => (b.firstSeenAt || 0) - (a.firstSeenAt || 0),
@@ -355,6 +386,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     enabledFilter,
     selectedTypes,
     selectedTags,
+    selectedLabelIds,
     primarySort,
     secondarySort,
     updateCheckResults,
@@ -452,6 +484,19 @@ export default function LibraryView({ onNavigate, navContext }) {
         suggestions: authorCounts,
         placeholder: 'Filter by author…',
       },
+      ...(labels.length
+        ? [
+            {
+              key: 'labels',
+              label: 'Labels',
+              type: 'labels-autocomplete',
+              value: selectedLabelIds,
+              onChange: setSelectedLabelIds,
+              labels,
+              placeholder: 'Filter by label…',
+            },
+          ]
+        : []),
       {
         key: 'hubTags',
         label: 'Tags',
@@ -496,6 +541,8 @@ export default function LibraryView({ onNavigate, navContext }) {
       updateFacetCount,
       authorSearch,
       selectedTags,
+      selectedLabelIds,
+      labels,
       tagCounts,
       authorCounts,
       license,
@@ -509,6 +556,7 @@ export default function LibraryView({ onNavigate, navContext }) {
       setEnabledFilter,
       setAuthorSearch,
       setSelectedTags,
+      setSelectedLabelIds,
       setLicense,
       setPrimarySort,
       setSecondarySort,
@@ -519,7 +567,7 @@ export default function LibraryView({ onNavigate, navContext }) {
   const bulkActive = bulkSelectedFilenames.length > 0
   const selectedBulkSet = useMemo(() => new Set(bulkSelectedFilenames), [bulkSelectedFilenames])
 
-  const scrollResetKey = `${search}\0${authorSearch}\0${statusFilter}\0${enabledFilter}\0${selectedTypes.join(',')}\0${selectedTags.join(',')}\0${primarySort}\0${secondarySort}\0${license}`
+  const scrollResetKey = `${search}\0${authorSearch}\0${statusFilter}\0${enabledFilter}\0${selectedTypes.join(',')}\0${selectedTags.join(',')}\0${selectedLabelIds.join(',')}\0${primarySort}\0${secondarySort}\0${license}`
 
   const lastSelectedIdxRef = useRef(0)
   const prevScrollResetKeyRef = useRef(scrollResetKey)
@@ -674,6 +722,39 @@ export default function LibraryView({ onNavigate, navContext }) {
     [filtered, bulkSelectedFilenames, fetchPackages],
   )
 
+  const bulkLabelStateMap = useMemo(() => {
+    const items = filtered.filter((p) => bulkSelectedFilenames.includes(p.filename))
+    return bulkStateMap(items.map((p) => p.labelIds || []))
+  }, [filtered, bulkSelectedFilenames])
+
+  const runBulkLabelToggle = useCallback(
+    async (label, currentState) => {
+      const fnames = filtered.filter((p) => bulkSelectedFilenames.includes(p.filename)).map((p) => p.filename)
+      if (!fnames.length) return
+      const apply = currentState !== 'all'
+      try {
+        await window.api.labels.applyToPackages({ id: label.id, filenames: fnames, applied: apply })
+      } catch (err) {
+        toast(`Failed to ${apply ? 'apply' : 'remove'} label: ${err.message}`)
+      }
+    },
+    [filtered, bulkSelectedFilenames],
+  )
+
+  const runBulkLabelCreate = useCallback(
+    async (name) => {
+      const fnames = filtered.filter((p) => bulkSelectedFilenames.includes(p.filename)).map((p) => p.filename)
+      if (!fnames.length) return
+      try {
+        const created = await window.api.labels.create({ name })
+        await window.api.labels.applyToPackages({ id: created.id, filenames: fnames, applied: true })
+      } catch (err) {
+        toast(`Failed to create label: ${err.message}`)
+      }
+    },
+    [filtered, bulkSelectedFilenames],
+  )
+
   const selectionAnnouncedLib = bulkActive ? `${bulkSelectedFilenames.length} selected` : ''
 
   const handleFilterAuthor = useCallback(
@@ -807,6 +888,22 @@ export default function LibraryView({ onNavigate, navContext }) {
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
+            <LabelApplyPopover
+              align="end"
+              labels={labels}
+              stateById={bulkLabelStateMap}
+              onToggle={runBulkLabelToggle}
+              onCreate={runBulkLabelCreate}
+            >
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 h-7 pl-2.5 pr-2 rounded-md cursor-pointer border border-border/90 bg-elevated/60 hover:bg-elevated hover:border-border text-[11px] font-medium text-text-primary shadow-sm transition-colors shrink-0"
+              >
+                <Tag size={12} className="text-text-tertiary shrink-0" />
+                Labels
+                <ChevronDown size={14} className="text-text-tertiary shrink-0 opacity-90" strokeWidth={2.25} />
+              </button>
+            </LabelApplyPopover>
             <span className="text-[11px] text-text-primary font-medium tabular-nums">
               {bulkSelectedFilenames.length} selected
             </span>
@@ -1761,9 +1858,28 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                     </TooltipContent>
                   </Tooltip>
                 )}
+                {(pkg.labelIds || []).length === 0 && (
+                  <AddLabelButton
+                    appliedIds={pkg.labelIds || []}
+                    onApplyToTarget={(id, applied) =>
+                      window.api.labels.applyToPackages({ id, filenames: [pkg.filename], applied })
+                    }
+                  />
+                )}
               </div>
             </div>
           </div>
+
+          {(pkg.labelIds || []).length > 0 && (
+            <div className="mt-3">
+              <LabelsRow
+                appliedIds={pkg.labelIds}
+                onApplyToTarget={(id, applied) =>
+                  window.api.labels.applyToPackages({ id, filenames: [pkg.filename], applied })
+                }
+              />
+            </div>
+          )}
 
           {/* Actions */}
           <div className="mt-3 space-y-1.5">

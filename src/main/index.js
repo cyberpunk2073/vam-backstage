@@ -2,7 +2,7 @@ import { app, shell, session, BrowserWindow, powerMonitor, Menu } from 'electron
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { openDatabase, closeDatabase, getSetting, setSetting } from './db.js'
+import { openDatabase, closeDatabase, getSetting, setSetting, gcOrphanLabels } from './db.js'
 import { buildFromDb, setPrefsMap } from './store.js'
 import { readAllPrefs } from './vam-prefs.js'
 import { registerAllHandlers } from './ipc/index.js'
@@ -198,6 +198,12 @@ function initBackend() {
   // (renderer otherwise gets "No handler registered" for every channel).
   registerAllHandlers()
   openDatabase()
+  try {
+    const removed = gcOrphanLabels()
+    if (removed > 0) console.info(`[labels] gc removed ${removed} orphan label${removed === 1 ? '' : 's'} at startup`)
+  } catch (err) {
+    console.warn('[labels] startup gc failed:', err.message)
+  }
   loadPackagesJsonFromCache()
   initNotify(() => mainWindow)
   initLogForward(() => mainWindow)

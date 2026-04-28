@@ -64,6 +64,65 @@ function normalizeFilenameArgs(arg) {
   return Array.isArray(arg) ? arg : [arg]
 }
 
+/**
+ * Shared worker for `packages:toggle-enabled` and `packages:set-enabled`. The
+ * caller decides the new state via `nextEnabledFn(pkg)` — toggle inverts,
+ * set-enabled returns a fixed value. Per-filename: rename on disk, persist,
+ * apply the cascade-enable/disable graph, patch in-memory state. Skips work
+ * when `nextEnabledFn` matches the current state.
+ */
+async function applyEnabledChange(filenames, nextEnabledFn) {
+  const vamDir = getSetting('vam_dir')
+  if (!vamDir) throw new Error('VaM directory not configured')
+  const addonDir = join(vamDir, ADDON_PACKAGES)
+  const out = []
+  for (const filename of filenames) {
+    const pkg = getPackageIndex().get(filename)
+    if (!pkg) throw new Error(`Package not found: ${filename}`)
+
+    const newEnabled = !!nextEnabledFn(pkg)
+    if (newEnabled === !!pkg.is_enabled) {
+      out.push({ ok: true, isEnabled: newEnabled, cascadeCount: 0, unchanged: true })
+      continue
+    }
+
+    const cascadeSet = newEnabled
+      ? computeCascadeEnable(filename, getPackageIndex(), getForwardDeps())
+      : computeCascadeDisable(filename, getPackageIndex(), getForwardDeps(), getReverseDeps())
+
+    const oldDiskPath = join(addonDir, newEnabled ? filename + '.disabled' : filename)
+    const newDiskPath = join(addonDir, newEnabled ? filename : filename + '.disabled')
+
+    suppressPath(oldDiskPath)
+    suppressPath(newDiskPath)
+    try {
+      await rename(oldDiskPath, newDiskPath)
+    } catch (err) {
+      throw new Error(`Failed to ${newEnabled ? 'enable' : 'disable'} package: ${err.message}`)
+    }
+    setPackageEnabled(filename, newEnabled)
+
+    for (const depFilename of cascadeSet) {
+      const oldDepPath = join(addonDir, newEnabled ? depFilename + '.disabled' : depFilename)
+      const newDepPath = join(addonDir, newEnabled ? depFilename : depFilename + '.disabled')
+      suppressPath(oldDepPath)
+      suppressPath(newDepPath)
+      try {
+        await rename(oldDepPath, newDepPath)
+      } catch {
+        continue
+      }
+      setPackageEnabled(depFilename, newEnabled)
+    }
+
+    patchEnabled([filename, ...cascadeSet], newEnabled)
+    out.push({ ok: true, isEnabled: newEnabled, cascadeCount: cascadeSet.size })
+  }
+
+  notify('packages:updated')
+  return filenames.length === 1 ? out[0] : { ok: true, results: out }
+}
+
 export function registerPackageHandlers() {
   ipcMain.handle('packages:list', (_, filters) => {
     return getFilteredPackages(filters)
@@ -203,52 +262,13 @@ export function registerPackageHandlers() {
   })
 
   ipcMain.handle('packages:toggle-enabled', async (_, filenameOrFilenames) => {
-    const vamDir = getSetting('vam_dir')
-    if (!vamDir) throw new Error('VaM directory not configured')
-    const addonDir = join(vamDir, ADDON_PACKAGES)
-    const filenames = normalizeFilenameArgs(filenameOrFilenames)
-    const out = []
-    for (const filename of filenames) {
-      const pkg = getPackageIndex().get(filename)
-      if (!pkg) throw new Error(`Package not found: ${filename}`)
+    return await applyEnabledChange(normalizeFilenameArgs(filenameOrFilenames), (pkg) => !pkg.is_enabled)
+  })
 
-      const newEnabled = !pkg.is_enabled
-
-      const cascadeSet = newEnabled
-        ? computeCascadeEnable(filename, getPackageIndex(), getForwardDeps())
-        : computeCascadeDisable(filename, getPackageIndex(), getForwardDeps(), getReverseDeps())
-
-      const oldDiskPath = join(addonDir, newEnabled ? filename + '.disabled' : filename)
-      const newDiskPath = join(addonDir, newEnabled ? filename : filename + '.disabled')
-
-      suppressPath(oldDiskPath)
-      suppressPath(newDiskPath)
-      try {
-        await rename(oldDiskPath, newDiskPath)
-      } catch (err) {
-        throw new Error(`Failed to ${newEnabled ? 'enable' : 'disable'} package: ${err.message}`)
-      }
-      setPackageEnabled(filename, newEnabled)
-
-      for (const depFilename of cascadeSet) {
-        const oldDepPath = join(addonDir, newEnabled ? depFilename + '.disabled' : depFilename)
-        const newDepPath = join(addonDir, newEnabled ? depFilename : depFilename + '.disabled')
-        suppressPath(oldDepPath)
-        suppressPath(newDepPath)
-        try {
-          await rename(oldDepPath, newDepPath)
-        } catch {
-          continue
-        }
-        setPackageEnabled(depFilename, newEnabled)
-      }
-
-      patchEnabled([filename, ...cascadeSet], newEnabled)
-      out.push({ ok: true, isEnabled: newEnabled, cascadeCount: cascadeSet.size })
-    }
-
-    notify('packages:updated')
-    return filenames.length === 1 ? out[0] : { ok: true, results: out }
+  ipcMain.handle('packages:set-enabled', async (_, { filenames, enabled }) => {
+    const fnames = normalizeFilenameArgs(filenames)
+    const target = !!enabled
+    return await applyEnabledChange(fnames, () => target)
   })
 
   ipcMain.handle('packages:force-remove', async (_, filenameOrFilenames) => {

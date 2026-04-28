@@ -10,6 +10,7 @@ import { registerAvatarHandlers } from './avatars.js'
 import { registerDevHandlers } from './dev.js'
 import { registerShellHandlers } from './shell.js'
 import { registerExtractHandlers } from './extract.js'
+import { registerLabelHandlers } from './labels.js'
 
 export function registerAllHandlers() {
   registerAppHandlers()
@@ -24,4 +25,5 @@ export function registerAllHandlers() {
   registerAvatarHandlers()
   registerDevHandlers()
   registerExtractHandlers()
+  registerLabelHandlers()
 }

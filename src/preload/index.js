@@ -25,6 +25,7 @@ const api = {
     promote: (filename, hubResourceId) => ipcRenderer.invoke('packages:promote', filename, hubResourceId),
     forceRemove: (filename) => ipcRenderer.invoke('packages:force-remove', filename),
     toggleEnabled: (filename) => ipcRenderer.invoke('packages:toggle-enabled', filename),
+    setEnabled: (filenames, enabled) => ipcRenderer.invoke('packages:set-enabled', { filenames, enabled }),
     setTypeOverride: (filenameOrPayload, typeOverride) =>
       typeof filenameOrPayload === 'object' && filenameOrPayload !== null && 'filenames' in filenameOrPayload
         ? ipcRenderer.invoke('packages:set-type-override', filenameOrPayload)
@@ -40,6 +41,16 @@ const api = {
     toggleFavorite: (payload) => ipcRenderer.invoke('contents:toggle-favorite', payload),
     setHiddenBatch: (payload) => ipcRenderer.invoke('contents:set-hidden-batch', payload),
     setFavoriteBatch: (payload) => ipcRenderer.invoke('contents:set-favorite-batch', payload),
+  },
+  labels: {
+    list: () => ipcRenderer.invoke('labels:list'),
+    create: ({ name }) => ipcRenderer.invoke('labels:create', { name }),
+    rename: ({ id, name }) => ipcRenderer.invoke('labels:rename', { id, name }),
+    recolor: ({ id, color }) => ipcRenderer.invoke('labels:recolor', { id, color }),
+    delete: ({ id }) => ipcRenderer.invoke('labels:delete', { id }),
+    applyToPackages: ({ id, filenames, applied }) =>
+      ipcRenderer.invoke('labels:apply-packages', { id, filenames, applied }),
+    applyToContents: ({ id, items, applied }) => ipcRenderer.invoke('labels:apply-contents', { id, items, applied }),
   },
   thumbnails: {
     get: (keys) => ipcRenderer.invoke('thumbnails:get', keys),
@@ -130,6 +141,11 @@ const api = {
     const handler = () => cb()
     ipcRenderer.on('contents:updated', handler)
     return () => ipcRenderer.removeListener('contents:updated', handler)
+  },
+  onLabelsUpdated: (cb) => {
+    const handler = () => cb()
+    ipcRenderer.on('labels:updated', handler)
+    return () => ipcRenderer.removeListener('labels:updated', handler)
   },
   onDownloadsUpdated: (cb) => {
     const handler = () => cb()
