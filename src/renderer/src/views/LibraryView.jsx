@@ -1523,6 +1523,8 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
   const hasDependents = pkg.dependents?.length > 0
   const hasCascadeDeps = pkg.cascadeDisableDeps?.length > 0
   const showDisableDialog = hasDependents || hasCascadeDeps
+  const contentCount = pkg.contents?.length ?? 0
+  const hasContent = contentCount > 0
   const hiddenContentCount = (pkg.contents || []).filter((c) => c.hidden).length
   const dependentNames = hasDependents
     ? pkg.dependents
@@ -1936,20 +1938,23 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
         )}
 
         {/* Content */}
-        {(pkg.contents?.length ?? 0) > 0 && (
-          <div className="p-4 border-b border-border">
-            <div className="flex items-center justify-between gap-2 mb-2 min-w-0">
-              <span className="text-[11px] font-medium text-text-primary">
-                Content <span className="text-text-tertiary font-normal">({pkg.contents.length})</span>
+        <div className="p-4 border-b border-border">
+          <div className="flex items-center justify-between gap-2 mb-2 min-w-0">
+            <span className="text-[11px] font-medium text-text-primary">
+              Content{' '}
+              <span className="text-text-tertiary font-normal">
+                {hasContent ? `(${contentCount})` : '(none detected)'}
               </span>
-              <div className="flex items-center gap-3 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setFileTreeOpen(true)}
-                  className="text-[10px] text-text-tertiary hover:text-accent-blue transition-colors cursor-pointer flex items-center gap-1"
-                >
-                  <FolderTree size={11} /> Browse
-                </button>
+            </span>
+            <div className="flex items-center gap-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => setFileTreeOpen(true)}
+                className="text-[10px] text-text-tertiary hover:text-accent-blue transition-colors cursor-pointer flex items-center gap-1"
+              >
+                <FolderTree size={11} /> Browse files
+              </button>
+              {hasContent && (
                 <button
                   type="button"
                   onClick={() => onNavigate?.('content', { filterByPackage: pkg.packageName || pkg.filename })}
@@ -1957,13 +1962,15 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                 >
                   <LayoutGrid size={11} /> View in gallery
                 </button>
-              </div>
+              )}
             </div>
-            {!pkg.isEnabled && (
-              <p className="text-[10px] text-warning mb-2 flex items-center gap-1">
-                <EyeOff size={10} className="shrink-0" /> All content hidden in gallery while disabled
-              </p>
-            )}
+          </div>
+          {hasContent && !pkg.isEnabled && (
+            <p className="text-[10px] text-warning mb-2 flex items-center gap-1">
+              <EyeOff size={10} className="shrink-0" /> All content hidden in gallery while disabled
+            </p>
+          )}
+          {hasContent && (
             <div className="space-y-2">
               {Object.entries(grouped)
                 .sort(([a], [b]) => compareContentTypes(a, b))
@@ -1977,8 +1984,8 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                   />
                 ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         <FileTreeDialog open={fileTreeOpen} onOpenChange={setFileTreeOpen} filename={pkg.filename} />
       </div>
