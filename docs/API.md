@@ -510,12 +510,23 @@ Content-Disposition: filename="AshAuryn.Expressions.5.var";
 
 ### `packages.json` — bulk package index
 
-Flat `.var` filename → numeric `resource_id` map. ~1.8 MB (2026-04-22), served from CDN77. Cache-bust with `?<getInfo.last_update>`. Keys are always concrete versioned filenames (no `.latest` / `.minN`).
+Flat `.var` filename → numeric `resource_id` map. ~1.8 MB (2026-04-22), served from CDN77 in front of a Ceph/RGW origin. Keys are always concrete versioned filenames (no `.latest` / `.minN`).
+
+**Cache busting / change detection:** the CDN77 edge pins each cache-key slot to whatever body it received on first MISS, and nothing reissued against the same key dislodges it. `Cache-Control: no-cache`, `Pragma: no-cache`, and `If-Modified-Since` are all ignored or honored only against the edge's cached copy, not origin. `If-None-Match` _is_ honored, but only against the edge's cached etag — so it can confirm a stale body as "current" if the edge slot was pinned to that body.
+
+How long a slot stays stale depends on how often clients rotate the key:
+
+- The canonical URL (no query string) — has been observed at edge cache age of >7 days. Once-pinned never busts itself.
+- A fixed-string buster like `?cb=FIXED` — same problem, never rotates.
+- `?<getInfo.last_update>` — self-rotates when Hub publishes anything, so each pin lasts at most one `last_update` cycle. Still observed ~28 s of stale content within a cycle when a client raced ahead of the S3 upload (Hub bumped `last_update`, edge first-MISSed `?<new>` while origin still served the previous body, slot pinned to that old body until `last_update` advances again).
+
+Origin does honor `If-None-Match` correctly when actually reached, so the robust shape is `GET ?cb=<random-uuid>` with `If-None-Match: <stored-etag>`: the per-request random buster guarantees a never-seen-before cache key (edge MISS, origin contacted), and the conditional GET makes the no-change path return 304 with no body. Persist the response `ETag` and reuse it as `If-None-Match` on subsequent calls. See `src/main/hub/packages-json.js`.
 
 **Request:**
 
 ```
-GET https://s3cdn.virtamate.com/data/packages.json?1776818756
+GET https://s3cdn.virtamate.com/data/packages.json?cb=8f3c9a14-7b2a-4e12-9d56-...
+If-None-Match: "6d9433238385c8801a3112d95594302e"
 ```
 
 **Response:**

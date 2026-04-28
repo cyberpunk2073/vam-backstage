@@ -257,7 +257,7 @@ async function startupScan() {
     // the finally below.
     hubBackfill = (async () => {
       try {
-        await fetchPackagesJson({ refreshTimestamp: true })
+        await fetchPackagesJson()
       } catch (err) {
         console.warn('[startup] packages.json refresh failed:', err.message)
       }

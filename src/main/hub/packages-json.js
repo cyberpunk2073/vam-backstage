@@ -1,10 +1,10 @@
-import { getFilters, refreshFilters } from './client.js'
+import { randomUUID } from 'crypto'
 import { getSetting, setSetting } from '../db.js'
 import { HUB_HTTP_USER_AGENT } from '../../shared/hub-http.js'
 
 const PACKAGES_JSON_URL = 'https://s3cdn.virtamate.com/data/packages.json'
 const DB_KEY_DATA = 'packages_json_data'
-const DB_KEY_LAST_UPDATE = 'packages_json_last_update'
+const DB_KEY_ETAG = 'packages_json_etag'
 
 let packagesIndex = null // Map<packageName, { version, filename, resourceId }>
 let packagesFilenameIndex = null // Map<filename, resourceId> — every version listed in packages.json
@@ -65,39 +65,34 @@ export function loadPackagesJsonFromCache() {
 /**
  * Fetch and parse the CDN packages.json index. Deduplicates concurrent calls.
  *
- * - Default: uses cached getInfo; skips download if `last_update` matches stored value.
- * - `refreshTimestamp`: fetches fresh `getInfo` from Hub to get the current `last_update`,
- *   but still skips the download if the timestamp hasn't changed.  Used on startup.
- * - `force`: always downloads packages.json regardless of timestamps.  Used for
- *   explicit user-triggered refresh.
+ * Sends `GET ?cb=<random-uuid>` with `If-None-Match: <stored-etag>`.  The random
+ * cache-buster guarantees an edge MISS so the response reflects whatever origin
+ * has right now (CDN77 has been observed serving week-old bodies for any
+ * predictable cache key, including `?<getInfo.last_update>`); the conditional
+ * GET keeps it free on the no-change path — origin returns 304 with no body.
+ *
+ * - Default: send INM if we have a stored etag and an in-memory index; on 304 reuse cache.
+ * - `force`: omit INM so origin always returns the body.  Used by the explicit
+ *   user-triggered refresh.
  */
-export async function fetchPackagesJson({ refreshTimestamp = false, force = false } = {}) {
+export async function fetchPackagesJson({ force = false } = {}) {
   if (fetchPromise) return fetchPromise
 
   fetchPromise = (async () => {
     try {
-      let lastUpdate = null
-      try {
-        const filters = refreshTimestamp || force ? await refreshFilters() : await getFilters()
-        lastUpdate = filters?.last_update || null
-      } catch {}
+      const buster = randomUUID()
+      const stored = getSetting(DB_KEY_ETAG)
+      const headers = { 'User-Agent': HUB_HTTP_USER_AGENT }
+      if (stored && !force && packagesIndex) headers['If-None-Match'] = stored
 
-      // Skip the download when the Hub hasn't published anything new
-      if (!force && lastUpdate && packagesIndex) {
-        const storedLastUpdate = getSetting(DB_KEY_LAST_UPDATE)
-        if (storedLastUpdate === lastUpdate) {
-          lastFetchedAt = Date.now()
-          return packagesIndex
-        }
+      const res = await fetch(`${PACKAGES_JSON_URL}?cb=${buster}`, { headers })
+
+      if (res.status === 304) {
+        lastFetchedAt = Date.now()
+        return packagesIndex
       }
-
-      let url = PACKAGES_JSON_URL
-      if (lastUpdate) url += '?' + lastUpdate
-
-      const res = await fetch(url, {
-        headers: { 'User-Agent': HUB_HTTP_USER_AGENT },
-      })
       if (!res.ok) throw new Error(`packages.json ${res.status}: ${res.statusText}`)
+
       const text = await res.text()
       const data = JSON.parse(text)
 
@@ -105,12 +100,12 @@ export async function fetchPackagesJson({ refreshTimestamp = false, force = fals
       packagesIndex = index
       packagesFilenameIndex = fnIndex
       lastFetchedAt = Date.now()
+      const newEtag = res.headers.get('etag')
       console.log(`[PackagesJson] Fetched ${index.size} package groups (${fnIndex.size} files)`)
 
-      // Persist to DB for next startup
       try {
         setSetting(DB_KEY_DATA, text)
-        if (lastUpdate) setSetting(DB_KEY_LAST_UPDATE, lastUpdate)
+        if (newEtag) setSetting(DB_KEY_ETAG, newEtag)
       } catch (err) {
         console.warn('[PackagesJson] Failed to persist cache:', err.message)
       }
@@ -124,9 +119,9 @@ export async function fetchPackagesJson({ refreshTimestamp = false, force = fals
   return fetchPromise
 }
 
-/** Clear the stored last_update so the next fetchPackagesJson will re-download. */
+/** Clear the stored etag so the next fetchPackagesJson will re-download the body. */
 export function invalidatePackagesJsonCache() {
-  setSetting(DB_KEY_LAST_UPDATE, null)
+  setSetting(DB_KEY_ETAG, null)
 }
 
 export function getPackagesIndex() {
