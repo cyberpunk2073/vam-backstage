@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { Search, X, ChevronDown, ChevronRight, Check, Tag } from 'lucide-react'
+import { Search, X, ChevronDown, ChevronRight, Check, Tag, User } from 'lucide-react'
 import { usePersistedPanelWidth } from '../hooks/usePersistedPanelWidth'
 import ResizeHandle from './ResizeHandle'
 import { Input } from './ui/input'
@@ -398,33 +398,36 @@ function TextAutocomplete({ value = '', onChange, suggestions = {}, placeholder 
 
   return (
     <div ref={containerRef} className="relative">
-      <Input
-        type="text"
-        placeholder={placeholder}
-        value={value}
-        onChange={(e) => {
-          onChange(e.target.value)
-          setOpen(true)
-        }}
-        onFocus={() => setOpen(true)}
-        onKeyDown={onKeyDown}
-        className="h-7 bg-elevated rounded pl-2.5 pr-7 text-xs"
-      />
-      {value ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          onClick={() => {
-            onChange('')
-            setOpen(false)
+      <div className="relative">
+        <User size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-tertiary z-10" />
+        <Input
+          type="text"
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => {
+            onChange(e.target.value)
+            setOpen(true)
           }}
-          className="absolute right-1 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary"
-          aria-label="Clear"
-        >
-          <X size={12} />
-        </Button>
-      ) : null}
+          onFocus={() => setOpen(true)}
+          onKeyDown={onKeyDown}
+          className="h-7 bg-elevated rounded pl-7 pr-7 text-xs"
+        />
+        {value ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            onClick={() => {
+              onChange('')
+              setOpen(false)
+            }}
+            className="absolute right-1 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary"
+            aria-label="Clear"
+          >
+            <X size={12} />
+          </Button>
+        ) : null}
+      </div>
       {showList && (
         <div
           ref={listRef}
