@@ -414,7 +414,7 @@ export function LibraryCard({
           pkg.isLocalOnly ||
           pkg.noLookPresetTag ||
           (minimal && pkg.missingDeps > 0)) && (
-          <div className="absolute top-2 left-2 z-2 flex max-w-[calc(100%-2.75rem)] items-center gap-1 overflow-x-auto [scrollbar-width:thin] flex-nowrap">
+          <div className="absolute top-2 left-2 z-2 flex max-w-[calc(100%-2.75rem)] items-center gap-1 overflow-x-auto scrollbar-hide flex-nowrap">
             {bulkMode && <BulkSelectChip checked={bulkSelected} />}
             {!hideType && (
               <div
@@ -775,7 +775,7 @@ export function ContentTableRow({
         </div>
       )}
       <div className={`flex-1 min-w-0 py-2 px-3 ${dimHiddenChrome ? 'opacity-45' : ''}`}>
-        <div className="flex w-full min-w-0 flex-nowrap items-center gap-1 overflow-x-auto [scrollbar-width:thin]">
+        <div className="flex w-full min-w-0 flex-nowrap items-center gap-1 overflow-x-auto scrollbar-hide">
           {item.tag && (
             <span
               className={THUMB_OVERLAY_CHIP}
@@ -891,7 +891,7 @@ export function ContentCard({
         </div>
         {bulkSelected && <div className="absolute inset-0 bg-accent-blue/10 pointer-events-none z-1" />}
         {(showBulk || !hideType || item.tag || isLocalContent) && (
-          <div className="absolute top-2 left-2 z-2 flex max-w-[calc(100%-2.75rem)] items-center gap-1 overflow-x-auto [scrollbar-width:thin] flex-nowrap">
+          <div className="absolute top-2 left-2 z-2 flex max-w-[calc(100%-2.75rem)] items-center gap-1 overflow-x-auto scrollbar-hide flex-nowrap">
             {bulkMode && <BulkSelectChip checked={bulkSelected} />}
             {!hideType && (
               <span className={`${THUMB_OVERLAY_CHIP} text-white`} style={{ background: typeColor + 'cc' }}>

@@ -117,6 +117,15 @@
     background: #4e5064;
 }
 
+/* Scrollable areas without a visible scrollbar (tag chips on cards, etc.) */
+.scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+    display: none;
+}
+
 /* Gradient utilities */
 .gradient-text {
     background: linear-gradient(135deg, #4a91f1, #ef5bed);
