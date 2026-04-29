@@ -1,5 +1,5 @@
 import { screen } from 'electron'
-import { getSetting, setSetting } from './db.js'
+import { getSetting, trySetSetting } from './db.js'
 
 const SETTING_KEY = 'main_window_state'
 const SAVE_DEBOUNCE_MS = 500
@@ -91,7 +91,10 @@ function centerOnPrimary(rect) {
 function saveMainWindowState(win) {
   if (win.isDestroyed()) return
   const state = { ...win.getNormalBounds(), isMaximized: win.isMaximized() }
-  setSetting(SETTING_KEY, JSON.stringify(state))
+  // Best-effort: the dev "nuke database" path closes the DB before app.quit(),
+  // and the resulting window-close still tries to flush. Losing one bounds
+  // write at shutdown is fine; crashing the main process is not.
+  trySetSetting(SETTING_KEY, JSON.stringify(state))
 }
 
 /** @param {import('electron').BrowserWindow} win */

@@ -41,6 +41,7 @@ export function closeDatabase() {
     db.close()
     db = null
   }
+  stmtCache.clear()
 }
 
 /** Pre-release DBs with version 1–15 cannot be upgraded; delete backstage.db and restart. */
@@ -479,6 +480,20 @@ export function getSetting(key) {
 
 export function setSetting(key, value) {
   stmt('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value)
+}
+
+/**
+ * Best-effort variant for callers where losing the write is acceptable (e.g.
+ * window-state persistence flushed during shutdown, after the DB may already
+ * be closed by the dev "nuke" path). Returns true on success, false otherwise.
+ */
+export function trySetSetting(key, value) {
+  try {
+    setSetting(key, value)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
