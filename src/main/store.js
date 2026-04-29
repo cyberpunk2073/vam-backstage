@@ -480,6 +480,21 @@ export function getLabelList() {
   return [...labelIndex.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
 }
 
+/** Live map: package_filename → number[] of label ids. Mutated on label CRUD. */
+export function getLabelsByPackageMap() {
+  return labelsByPackage
+}
+
+/** Live map: `${package_filename}\0${internal_path}` → number[] of label ids. */
+export function getLabelsByContentMap() {
+  return labelsByContent
+}
+
+/** Resolve a label id to its display name; returns null if the id is unknown. */
+export function getLabelNameById(id) {
+  return labelIndex.get(id)?.name ?? null
+}
+
 export function getContentByPackage() {
   return contentByPackage
 }
