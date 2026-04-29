@@ -70,6 +70,7 @@ import ResizeHandle from '../components/ResizeHandle'
 import { LibraryCard, LibraryTableRow, DepRow, AuthorAvatar, AuthorLink } from '../components/PackageCard'
 import { LabelsRow } from '../components/labels/LabelsRow'
 import { AddLabelButton } from '../components/labels/AddLabelButton'
+import { StorageStateChip } from '../components/StorageStateChip'
 import { ContentCategory } from '../components/ContentCategory'
 import FileTreeDialog from '../components/FileTreeDialog'
 import { openLightbox } from '../components/ThumbnailLightbox'
@@ -85,6 +86,7 @@ import {
   isCommercialUseAllowed,
 } from '../lib/licenses'
 import { haystacksMatchAllTerms, searchAndTerms } from '../../../shared/search-text.js'
+import { isPackageActive } from '../../../shared/storage-state-predicates.js'
 import { LicenseTag } from '../components/LicenseTag'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui/tooltip'
 import { LibraryPackageContextMenu } from '../components/LibraryPackageContextMenu'
@@ -642,7 +644,7 @@ export default function LibraryView({ onNavigate, navContext }) {
   const bulkEnabledState = useMemo(() => {
     const items = filtered.filter((p) => bulkSelectedFilenames.includes(p.filename))
     if (!items.length) return { allEnabled: false, allDisabled: false, mixed: false }
-    const n = items.filter((p) => p.isEnabled).length
+    const n = items.filter((p) => isPackageActive(p.storageState)).length
     return {
       allEnabled: n === items.length,
       allDisabled: n === 0,
@@ -662,7 +664,7 @@ export default function LibraryView({ onNavigate, navContext }) {
   const runBulkToggleEnabled = useCallback(async () => {
     const items = filtered.filter((p) => bulkSelectedFilenames.includes(p.filename))
     if (!items.length) return
-    const targets = bulkEnabledState.mixed ? items.filter((p) => !p.isEnabled) : items
+    const targets = bulkEnabledState.mixed ? items.filter((p) => !isPackageActive(p.storageState)) : items
     try {
       for (const p of targets) {
         await window.api.packages.toggleEnabled(p.filename)
@@ -1830,12 +1832,7 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                 {!pkg.isDirect && (
                   <span className={cn(THUMB_OVERLAY_CHIP, 'bg-accent-blue/20 text-accent-blue')}>DEP</span>
                 )}
-                {!pkg.isEnabled && (
-                  <span className={cn(THUMB_OVERLAY_CHIP, 'bg-warning/20 text-warning flex items-center gap-1')}>
-                    {pkg.storageState === 'offloaded' ? <Archive size={10} /> : <EyeOff size={10} />}
-                    {pkg.storageState === 'offloaded' ? 'OFFLOADED' : 'DISABLED'}
-                  </span>
-                )}
+                <StorageStateChip storageState={pkg.storageState ?? 'enabled'} />
                 {pkg.isCorrupted && <span className={cn(THUMB_OVERLAY_CHIP, 'bg-error/20 text-error')}>CORRUPTED</span>}
                 {pkg.isLocalOnly && (
                   <span className={cn(THUMB_OVERLAY_CHIP, 'bg-text-tertiary/15 text-text-secondary')}>LOCAL</span>
@@ -1940,7 +1937,7 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                       onConfirm={handleUninstall}
                     />
                   </AlertDialog>
-                  {pkg.isEnabled && showDisableDialog ? (
+                  {isPackageActive(pkg.storageState) && showDisableDialog ? (
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
                         <Button
@@ -1957,10 +1954,10 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                     <Button
                       variant="outline"
                       onClick={handleToggleEnabled}
-                      className={`shrink-0 text-[10px] px-2.5 ${!pkg.isEnabled ? 'border-warning/50 text-warning hover:bg-warning/15' : 'border-text-secondary/25 text-text-primary'}`}
+                      className={`shrink-0 text-[10px] px-2.5 ${!isPackageActive(pkg.storageState) ? 'border-warning/50 text-warning hover:bg-warning/15' : 'border-text-secondary/25 text-text-primary'}`}
                     >
-                      {pkg.isEnabled ? <EyeOff size={11} /> : <Eye size={11} />}
-                      {pkg.isEnabled ? 'Disable' : 'Enable'}
+                      {isPackageActive(pkg.storageState) ? <EyeOff size={11} /> : <Eye size={11} />}
+                      {isPackageActive(pkg.storageState) ? 'Disable' : 'Enable'}
                     </Button>
                   )}
                 </div>
@@ -2023,7 +2020,7 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                       onConfirm={handleForceRemove}
                     />
                   </AlertDialog>
-                  {pkg.isEnabled && showDisableDialog ? (
+                  {isPackageActive(pkg.storageState) && showDisableDialog ? (
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
                         <Button
@@ -2042,10 +2039,10 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                       variant="outline"
                       size="sm"
                       onClick={handleToggleEnabled}
-                      className={`shrink-0 text-[10px] px-2.5 ${!pkg.isEnabled ? 'border-warning/50 text-warning hover:bg-warning/15' : 'border-text-secondary/33 text-text-primary'}`}
+                      className={`shrink-0 text-[10px] px-2.5 ${!isPackageActive(pkg.storageState) ? 'border-warning/50 text-warning hover:bg-warning/15' : 'border-text-secondary/33 text-text-primary'}`}
                     >
-                      {pkg.isEnabled ? <EyeOff size={11} /> : <Eye size={11} />}
-                      {pkg.isEnabled ? 'Disable' : 'Enable'}
+                      {isPackageActive(pkg.storageState) ? <EyeOff size={11} /> : <Eye size={11} />}
+                      {isPackageActive(pkg.storageState) ? 'Disable' : 'Enable'}
                     </Button>
                   )}
                 </div>
@@ -2129,7 +2126,7 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
               )}
             </div>
           </div>
-          {hasContent && !pkg.isEnabled && (
+          {hasContent && !isPackageActive(pkg.storageState) && (
             <p className="text-[10px] text-warning mb-2 flex items-center gap-1">
               {pkg.storageState === 'offloaded' ? (
                 <Archive size={10} className="shrink-0" />
@@ -2148,7 +2145,7 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                     key={type}
                     items={items}
                     label={type}
-                    disabled={!pkg.isEnabled}
+                    disabled={!isPackageActive(pkg.storageState)}
                     suppressHiddenRowStyle={galleryVisibilityFilter === 'hidden'}
                   />
                 ))}

@@ -194,8 +194,8 @@ function applyV21() {
  * at this sentinel so the foreign key holds without nullable columns. The
  * sentinel is filtered out of every user-visible Library iteration in
  * `store.js`. Idempotent — safe to call on every open. Lives in main
- * (`library_dir_id` NULL) with `storage_state='enabled'` so the compat
- * `isEnabled` derived field stays true.
+ * (`library_dir_id` NULL) with `storage_state='enabled'` so its content is
+ * treated as active in the gallery store.
  */
 export function ensureLocalPackage() {
   db.prepare(

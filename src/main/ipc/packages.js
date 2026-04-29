@@ -89,7 +89,7 @@ async function unlinkPackagePhysicalAndAliases(pkg, filename) {
  * means `.var.disabled` in main or move-to-aux.
  *
  * Returns the same shape on toggle and set-enabled so the renderer doesn't
- * branch: `{ ok, isEnabled, storageState, cascadeCount, unchanged? }` per
+ * branch: `{ ok, storageState, cascadeCount, unchanged? }` per
  * filename, wrapped in the standard single/array envelope.
  */
 async function applyStorageStateChange(filenames, intentFn) {
@@ -110,7 +110,6 @@ async function applyStorageStateChange(filenames, intentFn) {
     if (!target) {
       out.push({
         ok: true,
-        isEnabled: pkg.storage_state === 'enabled',
         storageState: pkg.storage_state,
         cascadeCount: 0,
         unchanged: true,
@@ -143,7 +142,6 @@ async function applyStorageStateChange(filenames, intentFn) {
 
     out.push({
       ok: true,
-      isEnabled: target.storageState === 'enabled',
       storageState: target.storageState,
       cascadeCount: cascadeSet.size,
     })

@@ -1149,7 +1149,7 @@ User clicks "Disable" on package A
   ├─ DB: setStorageState for A, B, C  (via applyStorageState chokepoint)
   ├─ In-mem: patchStorageState([A, B, C], 'disabled')  ── fast in-place patch
   ├─ notify('packages:updated')
-  └─ Return {ok, isEnabled: false, cascadeCount: 2}
+  └─ Return {ok, storageState: 'disabled', cascadeCount: 2}
   │
   Renderer: toast "Disabled A and 2 dependencies"
 ```

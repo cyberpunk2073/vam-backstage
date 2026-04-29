@@ -192,7 +192,6 @@ export function buildFromDb({ skipGraph = false } = {}) {
       packageHubDisplayName: pkg?.hub_display_name ?? null,
       hubTags: pkg?.hub_tags ?? null,
       isDirect: !!pkg?.is_direct,
-      isEnabled: pkg?.storage_state === 'enabled',
       storageState: pkg?.storage_state ?? 'enabled',
       libraryDirId: pkg?.library_dir_id ?? null,
       first_seen_at: pkg?.first_seen_at ?? 0,
@@ -541,12 +540,9 @@ export function updatePref(packageFilename, internalPath, field, value) {
  * `packages:list` IPC still forwards filters from the preload bridge; they are
  * ignored here because the renderer filters client-side.
  *
- * Each enriched row includes `storageState` and `libraryDirId` plus the legacy
- * `isEnabled` derived field so unmigrated renderer call sites
- * (LibraryPackageContextMenu, ContentItemContextMenu, ContentView, parts of
- * LibraryView) keep working under the compat shim. The Library "enabled
- * filter" axis (Enabled / Disabled / Offloaded) is implemented in the renderer
- * against `pkg.storageState`.
+ * Each enriched row includes `storageState` and `libraryDirId`. The Library
+ * "enabled filter" axis (Enabled / Disabled / Offloaded) is implemented in the
+ * renderer against `pkg.storageState`.
  */
 export function getFilteredPackages() {
   return userPackageValues().map((p) => enrichPackageSummary(p))
@@ -583,7 +579,6 @@ function enrichPackageSummary(pkg) {
     sizeBytes: pkg.size_bytes,
     removableSize,
     isDirect: !!pkg.is_direct,
-    isEnabled: pkg.storage_state === 'enabled',
     storageState: pkg.storage_state,
     libraryDirId: pkg.library_dir_id ?? null,
     hubResourceId: pkg.hub_resource_id,
@@ -624,7 +619,6 @@ function buildDepTree(rootFilename, visited = new Set()) {
       type: depPkg ? effectivePackageType(depPkg) : undefined,
       sizeBytes: depPkg?.size_bytes,
       isDirect: depPkg ? !!depPkg.is_direct : false,
-      isEnabled: depPkg ? depPkg.storage_state === 'enabled' : true,
       storageState: depPkg?.storage_state ?? 'enabled',
       children,
     }
@@ -733,7 +727,7 @@ export function getFilteredContents(filters = {}) {
     packageHubDisplayName: c.packageHubDisplayName || null,
     hubTags: c.hubTags ?? null,
     isDirect: c.isDirect,
-    isEnabled: c.isEnabled,
+    storageState: c.storageState,
     firstSeenAt: c.first_seen_at,
     parentPackageType: effectivePackageType(packageIndex.get(c.package_filename)),
     ownLabelIds: labelsByContent.get(c.package_filename + '\0' + c.internal_path) || [],
@@ -922,9 +916,8 @@ export function patchTypeOverride(filename, typeOverride) {
 
 /**
  * Fast-path patch of `storage_state` (+ optionally `library_dir_id`) on `packageIndex`
- * rows and the derived `isEnabled` / `storageState` fields on cached content rows in
- * `contentByPackage`. Used by `applyStorageState` so a toggle/move doesn't pay for
- * a full `buildFromDb()` rebuild.
+ * rows and cached `storageState` on content rows in `contentByPackage`. Used by
+ * `applyStorageState` so a toggle/move doesn't pay for a full `buildFromDb()` rebuild.
  *
  * NOT refreshed by this function (and currently fine because none of these
  * aggregates depend on `storage_state`):
@@ -945,7 +938,6 @@ export function patchTypeOverride(filename, typeOverride) {
  * a toggle-enabled will silently leave that map stale until the next rescan.
  */
 export function patchStorageState(filenames, storageState, libraryDirId) {
-  const enabled = storageState === 'enabled'
   for (const fn of filenames) {
     const pkg = packageIndex.get(fn)
     if (pkg) {
@@ -955,7 +947,6 @@ export function patchStorageState(filenames, storageState, libraryDirId) {
     const items = contentByPackage.get(fn)
     if (items)
       for (const item of items) {
-        item.isEnabled = enabled
         item.storageState = storageState
       }
   }

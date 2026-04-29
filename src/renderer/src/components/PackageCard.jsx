@@ -32,6 +32,7 @@ import {
   THUMB_OVERLAY_CHIP,
 } from '../lib/utils'
 import { isLocalPackage } from '../../../shared/local-package.js'
+import { isPackageActive } from '../../../shared/storage-state-predicates.js'
 import { Button } from './ui/button'
 import { Avatar, AvatarImage, AvatarFallback } from './ui/avatar'
 import { TruncateWithTooltip } from './TruncateWithTooltip'
@@ -746,7 +747,7 @@ export function ContentTableRow({
 }) {
   const typeColor = TYPE_COLORS[item.category] || '#6366f1'
   const isHidden = item.hidden
-  const isDisabledPkg = !item.isEnabled
+  const isDisabledPkg = !isPackageActive(item.storageState ?? 'enabled')
   const dimHiddenChrome = isDisabledPkg || (isHidden && !suppressHiddenDimming)
   const thumbKey = item.thumbnailPath ? `ct:${item.packageFilename}\0${item.thumbnailPath}` : null
   const thumbUrl = useThumbnail(thumbKey)
@@ -892,7 +893,7 @@ export function ContentCard({
 }) {
   const typeColor = TYPE_COLORS[item.category] || '#6366f1'
   const isHidden = item.hidden
-  const isDisabledPkg = !item.isEnabled
+  const isDisabledPkg = !isPackageActive(item.storageState ?? 'enabled')
   const dimHiddenChrome = isDisabledPkg || (isHidden && !suppressHiddenDimming)
   const pkgLabel = displayName({
     hubDisplayName: item.packageHubDisplayName,
@@ -1077,7 +1078,12 @@ export function DepRow({ dep, depth = 0, renderChildren = true, onNavigate }) {
         className={`flex items-center gap-2 py-1.5 transition-colors ${canNavigate ? 'cursor-pointer' : ''} ${dep.isRoot ? 'bg-elevated/30' : 'hover:bg-elevated/50'}`}
         style={{ paddingLeft: `${10 + depth * 16}px`, paddingRight: 10 }}
       >
-        {dep.filename && !dep.isEnabled && <EyeOff size={11} className="shrink-0 text-warning" />}
+        {dep.filename &&
+          (dep.storageState === 'offloaded' ? (
+            <Archive size={11} className="shrink-0 text-warning" />
+          ) : dep.storageState === 'disabled' ? (
+            <EyeOff size={11} className="shrink-0 text-warning" />
+          ) : null)}
         <TruncateWithTooltip
           text={dep.ref}
           className={`flex-1 min-w-0 truncate ${canNavigate ? '' : 'select-text cursor-text'} ${dep.isRoot ? 'text-[11px] font-medium text-text-primary' : `text-[11px] ${dep.resolution === 'exact' || dep.resolution === 'latest' ? 'text-text-primary' : 'text-text-secondary'}`}`}

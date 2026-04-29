@@ -1,5 +1,6 @@
 import { useLibraryStore } from '../../stores/useLibraryStore'
 import { toast } from '../Toast'
+import { isPackageActive } from '../../../../shared/storage-state-predicates.js'
 
 /**
  * Side-effectful operations on labels that talk to IPC + stores. Lives apart
@@ -20,7 +21,7 @@ export async function enableMatchingPackages(labelId, enable) {
     packages = useLibraryStore.getState().packages
   }
   const targets = packages.filter(
-    (p) => Array.isArray(p.labelIds) && p.labelIds.includes(labelId) && !!p.isEnabled !== enable,
+    (p) => Array.isArray(p.labelIds) && p.labelIds.includes(labelId) && isPackageActive(p.storageState) !== enable,
   )
   if (!targets.length) {
     toast(enable ? 'All labeled packages are already enabled' : 'All labeled packages are already disabled', 'info')

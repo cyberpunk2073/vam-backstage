@@ -51,9 +51,11 @@ import { usePersistedPanelWidth } from '../hooks/usePersistedPanelWidth'
 import { openLightbox } from '../components/ThumbnailLightbox'
 import { haystacksMatchAllTerms, searchAndTerms } from '../../../shared/search-text.js'
 import { isLocalPackage } from '../../../shared/local-package.js'
+import { isPackageActive } from '../../../shared/storage-state-predicates.js'
+import { StorageStateChip } from '../components/StorageStateChip'
 
 const SORT_OPTIONS = ['Recently installed', 'Name A-Z', 'Package', 'Type']
-const isEffectivelyHidden = (c) => c.hidden || !c.isEnabled
+const isEffectivelyHidden = (c) => c.hidden || !isPackageActive(c.storageState ?? 'enabled')
 
 function contentMatchesSelectedTags(c, selectedTags) {
   if (selectedTags.length === 0) return true
@@ -665,7 +667,7 @@ export default function ContentView({ onNavigate, navContext }) {
   const bulkVisibilityState = useMemo(() => {
     const items = filtered.filter((c) => bulkSelectedIds.includes(c.id))
     if (!items.length) return { disabled: true, mixed: false, allHidden: false }
-    const eligible = items.filter((c) => c.isEnabled)
+    const eligible = items.filter((c) => isPackageActive(c.storageState ?? 'enabled'))
     if (!eligible.length) return { disabled: true, mixed: false, allHidden: false }
     const hiddenCount = eligible.filter((c) => c.hidden).length
     const allHidden = hiddenCount === eligible.length
@@ -690,7 +692,7 @@ export default function ContentView({ onNavigate, navContext }) {
   const runBulkHidden = useCallback(
     async (hidden) => {
       const items = filtered
-        .filter((c) => bulkSelectedIds.includes(c.id) && c.isEnabled)
+        .filter((c) => bulkSelectedIds.includes(c.id) && isPackageActive(c.storageState ?? 'enabled'))
         .map((c) => ({
           id: c.id,
           packageFilename: c.packageFilename,
@@ -1177,7 +1179,7 @@ function ContentDetailPanel({
                 </button>
               </LabelApplyPopover>
             )}
-            {!item.isEnabled ? (
+            {!isPackageActive(item.storageState ?? 'enabled') ? (
               <span className="shrink-0 p-1 text-warning opacity-60" title="Package is disabled">
                 <EyeOff size={14} />
               </span>
@@ -1288,7 +1290,7 @@ function ContentDetailPanel({
                 {!pkg.isDirect && (
                   <span className={`${THUMB_OVERLAY_CHIP} bg-accent-blue/20 text-accent-blue`}>DEP</span>
                 )}
-                {!pkg.isEnabled && <span className={`${THUMB_OVERLAY_CHIP} bg-warning/20 text-warning`}>DISABLED</span>}
+                <StorageStateChip storageState={pkg.storageState ?? 'enabled'} />
                 {inheritedLabels.map((label) => (
                   <LabelChip key={label.id} label={label} size="sm" outline />
                 ))}
@@ -1355,7 +1357,7 @@ function ContentDetailPanel({
             <MoreFromPackage
               grouped={moreGrouped}
               onSelectRelated={onSelectRelated}
-              disabled={!pkg.isEnabled}
+              disabled={!isPackageActive(pkg.storageState ?? 'enabled')}
               suppressHiddenRowStyle={suppressHiddenRowStyle}
             />
           </div>

@@ -17,6 +17,7 @@ import { useLabelsStore } from '@/stores/useLabelsStore'
 import { LabelsApplyMenuItems } from '@/components/labels/LabelsApplyMenuItems'
 import { singleTargetStateMap, bulkStateMap } from '@/components/labels/labelApplyState'
 import { applyLabelToContentItems } from '@/components/labels/labelActions'
+import { isPackageActive } from '../../../shared/storage-state-predicates.js'
 
 const SCENE_SOURCE_TYPES = new Set(['scene', 'legacyScene'])
 const LOOK_SOURCE_TYPES = new Set(['legacyLook'])
@@ -24,7 +25,7 @@ const KIND_NOUN = { appearance: 'appearance', outfit: 'outfit' }
 
 function applyBulkVisibilityFromStore() {
   const { contents, bulkSelectedIds } = useContentStore.getState()
-  const items = contents.filter((c) => bulkSelectedIds.includes(c.id) && c.isEnabled)
+  const items = contents.filter((c) => bulkSelectedIds.includes(c.id) && isPackageActive(c.storageState ?? 'enabled'))
   if (!items.length) return
   const hiddenCount = items.filter((i) => i.hidden).length
   const allHidden = hiddenCount === items.length
@@ -100,13 +101,13 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
   }, [showBulk, bulkSelectedIds, contents])
 
   const bulkVisibilityEligible = useMemo(
-    () => bulkSelectedIds.some((id) => contents.find((c) => c.id === id)?.isEnabled),
+    () => bulkSelectedIds.some((id) => isPackageActive(contents.find((c) => c.id === id)?.storageState ?? 'enabled')),
     [bulkSelectedIds, contents],
   )
 
   const bulkVisibilityUi = useMemo(() => {
     const items = bulkSelectedIds.map((id) => contents.find((c) => c.id === id)).filter(Boolean)
-    const eligible = items.filter((c) => c.isEnabled)
+    const eligible = items.filter((c) => isPackageActive(c.storageState ?? 'enabled'))
     if (!eligible.length) return { label: 'Hide', allHidden: false, allVisible: false, mixed: false }
     const hiddenCount = eligible.filter((c) => c.hidden).length
     const allHidden = hiddenCount === eligible.length
@@ -365,12 +366,12 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
         ) : (
           <>
             <ContextMenuItem
-              disabled={!item.isEnabled}
+              disabled={!isPackageActive(item.storageState ?? 'enabled')}
               onSelect={() => {
-                if (item.isEnabled) onToggleHidden?.(item)
+                if (isPackageActive(item.storageState ?? 'enabled')) onToggleHidden?.(item)
               }}
             >
-              {!item.isEnabled ? (
+              {!isPackageActive(item.storageState ?? 'enabled') ? (
                 <>
                   <EyeOff size={12} className="shrink-0" />
                   Package is disabled

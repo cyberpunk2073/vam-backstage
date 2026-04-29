@@ -19,8 +19,9 @@ import { setStorageState } from './db.js'
 import { suppressPath } from './watcher.js'
 import { getLibraryDirPath, pkgVarPath } from './library-dirs.js'
 import { isLocalPackage } from '../shared/local-package.js'
+import { STORAGE_STATES } from '../shared/storage-state-predicates.js'
 
-const VALID_STORAGE_STATES = new Set(['enabled', 'disabled', 'offloaded'])
+const VALID_STORAGE_STATES = new Set(STORAGE_STATES)
 
 /**
  * @param {string} filename canonical .var filename (PK)
@@ -82,9 +83,9 @@ export async function applyStorageState(filename, target) {
   }
 
   setStorageState(filename, target.storageState, target.libraryDirId ?? null)
-  // Patch in-memory store: package row + derived `isEnabled` on every content
-  // item. Without this, ContentView (which reads `contentByPackage`) goes stale
-  // until a rescan rebuilds the store.
+  // Patch in-memory store: package row + `storageState` on every content row in
+  // `contentByPackage`. Without this, ContentView (which reads `contentByPackage`)
+  // goes stale until a rescan rebuilds the store.
   patchStorageState([filename], target.storageState, target.libraryDirId ?? null)
   return { ok: true, fromPath, toPath, changed: true }
 }

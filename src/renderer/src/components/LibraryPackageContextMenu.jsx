@@ -34,6 +34,7 @@ import {
 } from '@/components/package-action-dialogs'
 import FileTreeDialog from '@/components/FileTreeDialog'
 import { displayName } from '@/lib/utils'
+import { isPackageActive } from '../../../shared/storage-state-predicates.js'
 import { useDownloadStore } from '@/stores/useDownloadStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
 import { useLabelsStore } from '@/stores/useLabelsStore'
@@ -42,11 +43,11 @@ async function runLibraryBulkToggleEnabledFromStore() {
   const { packages, bulkSelectedFilenames } = useLibraryStore.getState()
   const items = packages.filter((p) => bulkSelectedFilenames.includes(p.filename))
   if (!items.length) return
-  const nEnabled = items.filter((p) => p.isEnabled).length
+  const nEnabled = items.filter((p) => isPackageActive(p.storageState)).length
   const allEnabled = nEnabled === items.length
   const allDisabled = nEnabled === 0
   const mixed = !allEnabled && !allDisabled
-  const targets = mixed ? items.filter((p) => !p.isEnabled) : items
+  const targets = mixed ? items.filter((p) => !isPackageActive(p.storageState)) : items
   try {
     for (const p of targets) {
       await window.api.packages.toggleEnabled(p.filename)
@@ -184,7 +185,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
   const name = displayName(p)
   const hasDependents = (p.dependents?.length ?? 0) > 0
   const hasCascadeDeps = (p.cascadeDisableDeps?.length ?? 0) > 0
-  const showDisableDialog = p.isEnabled && (hasDependents || hasCascadeDeps)
+  const showDisableDialog = isPackageActive(p.storageState) && (hasDependents || hasCascadeDeps)
   const dependentNames = hasDependents
     ? p.dependents
         .slice(0, 2)
@@ -255,7 +256,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
     if (!items.length) {
       return { label: 'Enable', allEnabled: false, allDisabled: true, mixed: false }
     }
-    const n = items.filter((p) => p.isEnabled).length
+    const n = items.filter((p) => isPackageActive(p.storageState)).length
     const allEnabled = n === items.length
     const allDisabled = n === 0
     const mixed = n > 0 && n < items.length
@@ -602,8 +603,12 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                 </ContextMenuItem>
               ) : (
                 <ContextMenuItem onSelect={() => void handleToggleEnabled()}>
-                  {p.isEnabled ? <EyeOff size={12} className="shrink-0" /> : <Eye size={12} className="shrink-0" />}
-                  {p.isEnabled ? 'Disable' : 'Enable'}
+                  {isPackageActive(p.storageState ?? 'enabled') ? (
+                    <EyeOff size={12} className="shrink-0" />
+                  ) : (
+                    <Eye size={12} className="shrink-0" />
+                  )}
+                  {isPackageActive(p.storageState ?? 'enabled') ? 'Disable' : 'Enable'}
                 </ContextMenuItem>
               )}
               {p.isDirect ? (
