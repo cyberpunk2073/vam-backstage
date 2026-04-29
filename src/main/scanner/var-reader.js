@@ -162,17 +162,15 @@ export function isVarFilename(name) {
 
 /**
  * Parse a .var (or .var.disabled) filename into { creator, packageName, version } or null.
- * Rejects dep-ref-only conventions (".latest", ".minN") — those are never valid on-disk versions.
+ * On-disk versions are always purely numeric — dep-ref conventions like `.latest` and
+ * `.minN` are intentionally rejected here so they can never become package rows.
  * Input: "AcidBubbles.Timeline.249.var" / "AcidBubbles.Timeline.249.var.disabled"
  */
 export function parseVarFilename(filename) {
   const stem = filename.replace(VAR_EXT_RE, '')
   const parts = stem.split('.')
   if (parts.length < 3) return null
-  const creator = parts[0]
   const version = parts[parts.length - 1]
-  const lower = version.toLowerCase()
-  if (lower === 'latest' || /^min\d+$/.test(lower)) return null
-  const packageName = parts.slice(0, -1).join('.')
-  return { creator, packageName, version }
+  if (!/^\d+$/.test(version)) return null
+  return { creator: parts[0], packageName: parts.slice(0, -1).join('.'), version }
 }

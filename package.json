@@ -24,8 +24,10 @@
     "build:win": "npm run build && electron-builder --win",
     "build:mac": "npm run build && electron-builder --mac",
     "build:linux": "npm run build && electron-builder --linux",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "cross-env ELECTRON_RUN_AS_NODE=1 electron ./node_modules/vitest/vitest.mjs run",
+    "test:watch": "cross-env ELECTRON_RUN_AS_NODE=1 electron ./node_modules/vitest/vitest.mjs",
+    "native:electron": "electron-builder install-app-deps",
+    "native:node": "npm rebuild better-sqlite3",
     "prepare": "husky"
   },
   "dependencies": {
@@ -52,6 +54,7 @@
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",
     "@tailwindcss/vite": "^4.2.2",
     "@vitejs/plugin-react": "^5.1.1",
+    "cross-env": "^10.1.0",
     "electron": "^39.2.6",
     "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",
@@ -68,7 +71,8 @@
     "sharp": "^0.34.5",
     "tailwindcss": "^4.2.2",
     "vite": "^7.2.6",
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.2",
+    "yazl": "^3.3.1"
   },
   "lint-staged": {
     "*.{js,jsx,mjs,css,json,yaml,yml,md}": "prettier --write"

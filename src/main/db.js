@@ -8,7 +8,21 @@ const SCHEMA_VERSION = 21
 
 let db
 
+/**
+ * DB path resolution. In production we live under Electron's userData dir.
+ * Tests set `VAM_DB_PATH` (or call `setDatabasePathOverride`) to point at a
+ * tempdir before opening, so they don't need to spin up Electron just to
+ * exercise SQLite-backed code paths.
+ */
+let dbPathOverride = null
+
+export function setDatabasePathOverride(path) {
+  dbPathOverride = path || null
+}
+
 export function getDatabasePath() {
+  if (dbPathOverride) return dbPathOverride
+  if (process.env.VAM_DB_PATH) return process.env.VAM_DB_PATH
   return join(app.getPath('userData'), 'backstage.db')
 }
 
@@ -23,6 +37,20 @@ export function deleteDatabaseFiles() {
   }
 }
 
+/**
+ * Open the SQLite database. `new Database(path)` dlopens the native
+ * `better_sqlite3.node` binding, compiled for one specific NODE_MODULE_VERSION.
+ *
+ * Both `npm run dev` and `npm test` run under Electron's bundled Node (the
+ * test script launches Vitest via `ELECTRON_RUN_AS_NODE=1 electron …`), so
+ * the binding produced by `postinstall` (`electron-builder install-app-deps`,
+ * Electron ABI — 140 for Electron 39) is the only one we ever need. There's
+ * no host-Node-vs-Electron rebuild dance.
+ *
+ * If you ever invoke Vitest directly under host Node (`npx vitest`, plain
+ * `vitest` watch mode, IDE test integrations), you'll hit a
+ * NODE_MODULE_VERSION mismatch — use `npm test` instead.
+ */
 export function openDatabase() {
   const dbPath = getDatabasePath()
   db = new Database(dbPath)

@@ -126,7 +126,7 @@ function ensureVarExt(filename) {
  * ("latest" or "minN") — i.e. a filename that must never be written to disk or
  * stored as a concrete download_ref.
  */
-function isFlexibleFilename(filename) {
+export function isFlexibleFilename(filename) {
   if (!filename) return false
   const stem = filename.replace(/\.var$/i, '')
   const parts = stem.split('.')
@@ -144,7 +144,7 @@ function isFlexibleFilename(filename) {
  * callers then fall through to a findPackages lookup rather than writing a
  * flexible-tokened filename into the downloads table.
  */
-function concreteDepFilename(file) {
+export function concreteDepFilename(file) {
   const name = file?.packageName
   const ver = file?.latest_version
   if (!name || !/^\d+$/.test(String(ver))) return null

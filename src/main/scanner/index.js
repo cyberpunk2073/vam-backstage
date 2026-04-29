@@ -239,7 +239,7 @@ async function walkForVars(dir, libraryDirId) {
  * caller can distinguish "nothing here" from "couldn't read here". Sub-directory
  * read failures are silently skipped (matches today's silent-skip semantics).
  */
-async function collectVarCandidates(dir, out, isRoot) {
+export async function collectVarCandidates(dir, out, isRoot) {
   let entries
   try {
     entries = await readdir(dir, { withFileTypes: true })

@@ -11,7 +11,7 @@ let packagesFilenameIndex = null // Map<filename, resourceId> — every version 
 let lastFetchedAt = 0
 let fetchPromise = null
 
-function parsePackageEntry(key) {
+export function parsePackageEntry(key) {
   const stem = key.replace(/\.var$/i, '')
   const parts = stem.split('.')
   if (parts.length < 3) return null
@@ -21,7 +21,7 @@ function parsePackageEntry(key) {
   return { packageName, version }
 }
 
-function buildIndexes(data) {
+export function buildIndexes(data) {
   const index = new Map()
   const fnIndex = new Map()
   for (const [key, resourceId] of Object.entries(data)) {
@@ -126,6 +126,24 @@ export function invalidatePackagesJsonCache() {
 
 export function getPackagesIndex() {
   return packagesIndex
+}
+
+/**
+ * Test-only seam. Lets unit tests seed the module-level `packagesIndex` /
+ * `packagesFilenameIndex` directly, without driving `loadPackagesJsonFromCache`
+ * (which would touch the DB) or `fetchPackagesJson` (network). Pass either
+ * pre-built Maps, or a raw `data` object that will be run through
+ * `buildIndexes` for you.
+ */
+export function setPackagesIndexForTests({ data, index, fnIndex } = {}) {
+  if (data) {
+    const built = buildIndexes(data)
+    packagesIndex = built.index
+    packagesFilenameIndex = built.fnIndex
+  } else {
+    packagesIndex = index ?? null
+    packagesFilenameIndex = fnIndex ?? null
+  }
 }
 
 export function getPackagesFilenameIndex() {

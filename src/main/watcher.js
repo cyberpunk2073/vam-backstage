@@ -310,6 +310,28 @@ export async function normalizeAuxDisabled(fullPath) {
   }
 }
 
+/**
+ * Test-only seam. Lets unit tests populate the module-level pending-event
+ * maps (and `vamDirPath`) without driving real chokidar timing, then call
+ * `processBatch` directly. Production callers never touch this — events
+ * arrive through the chokidar listeners, which are wired up by
+ * `restartPackageWatcher` / `initPrefsWatcher` / `initLocalWatcher`.
+ *
+ * `state.packageEvents` / `prefsEvents` / `localPrefs`: arrays of
+ * `[fullPath, payload]`. `state.localContent`: boolean. `state.vamDir`:
+ * string used by the local-content branch.
+ */
+export function __setProcessBatchStateForTests(state = {}) {
+  pendingPackageEvents = new Map(state.packageEvents ?? [])
+  pendingPrefsEvents = new Map(state.prefsEvents ?? [])
+  pendingLocalPrefs = new Map(state.localPrefs ?? [])
+  pendingLocalContent = !!state.localContent
+  if (state.vamDir !== undefined) vamDirPath = state.vamDir
+  if (state.prefsDir !== undefined) prefsDirPath = state.prefsDir
+}
+
+export { processBatch as __processBatchForTests }
+
 async function processBatch() {
   if (processing) {
     scheduleBatch() // reschedule if already processing
@@ -505,6 +527,32 @@ async function processBatch() {
   if (contentsChanged) notify('contents:updated')
 
   processing = false
+}
+
+/**
+ * Test seams — run prefs / local sidecar handling through `processBatch` without
+ * waiting on the 500ms debounce timer. `prefsDirPath` / `vamDirPath` must be
+ * set first (call `__setProcessBatchStateForTests`, or initialize via `startWatcher`).
+ */
+export async function __prefsEventSyncForTests(relativePath) {
+  const normalized = relativePath.replace(/\\/g, '/')
+  const ext = extname(normalized).toLowerCase()
+  if (ext !== '.hide' && ext !== '.fav') return
+  const segments = normalized.split('/')
+  if (segments.length < 2) return
+  if (suppressedStems.has(segments[0])) return
+  const fullPath = join(prefsDirPath, relativePath)
+  if (suppressedPaths.delete(fullPath)) return
+  pendingPrefsEvents.set(fullPath, 'check')
+  await processBatch()
+}
+
+export async function __localPrefsEventSyncForTests(fullPath) {
+  if (suppressedPaths.delete(fullPath)) return
+  const ext = extname(fullPath).toLowerCase()
+  if (ext !== '.hide' && ext !== '.fav') return
+  pendingLocalPrefs.set(fullPath, 'check')
+  await processBatch()
 }
 
 /**
