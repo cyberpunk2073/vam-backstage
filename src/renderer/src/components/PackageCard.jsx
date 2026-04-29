@@ -870,8 +870,11 @@ export function ContentCard({
   const thumbUrl = useThumbnail(thumbKey)
   const showBulk = bulkMode || bulkSelected
   const isLocalContent = isLocalPackage(item.packageFilename)
-  // Cards show *own* labels only — inherited (package) labels live on the package card.
+  // Dots show *own* labels only — inherited (package) labels live visibly on the
+  // package card. The hover tooltip still lists inherited labels for context so
+  // users don't have to navigate to the package card to see the full set.
   const labelObjs = useLabelObjects(item.ownLabelIds)
+  const inheritedLabelObjs = useLabelObjects(item.inheritedLabelIds)
 
   return (
     <div
@@ -971,7 +974,7 @@ export function ContentCard({
           <div className="text-[11px] font-medium text-white truncate leading-tight">{item.displayName}</div>
           <div className="text-[9px] text-white/50 truncate">{pkgLabel}</div>
         </div>
-        <LabelDots labels={labelObjs} />
+        <LabelDots labels={labelObjs} inheritedLabels={inheritedLabelObjs} />
       </div>
     </div>
   )
