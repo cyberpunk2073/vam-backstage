@@ -24,7 +24,8 @@ import {
 } from '../ui/alert-dialog'
 import { COLOR_AUTO, COLOR_NONE, LABEL_NONE_COLOR, LABEL_PALETTE, labelColor } from '../../lib/labels'
 
-const SWATCH_NAMES = ['Pink', 'Purple', 'Sky', 'Cyan', 'Emerald', 'Lime', 'Amber', 'Orange', 'Rose', 'Slate']
+const SHARP_PALETTE_INDICES = LABEL_PALETTE.map((_, i) => i).filter((i) => !LABEL_PALETTE[i].soft)
+const SOFT_PALETTE_INDICES = LABEL_PALETTE.map((_, i) => i).filter((i) => LABEL_PALETTE[i].soft)
 
 /**
  * Right-click menu wrapping a label chip / row. Surface variants:
@@ -111,10 +112,18 @@ export function LabelManageMenu({
                 {currentColor === COLOR_NONE && <Check size={11} className="ml-auto" />}
               </ContextMenuItem>
               <ContextMenuSeparator />
-              {LABEL_PALETTE.map((hex, i) => (
+              {SHARP_PALETTE_INDICES.map((i) => (
                 <ContextMenuItem key={i} onSelect={() => handleRecolor(i)}>
-                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: hex }} />
-                  {SWATCH_NAMES[i] ?? `Color ${i + 1}`}
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: LABEL_PALETTE[i].hex }} />
+                  {LABEL_PALETTE[i].name}
+                  {currentColor === i && <Check size={11} className="ml-auto" />}
+                </ContextMenuItem>
+              ))}
+              {SOFT_PALETTE_INDICES.length > 0 && <ContextMenuSeparator />}
+              {SOFT_PALETTE_INDICES.map((i) => (
+                <ContextMenuItem key={i} onSelect={() => handleRecolor(i)}>
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: LABEL_PALETTE[i].hex }} />
+                  {LABEL_PALETTE[i].name}
                   {currentColor === i && <Check size={11} className="ml-auto" />}
                 </ContextMenuItem>
               ))}

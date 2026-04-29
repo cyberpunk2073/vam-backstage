@@ -58,8 +58,8 @@ export const LabelChip = forwardRef(function LabelChip(
   const isSm = size === 'sm'
   const dotPx = isSm ? 'w-1.5 h-1.5' : 'w-2 h-2'
   // Filled / outline chips drop the dot and project the label color directly.
-  // Muted ("None") labels keep the gray pill in all modes — there's no color
-  // to project, and the existing muted treatment already reads correctly.
+  // Muted ("None") labels keep the gray pill with no leading dot — there's no
+  // color identity to show.
   const useFilled = filled && !outline && !muted
   const useOutline = outline && !muted
   // Hex + 2-digit alpha (RRGGBBAA) is universally supported and survives slot/
@@ -100,7 +100,7 @@ export const LabelChip = forwardRef(function LabelChip(
         )}
         style={colorStyle}
       >
-        {!useFilled && !useOutline && (
+        {!useFilled && !useOutline && !muted && (
           <span
             className={cn(dotPx, 'rounded-full shrink-0')}
             style={{ backgroundColor: color, boxShadow: active ? `0 0 4px ${color}80` : undefined }}
