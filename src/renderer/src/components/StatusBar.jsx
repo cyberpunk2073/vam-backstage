@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { Package, GitFork, Layers, HardDrive, Download, RefreshCw, Loader2 } from 'lucide-react'
-import { useStatusStore } from '../stores/useStatusStore'
-import { useDownloadStore } from '../stores/useDownloadStore'
-import { CONTENT_TYPES, formatBytes, middleTruncate } from '../lib/utils'
+import { useStatusStore } from '@/stores/useStatusStore'
+import { useDownloadStore } from '@/stores/useDownloadStore'
+import { CONTENT_TYPES, formatBytes, middleTruncate } from '@/lib/utils'
 import { toast } from './Toast'
-import { Progress } from './ui/progress'
-import { Button } from './ui/button'
-import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip'
+import { Progress } from '@/components/ui/progress'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 
 function StatTooltip({ children, lines }) {
   return (

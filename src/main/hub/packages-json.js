@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { getSetting, setSetting } from '../db.js'
-import { HUB_HTTP_USER_AGENT } from '../../shared/hub-http.js'
+import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
 
 const PACKAGES_JSON_URL = 'https://s3cdn.virtamate.com/data/packages.json'
 const DB_KEY_DATA = 'packages_json_data'

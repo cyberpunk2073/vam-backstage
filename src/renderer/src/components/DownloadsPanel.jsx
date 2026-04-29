@@ -12,10 +12,10 @@ import {
   Play,
   Trash2,
 } from 'lucide-react'
-import { useDownloadStore } from '../stores/useDownloadStore'
-import { formatBytes, displayName as pkgDisplayName } from '../lib/utils'
-import { Button } from './ui/button'
-import { Progress } from './ui/progress'
+import { useDownloadStore } from '@/stores/useDownloadStore'
+import { formatBytes, displayName as pkgDisplayName } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { Progress } from '@/components/ui/progress'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,9 +25,9 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from './ui/alert-dialog'
+} from '@/components/ui/alert-dialog'
 import ResizeHandle from './ResizeHandle'
-import { usePersistedPanelWidth } from '../hooks/usePersistedPanelWidth'
+import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
 
 function formatSpeed(bytesPerSec) {
   if (!bytesPerSec || bytesPerSec <= 0) return ''

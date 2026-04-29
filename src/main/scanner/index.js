@@ -1,6 +1,6 @@
 import { readdir, stat } from 'fs/promises'
 import { join } from 'path'
-import { isLocalPackage } from '../../shared/local-package.js'
+import { isLocalPackage } from '@shared/local-package.js'
 import { isVarFilename, canonicalVarFilename } from './var-reader.js'
 import { detectLeaves } from './graph.js'
 import { scanAndUpsert } from './ingest.js'

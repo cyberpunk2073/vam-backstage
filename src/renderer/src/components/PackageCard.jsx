@@ -30,19 +30,19 @@ import {
   displayName,
   extractDomainLabel,
   THUMB_OVERLAY_CHIP,
-} from '../lib/utils'
-import { isLocalPackage } from '../../../shared/local-package.js'
-import { isPackageActive } from '../../../shared/storage-state-predicates.js'
-import { Button } from './ui/button'
-import { Avatar, AvatarImage, AvatarFallback } from './ui/avatar'
+} from '@/lib/utils'
+import { isLocalPackage } from '@shared/local-package.js'
+import { isPackageActive } from '@shared/storage-state-predicates.js'
+import { Button } from '@/components/ui/button'
+import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { TruncateWithTooltip } from './TruncateWithTooltip'
-import { useThumbnail } from '../hooks/useThumbnail'
-import { useHubInstallState } from '../hooks/useHubInstallState'
-import { useDownloadStore } from '../stores/useDownloadStore'
-import { useLibraryStore } from '../stores/useLibraryStore'
-import { useAvatar } from '../hooks/useAvatar'
-import { LabelDots } from './labels/LabelDots'
-import { useLabelObjects } from './labels/useLabelObjects'
+import { useThumbnail } from '@/hooks/useThumbnail'
+import { useHubInstallState } from '@/hooks/useHubInstallState'
+import { useDownloadStore } from '@/stores/useDownloadStore'
+import { useLibraryStore } from '@/stores/useLibraryStore'
+import { useAvatar } from '@/hooks/useAvatar'
+import { LabelDots } from '@/components/labels/LabelDots'
+import { useLabelObjects } from '@/components/labels/useLabelObjects'
 
 /**
  * Derive the "inactive package" visual state (`disabled` or `offloaded`) and

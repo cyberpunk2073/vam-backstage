@@ -1,4 +1,4 @@
-import { useDownloadStore } from '../stores/useDownloadStore'
+import { useDownloadStore } from '@/stores/useDownloadStore'
 import { useShallow } from 'zustand/react/shallow'
 
 /** Aggregate download progress for a hub resource and its dependency queue (matches Hub detail panel). */

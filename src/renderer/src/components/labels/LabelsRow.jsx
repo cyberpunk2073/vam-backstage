@@ -4,7 +4,7 @@ import { enableMatchingPackages } from './labelActions'
 import { AddLabelButton } from './AddLabelButton'
 import { useLabelObjects } from './useLabelObjects'
 import { useLabelRename } from './useLabelRename'
-import { toast } from '../Toast'
+import { toast } from '@/components/Toast'
 
 /**
  * Chip-flow + `+` chip for a single subject (one package or one content item).

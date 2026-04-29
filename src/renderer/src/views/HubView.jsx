@@ -21,7 +21,7 @@ import {
   RefreshCw,
   X,
 } from 'lucide-react'
-import { Button } from '../components/ui/button'
+import { Button } from '@/components/ui/button'
 import {
   TYPE_COLORS,
   HUB_CATEGORY_COLORS,
@@ -34,19 +34,19 @@ import {
   formatDate,
   getGradient,
   extractDomainLabel,
-} from '../lib/utils'
-import { useHubStore } from '../stores/useHubStore'
-import { useDownloadStore } from '../stores/useDownloadStore'
-import { useInstalledStore } from '../stores/useInstalledStore'
-import { useHubInstallState } from '../hooks/useHubInstallState'
-import { HubCard, AuthorAvatar, DepRow } from '../components/PackageCard'
-import FilterPanel from '../components/FilterPanel'
-import ResizeHandle from '../components/ResizeHandle'
-import { usePersistedPanelWidth } from '../hooks/usePersistedPanelWidth'
-import { LICENSE_FILTER_OPTIONS, getHubResourceLicense } from '../lib/licenses'
-import { LicenseTag } from '../components/LicenseTag'
-import { Tag } from '../components/ui/tag'
-import { ThumbnailSizeSlider } from '../components/ThumbnailSizeSlider'
+} from '@/lib/utils'
+import { useHubStore } from '@/stores/useHubStore'
+import { useDownloadStore } from '@/stores/useDownloadStore'
+import { useInstalledStore } from '@/stores/useInstalledStore'
+import { useHubInstallState } from '@/hooks/useHubInstallState'
+import { HubCard, AuthorAvatar, DepRow } from '@/components/PackageCard'
+import FilterPanel from '@/components/FilterPanel'
+import ResizeHandle from '@/components/ResizeHandle'
+import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
+import { LICENSE_FILTER_OPTIONS, getHubResourceLicense } from '@/lib/licenses'
+import { LicenseTag } from '@/components/LicenseTag'
+import { Tag } from '@/components/ui/tag'
+import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
 
 /** Hub text search: avoid a network request on every keystroke */
 const HUB_SEARCH_DEBOUNCE_MS = 320

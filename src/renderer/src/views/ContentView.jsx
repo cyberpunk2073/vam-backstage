@@ -14,8 +14,8 @@ import {
   ChevronDown,
   Tag,
 } from 'lucide-react'
-import { Button } from '../components/ui/button'
-import { toast } from '../components/Toast'
+import { Button } from '@/components/ui/button'
+import { toast } from '@/components/Toast'
 import {
   TYPE_COLORS,
   CONTENT_TYPES,
@@ -29,30 +29,30 @@ import {
   libraryTypeBadgeLabel,
   THUMB_OVERLAY_CHIP,
   cn,
-} from '../lib/utils'
-import { useThumbnail } from '../hooks/useThumbnail'
-import { useContentStore } from '../stores/useContentStore'
-import { useLabelsStore } from '../stores/useLabelsStore'
-import { AuthorAvatar, AuthorLink, ContentCard, ContentTableRow } from '../components/PackageCard'
-import { ContentItemContextMenu } from '../components/ContentItemContextMenu'
-import { LabelsRow } from '../components/labels/LabelsRow'
-import { LabelChip } from '../components/labels/LabelChip'
-import { LabelApplyPopover } from '../components/labels/LabelApplyPopover'
-import { useAddLabel } from '../components/labels/useAddLabel'
-import { useLabelObjects } from '../components/labels/useLabelObjects'
-import { bulkStateMap } from '../components/labels/labelApplyState'
-import { ContentCategory } from '../components/ContentCategory'
-import FilterPanel from '../components/FilterPanel'
-import ResizeHandle from '../components/ResizeHandle'
-import { VirtualGrid, VirtualList } from '../components/VirtualGrid'
-import { ThumbnailSizeSlider } from '../components/ThumbnailSizeSlider'
-import { useKeyboardNav } from '../hooks/useKeyboardNav'
-import { usePersistedPanelWidth } from '../hooks/usePersistedPanelWidth'
-import { openLightbox } from '../components/ThumbnailLightbox'
-import { haystacksMatchAllTerms, searchAndTerms } from '../../../shared/search-text.js'
-import { isLocalPackage } from '../../../shared/local-package.js'
-import { isPackageActive } from '../../../shared/storage-state-predicates.js'
-import { StorageStateChip } from '../components/StorageStateChip'
+} from '@/lib/utils'
+import { useThumbnail } from '@/hooks/useThumbnail'
+import { useContentStore } from '@/stores/useContentStore'
+import { useLabelsStore } from '@/stores/useLabelsStore'
+import { AuthorAvatar, AuthorLink, ContentCard, ContentTableRow } from '@/components/PackageCard'
+import { ContentItemContextMenu } from '@/components/ContentItemContextMenu'
+import { LabelsRow } from '@/components/labels/LabelsRow'
+import { LabelChip } from '@/components/labels/LabelChip'
+import { LabelApplyPopover } from '@/components/labels/LabelApplyPopover'
+import { useAddLabel } from '@/components/labels/useAddLabel'
+import { useLabelObjects } from '@/components/labels/useLabelObjects'
+import { bulkStateMap } from '@/components/labels/labelApplyState'
+import { ContentCategory } from '@/components/ContentCategory'
+import FilterPanel from '@/components/FilterPanel'
+import ResizeHandle from '@/components/ResizeHandle'
+import { VirtualGrid, VirtualList } from '@/components/VirtualGrid'
+import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
+import { useKeyboardNav } from '@/hooks/useKeyboardNav'
+import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
+import { openLightbox } from '@/components/ThumbnailLightbox'
+import { haystacksMatchAllTerms, searchAndTerms } from '@shared/search-text.js'
+import { isLocalPackage } from '@shared/local-package.js'
+import { isPackageActive } from '@shared/storage-state-predicates.js'
+import { StorageStateChip } from '@/components/StorageStateChip'
 
 const SORT_OPTIONS = ['Recently installed', 'Name A-Z', 'Package', 'Type']
 const isEffectivelyHidden = (c) => c.hidden || !isPackageActive(c.storageState ?? 'enabled')

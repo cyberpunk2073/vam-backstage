@@ -1,6 +1,6 @@
 import { useInstallStatus } from './useInstallStatus'
 import { useHubInstallDlInfo } from './useHubInstallDlInfo'
-import { useDownloadStore } from '../stores/useDownloadStore'
+import { useDownloadStore } from '@/stores/useDownloadStore'
 
 /**
  * Resolves the current install/download action state for a hub resource.

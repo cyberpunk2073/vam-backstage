@@ -1,9 +1,9 @@
 import { Eye, EyeOff, Star, ChevronDown, ChevronRight } from 'lucide-react'
 import { toast } from './Toast'
 import { openLightbox } from './ThumbnailLightbox'
-import { getContentGradient } from '../lib/utils'
-import { useThumbnail } from '../hooks/useThumbnail'
-import { useContentCategoryExpandedStore } from '../stores/useContentCategoryExpandedStore'
+import { getContentGradient } from '@/lib/utils'
+import { useThumbnail } from '@/hooks/useThumbnail'
+import { useContentCategoryExpandedStore } from '@/stores/useContentCategoryExpandedStore'
 
 export function ContentRow({ item, onSelect, disabled, suppressHiddenStyle = false }) {
   const thumbKey = item.thumbnailPath ? `ct:${item.packageFilename}\0${item.thumbnailPath}` : null

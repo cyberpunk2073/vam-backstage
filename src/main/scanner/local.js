@@ -3,7 +3,7 @@ import { join, relative, sep } from 'path'
 import { classifyContents } from './classifier.js'
 import { personAtomIdsJsonFromBuffer, PERSON_ATOM_ID_CONTENT_TYPES } from './ingest.js'
 import { pLimit } from '../p-limit.js'
-import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_ROOTS } from '../../shared/local-package.js'
+import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_ROOTS } from '@shared/local-package.js'
 import { ensureLocalPackage, getLocalContentMeta, upsertContents, deleteContentsForPackagePaths } from '../db.js'
 
 // Default libuv pool is 4 workers; 8 is 2× headroom for transient bursts.

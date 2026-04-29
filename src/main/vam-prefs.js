@@ -1,8 +1,8 @@
 import { readdir, writeFile, unlink, mkdir, rename } from 'fs/promises'
 import { join, dirname, extname } from 'path'
 import { existsSync } from 'fs'
-import { ADDON_PACKAGES_FILE_PREFS } from '../shared/paths.js'
-import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_ROOTS, isLocalPackage } from '../shared/local-package.js'
+import { ADDON_PACKAGES_FILE_PREFS } from '@shared/paths.js'
+import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_ROOTS, isLocalPackage } from '@shared/local-package.js'
 import { suppressPath } from './watcher.js'
 import { pLimit } from './p-limit.js'
 

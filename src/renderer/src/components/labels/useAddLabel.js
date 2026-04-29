@@ -1,4 +1,4 @@
-import { toast } from '../Toast'
+import { toast } from '@/components/Toast'
 
 /**
  * Shared apply / create-and-apply handlers for label "add" affordances on a

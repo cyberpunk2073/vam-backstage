@@ -1,6 +1,6 @@
-import { cn } from '../../lib/utils'
-import { isMutedLabel, labelColor } from '../../lib/labels'
-import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/tooltip'
+import { cn } from '@/lib/utils'
+import { isMutedLabel, labelColor } from '@/lib/labels'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 
 /**
  * Small colored-dot cluster anchored top-left on card thumbnails, one row below

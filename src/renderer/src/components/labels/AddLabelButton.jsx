@@ -1,6 +1,6 @@
 import { Plus } from 'lucide-react'
-import { cn } from '../../lib/utils'
-import { useLabelsStore } from '../../stores/useLabelsStore'
+import { cn } from '@/lib/utils'
+import { useLabelsStore } from '@/stores/useLabelsStore'
 import { LabelApplyPopover } from './LabelApplyPopover'
 import { useAddLabel } from './useAddLabel'
 

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Check, CircleMinus, Eye, EyeOff, Pencil, Trash2 } from 'lucide-react'
-import { toast } from '../Toast'
+import { toast } from '@/components/Toast'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -11,7 +11,7 @@ import {
   ContextMenuSubContent,
   ContextMenuSubTrigger,
   ContextMenuTrigger,
-} from '../ui/context-menu'
+} from '@/components/ui/context-menu'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,8 +21,8 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '../ui/alert-dialog'
-import { COLOR_AUTO, COLOR_NONE, LABEL_NONE_COLOR, LABEL_PALETTE, labelColor } from '../../lib/labels'
+} from '@/components/ui/alert-dialog'
+import { COLOR_AUTO, COLOR_NONE, LABEL_NONE_COLOR, LABEL_PALETTE, labelColor } from '@/lib/labels'
 
 const SHARP_PALETTE_INDICES = LABEL_PALETTE.map((_, i) => i).filter((i) => !LABEL_PALETTE[i].soft)
 const SOFT_PALETTE_INDICES = LABEL_PALETTE.map((_, i) => i).filter((i) => LABEL_PALETTE[i].soft)

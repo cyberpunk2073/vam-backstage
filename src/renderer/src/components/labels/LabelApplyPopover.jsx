@@ -2,8 +2,8 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Check, Minus, Plus } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Command, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
-import { cn } from '../../lib/utils'
-import { labelColor } from '../../lib/labels'
+import { cn } from '@/lib/utils'
+import { labelColor } from '@/lib/labels'
 
 /**
  * Combobox for applying labels with search + optional inline create. Two modes:

@@ -13,16 +13,16 @@ import {
   FlaskConical,
   CurlyBraces,
 } from 'lucide-react'
-import { formatBytes } from '../lib/utils'
-import { parseDisableBehavior, disableBehaviorMoveTo } from '../../../shared/disable-behavior.js'
-import { toast } from '../components/Toast'
-import { useStatusStore } from '../stores/useStatusStore'
-import { useLibraryStore } from '../stores/useLibraryStore'
-import { Button } from '../components/ui/button'
-import { Progress } from '../components/ui/progress'
-import { Switch } from '../components/ui/switch'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
-import { TruncateWithTooltip } from '../components/TruncateWithTooltip'
+import { formatBytes } from '@/lib/utils'
+import { parseDisableBehavior, disableBehaviorMoveTo } from '@shared/disable-behavior.js'
+import { toast } from '@/components/Toast'
+import { useStatusStore } from '@/stores/useStatusStore'
+import { useLibraryStore } from '@/stores/useLibraryStore'
+import { Button } from '@/components/ui/button'
+import { Progress } from '@/components/ui/progress'
+import { Switch } from '@/components/ui/switch'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { TruncateWithTooltip } from '@/components/TruncateWithTooltip'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,7 +33,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '../components/ui/alert-dialog'
+} from '@/components/ui/alert-dialog'
 
 export default function SettingsView() {
   const [vamDir, setVamDir] = useState('')

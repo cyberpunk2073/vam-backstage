@@ -1,4 +1,4 @@
-import { useInstalledStore } from '../stores/useInstalledStore'
+import { useInstalledStore } from '@/stores/useInstalledStore'
 
 const NOT_INSTALLED = Object.freeze({ installed: false, isDirect: false, filename: null })
 

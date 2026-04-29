@@ -1,6 +1,6 @@
-import { canonicalizeLicense, isCommercialUseAllowed, getLicenseDescription } from '../lib/licenses'
-import { cn, THUMB_CHIP_BOX } from '../lib/utils'
-import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip'
+import { canonicalizeLicense, isCommercialUseAllowed, getLicenseDescription } from '@/lib/licenses'
+import { cn, THUMB_CHIP_BOX } from '@/lib/utils'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 
 export function LicenseTag({ license, className = '' }) {
   if (license == null || String(license).trim() === '') return null

@@ -18,8 +18,8 @@ import { getPackageIndex, patchStorageState } from './store.js'
 import { setStorageState } from './db.js'
 import { suppressPath } from './watcher.js'
 import { getLibraryDirPath, pkgVarPath } from './library-dirs.js'
-import { isLocalPackage } from '../shared/local-package.js'
-import { STORAGE_STATES } from '../shared/storage-state-predicates.js'
+import { isLocalPackage } from '@shared/local-package.js'
+import { STORAGE_STATES } from '@shared/storage-state-predicates.js'
 
 const VALID_STORAGE_STATES = new Set(STORAGE_STATES)
 
@@ -155,4 +155,4 @@ export function computeInstallTarget({ dependents, packageIndex, disableBehavior
 }
 
 // Re-exported for legacy import sites; canonical home is `src/shared/disable-behavior.js`.
-export { parseDisableBehavior } from '../shared/disable-behavior.js'
+export { parseDisableBehavior } from '@shared/disable-behavior.js'

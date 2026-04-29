@@ -1,8 +1,8 @@
 import { useMemo } from 'react'
 import { Check, Minus } from 'lucide-react'
 import { ContextMenuItem } from '@/components/ui/context-menu'
-import { cn } from '../../lib/utils'
-import { labelColor } from '../../lib/labels'
+import { cn } from '@/lib/utils'
+import { labelColor } from '@/lib/labels'
 
 /**
  * Right-click Labels submenu: plain Radix menu items with tri-state markers.

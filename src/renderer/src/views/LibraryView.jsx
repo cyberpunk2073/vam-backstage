@@ -22,8 +22,8 @@ import {
   FolderTree,
   X,
 } from 'lucide-react'
-import { Button } from '../components/ui/button'
-import { toast } from '../components/Toast'
+import { Button } from '@/components/ui/button'
+import { toast } from '@/components/Toast'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,7 +34,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '../components/ui/alert-dialog'
+} from '@/components/ui/alert-dialog'
 import {
   TYPE_COLORS,
   LIBRARY_FILTER_TYPES,
@@ -48,7 +48,7 @@ import {
   cn,
   THUMB_CHIP_BOX,
   THUMB_OVERLAY_CHIP,
-} from '../lib/utils'
+} from '@/lib/utils'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -56,45 +56,45 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '../components/ui/dropdown-menu'
-import { LabelApplyPopover } from '../components/labels/LabelApplyPopover'
-import { bulkStateMap } from '../components/labels/labelApplyState'
+} from '@/components/ui/dropdown-menu'
+import { LabelApplyPopover } from '@/components/labels/LabelApplyPopover'
+import { bulkStateMap } from '@/components/labels/labelApplyState'
 import { Tag } from 'lucide-react'
-import { useThumbnail } from '../hooks/useThumbnail'
-import { useLibraryStore } from '../stores/useLibraryStore'
-import { useLabelsStore } from '../stores/useLabelsStore'
-import { useContentStore } from '../stores/useContentStore'
-import { useDownloadStore } from '../stores/useDownloadStore'
-import FilterPanel from '../components/FilterPanel'
-import ResizeHandle from '../components/ResizeHandle'
-import { LibraryCard, LibraryTableRow, DepRow, AuthorAvatar, AuthorLink } from '../components/PackageCard'
-import { LabelsRow } from '../components/labels/LabelsRow'
-import { AddLabelButton } from '../components/labels/AddLabelButton'
-import { StorageStateChip } from '../components/StorageStateChip'
-import { ContentCategory } from '../components/ContentCategory'
-import FileTreeDialog from '../components/FileTreeDialog'
-import { openLightbox } from '../components/ThumbnailLightbox'
-import { VirtualGrid, VirtualList } from '../components/VirtualGrid'
-import { ThumbnailSizeSlider } from '../components/ThumbnailSizeSlider'
-import { useKeyboardNav } from '../hooks/useKeyboardNav'
-import { usePersistedPanelWidth } from '../hooks/usePersistedPanelWidth'
-import { useLibraryUpdateState } from '../hooks/useLibraryUpdateState'
+import { useThumbnail } from '@/hooks/useThumbnail'
+import { useLibraryStore } from '@/stores/useLibraryStore'
+import { useLabelsStore } from '@/stores/useLabelsStore'
+import { useContentStore } from '@/stores/useContentStore'
+import { useDownloadStore } from '@/stores/useDownloadStore'
+import FilterPanel from '@/components/FilterPanel'
+import ResizeHandle from '@/components/ResizeHandle'
+import { LibraryCard, LibraryTableRow, DepRow, AuthorAvatar, AuthorLink } from '@/components/PackageCard'
+import { LabelsRow } from '@/components/labels/LabelsRow'
+import { AddLabelButton } from '@/components/labels/AddLabelButton'
+import { StorageStateChip } from '@/components/StorageStateChip'
+import { ContentCategory } from '@/components/ContentCategory'
+import FileTreeDialog from '@/components/FileTreeDialog'
+import { openLightbox } from '@/components/ThumbnailLightbox'
+import { VirtualGrid, VirtualList } from '@/components/VirtualGrid'
+import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
+import { useKeyboardNav } from '@/hooks/useKeyboardNav'
+import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
+import { useLibraryUpdateState } from '@/hooks/useLibraryUpdateState'
 import {
   COMMERCIAL_USE_ALLOWED_LICENSE_FILTER,
   LICENSE_FILTER_OPTIONS,
   canonicalizeLicense,
   isCommercialUseAllowed,
-} from '../lib/licenses'
-import { haystacksMatchAllTerms, searchAndTerms } from '../../../shared/search-text.js'
-import { isPackageActive } from '../../../shared/storage-state-predicates.js'
-import { LicenseTag } from '../components/LicenseTag'
-import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui/tooltip'
-import { LibraryPackageContextMenu } from '../components/LibraryPackageContextMenu'
+} from '@/lib/licenses'
+import { haystacksMatchAllTerms, searchAndTerms } from '@shared/search-text.js'
+import { isPackageActive } from '@shared/storage-state-predicates.js'
+import { LicenseTag } from '@/components/LicenseTag'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
+import { LibraryPackageContextMenu } from '@/components/LibraryPackageContextMenu'
 import {
   UninstallDialogContent,
   DisablePackageDialogContent,
   ForceRemoveDialogContent,
-} from '../components/package-action-dialogs'
+} from '@/components/package-action-dialogs'
 
 const SORT_OPTIONS = ['Recently installed', 'Type', 'Name', 'Size', 'Content', 'Deps', 'Morphs']
 

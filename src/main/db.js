@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import { existsSync, unlinkSync } from 'fs'
 import { app } from 'electron'
 import { join } from 'path'
-import { LOCAL_PACKAGE_FILENAME } from '../shared/local-package.js'
+import { LOCAL_PACKAGE_FILENAME } from '@shared/local-package.js'
 
 const SCHEMA_VERSION = 21
 

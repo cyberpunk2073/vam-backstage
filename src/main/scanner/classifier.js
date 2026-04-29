@@ -1,5 +1,5 @@
 import { extname, basename } from 'path'
-import { VISIBLE_CATEGORIES, categoryOf } from '../../shared/content-types.js'
+import { VISIBLE_CATEGORIES, categoryOf } from '@shared/content-types.js'
 
 /**
  * Classification rules ordered by specificity.

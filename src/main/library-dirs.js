@@ -14,8 +14,8 @@
  */
 
 import { join } from 'path'
-import { ADDON_PACKAGES, ADDON_PACKAGES_FILE_PREFS } from '../shared/paths.js'
-import { LOCAL_CONTENT_ROOTS } from '../shared/local-package.js'
+import { ADDON_PACKAGES, ADDON_PACKAGES_FILE_PREFS } from '@shared/paths.js'
+import { LOCAL_CONTENT_ROOTS } from '@shared/local-package.js'
 import { getSetting, listLibraryDirs as dbListLibraryDirs } from './db.js'
 
 let auxDirsById = new Map() // id -> { id, path, created_at }

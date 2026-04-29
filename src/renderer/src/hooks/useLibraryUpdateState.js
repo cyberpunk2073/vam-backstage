@@ -1,4 +1,4 @@
-import { useDownloadStore } from '../stores/useDownloadStore'
+import { useDownloadStore } from '@/stores/useDownloadStore'
 
 /**
  * Resolves the current state of a Library "Update to vX" action for one package.

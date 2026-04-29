@@ -18,9 +18,9 @@ import {
   getTransitiveDeps,
   parseDepRef,
 } from './scanner/graph.js'
-import { categoryOf, isGalleryVisible, isVisible, LOOK_ITEM_EXACT_TYPES, tagOf } from '../shared/content-types.js'
+import { categoryOf, isGalleryVisible, isVisible, LOOK_ITEM_EXACT_TYPES, tagOf } from '@shared/content-types.js'
 import { getPackagesIndex, loadPackagesJsonFromCache } from './hub/packages-json.js'
-import { isLocalPackage } from '../shared/local-package.js'
+import { isLocalPackage } from '@shared/local-package.js'
 
 /**
  * Iterate packages excluding the synthetic `__local__` sentinel that owns loose

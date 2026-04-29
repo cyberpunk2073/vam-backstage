@@ -8,4 +8,4 @@ export {
   isCommercialUseAllowed,
   getLicenseDescription,
   getHubResourceLicense,
-} from '../../../shared/licenses.js'
+} from '@shared/licenses.js'

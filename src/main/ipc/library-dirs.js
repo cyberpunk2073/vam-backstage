@@ -29,7 +29,7 @@ import { restartPackageWatcher } from '../watcher.js'
 import { runScan } from '../scanner/index.js'
 import { buildFromDb } from '../store.js'
 import { notify, getWindow } from '../notify.js'
-import { DISABLE_BEHAVIOR_SUFFIX, disableBehaviorMoveTo } from '../../shared/disable-behavior.js'
+import { DISABLE_BEHAVIOR_SUFFIX, disableBehaviorMoveTo } from '@shared/disable-behavior.js'
 
 /**
  * Probe whether `auxPath` is on the same filesystem as `mainPath` by attempting

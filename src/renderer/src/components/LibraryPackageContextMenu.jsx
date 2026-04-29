@@ -34,7 +34,7 @@ import {
 } from '@/components/package-action-dialogs'
 import FileTreeDialog from '@/components/FileTreeDialog'
 import { displayName } from '@/lib/utils'
-import { isPackageActive } from '../../../shared/storage-state-predicates.js'
+import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { useDownloadStore } from '@/stores/useDownloadStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
 import { useLabelsStore } from '@/stores/useLabelsStore'

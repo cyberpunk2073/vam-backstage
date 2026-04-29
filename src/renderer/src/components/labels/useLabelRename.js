@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { toast } from '../Toast'
-import { useLabelsStore } from '../../stores/useLabelsStore'
+import { toast } from '@/components/Toast'
+import { useLabelsStore } from '@/stores/useLabelsStore'
 
 /**
  * State + handlers for inline renaming of a label chip. Used by `LabelsRow`

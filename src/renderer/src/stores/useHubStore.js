@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { toast } from '../components/Toast'
+import { toast } from '@/components/Toast'
 import { useInstalledStore } from './useInstalledStore'
 
 let fetchSeq = 0

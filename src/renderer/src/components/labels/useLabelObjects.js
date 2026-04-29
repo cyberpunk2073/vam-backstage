@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { useLabelsStore } from '../../stores/useLabelsStore'
+import { useLabelsStore } from '@/stores/useLabelsStore'
 
 /**
  * Resolve `[id, ...]` against the cached labels map. Single source — the

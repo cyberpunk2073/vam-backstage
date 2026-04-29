@@ -17,7 +17,7 @@ import { useLabelsStore } from '@/stores/useLabelsStore'
 import { LabelsApplyMenuItems } from '@/components/labels/LabelsApplyMenuItems'
 import { singleTargetStateMap, bulkStateMap } from '@/components/labels/labelApplyState'
 import { applyLabelToContentItems } from '@/components/labels/labelActions'
-import { isPackageActive } from '../../../shared/storage-state-predicates.js'
+import { isPackageActive } from '@shared/storage-state-predicates.js'
 
 const SCENE_SOURCE_TYPES = new Set(['scene', 'legacyScene'])
 const LOOK_SOURCE_TYPES = new Set(['legacyLook'])

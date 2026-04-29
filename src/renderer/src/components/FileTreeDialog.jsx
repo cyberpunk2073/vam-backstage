@@ -9,9 +9,9 @@ import {
   FoldVertical,
   ExternalLink,
 } from 'lucide-react'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog'
-import { Button } from './ui/button'
-import { formatBytes } from '../lib/utils'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { formatBytes } from '@/lib/utils'
 
 function varPackageBasename(filename) {
   if (!filename) return ''

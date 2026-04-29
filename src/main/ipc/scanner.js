@@ -1,7 +1,7 @@
 import { ipcMain, dialog, app } from 'electron'
 import { access, readdir } from 'fs/promises'
 import { dirname, join } from 'path'
-import { ADDON_PACKAGES } from '../../shared/paths.js'
+import { ADDON_PACKAGES } from '@shared/paths.js'
 import { getSetting, clearAllCorrupted, batchSetCorrupted } from '../db.js'
 import { runScan, applyAutoHide, removeAutoHide } from '../scanner/index.js'
 import { runIntegrityCheck } from '../scanner/integrity.js'

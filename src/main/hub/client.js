@@ -12,8 +12,8 @@ import {
   COMMERCIAL_USE_ALLOWED_LICENSE_FILTER,
   getHubResourceLicense,
   isCommercialUseAllowed,
-} from '../../shared/licenses.js'
-import { HUB_HTTP_USER_AGENT } from '../../shared/hub-http.js'
+} from '@shared/licenses.js'
+import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
 
 const API_URL = 'https://hub.virtamate.com/citizenx/api.php'
 

@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
-import { cn } from '../../lib/utils'
-import { isMutedLabel, labelColor } from '../../lib/labels'
+import { cn } from '@/lib/utils'
+import { isMutedLabel, labelColor } from '@/lib/labels'
 
 /**
  * Visual primitive for a label as it appears on detail panels, in popovers,

@@ -1,7 +1,7 @@
 import { createWriteStream } from 'fs'
 import { stat as fsStat, rename, unlink, mkdir } from 'fs/promises'
 import { join, dirname } from 'path'
-import { HUB_HTTP_USER_AGENT } from '../../shared/hub-http.js'
+import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
 import { session } from 'electron'
 import yauzl from 'yauzl'
 import {

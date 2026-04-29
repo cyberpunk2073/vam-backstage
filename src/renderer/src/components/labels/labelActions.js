@@ -1,6 +1,6 @@
-import { useLibraryStore } from '../../stores/useLibraryStore'
-import { toast } from '../Toast'
-import { isPackageActive } from '../../../../shared/storage-state-predicates.js'
+import { useLibraryStore } from '@/stores/useLibraryStore'
+import { toast } from '@/components/Toast'
+import { isPackageActive } from '@shared/storage-state-predicates.js'
 
 /**
  * Side-effectful operations on labels that talk to IPC + stores. Lives apart

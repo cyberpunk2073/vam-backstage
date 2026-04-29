@@ -1,6 +1,6 @@
 import { clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
-import { VISIBLE_CATEGORIES, isCorePackageCategory } from '../../../shared/content-types.js'
+import { VISIBLE_CATEGORIES, isCorePackageCategory } from '@shared/content-types.js'
 
 export function cn(...inputs) {
   return twMerge(clsx(inputs))

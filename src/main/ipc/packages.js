@@ -2,7 +2,7 @@ import { createWriteStream } from 'fs'
 import { ipcMain, session } from 'electron'
 import { access, rename, unlink } from 'fs/promises'
 import { dirname, join } from 'path'
-import { HUB_HTTP_USER_AGENT } from '../../shared/hub-http.js'
+import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
 import { setPackageDirect, deletePackage, getSetting, setPackageTypeOverride, setPackageCorrupted } from '../db.js'
 import { scanAndUpsert } from '../scanner/ingest.js'
 import { readVar } from '../scanner/var-reader.js'
@@ -49,7 +49,7 @@ import { notify } from '../notify.js'
 import { suppressPath } from '../watcher.js'
 import { getResourceDetail, findPackages } from '../hub/client.js'
 import { cacheAvatarsFromResources } from '../avatar-cache.js'
-import { VISIBLE_CATEGORIES } from '../../shared/content-types.js'
+import { VISIBLE_CATEGORIES } from '@shared/content-types.js'
 
 const ALLOWED_PACKAGE_TYPE_OVERRIDES = new Set([...VISIBLE_CATEGORIES, 'Other'])
 

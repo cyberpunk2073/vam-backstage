@@ -11,9 +11,9 @@ import {
   AlertTriangle,
   ShieldAlert,
 } from 'lucide-react'
-import { Button } from './ui/button'
-import { Dialog, DialogOverlay, DialogPortal } from './ui/dialog'
-import { Progress } from './ui/progress'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogOverlay, DialogPortal } from '@/components/ui/dialog'
+import { Progress } from '@/components/ui/progress'
 import { Dialog as DialogPrimitive } from 'radix-ui'
 
 /** Relative time/effort per phase (any positive scale; normalized by sum). Easier to extend than % that must total 100. */
