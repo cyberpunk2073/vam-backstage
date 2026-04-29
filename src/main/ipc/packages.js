@@ -1,17 +1,9 @@
 import { createWriteStream } from 'fs'
 import { ipcMain, session } from 'electron'
 import { access, rename, unlink } from 'fs/promises'
-import { join } from 'path'
-import { ADDON_PACKAGES } from '../../shared/paths.js'
+import { dirname, join } from 'path'
 import { HUB_HTTP_USER_AGENT } from '../../shared/hub-http.js'
-import {
-  setPackageDirect,
-  setPackageEnabled,
-  deletePackage,
-  getSetting,
-  setPackageTypeOverride,
-  setPackageCorrupted,
-} from '../db.js'
+import { setPackageDirect, deletePackage, getSetting, setPackageTypeOverride, setPackageCorrupted } from '../db.js'
 import { scanAndUpsert } from '../scanner/ingest.js'
 import { readVar } from '../scanner/var-reader.js'
 import { verifyPackageFull } from '../scanner/integrity.js'
@@ -32,12 +24,13 @@ import {
   setPrefsMap,
   buildFromDb,
   patchTypeOverride,
-  patchEnabled,
   getFilteredContents,
   isNotDownloadable,
 } from '../store.js'
 import { hidePackageContent, unhidePackageContent, readAllPrefs } from '../vam-prefs.js'
 import { computeRemovableDeps, computeCascadeDisable, computeCascadeEnable } from '../scanner/graph.js'
+import { applyStorageState, parseDisableBehavior, nextStorageStateForIntent } from '../storage-state.js'
+import { pkgVarPath, getMainLibraryDirPath } from '../library-dirs.js'
 import {
   enqueueInstall,
   enqueueInstallMissing,
@@ -65,61 +58,99 @@ function normalizeFilenameArgs(arg) {
 }
 
 /**
- * Shared worker for `packages:toggle-enabled` and `packages:set-enabled`. The
- * caller decides the new state via `nextEnabledFn(pkg)` — toggle inverts,
- * set-enabled returns a fixed value. Per-filename: rename on disk, persist,
- * apply the cascade-enable/disable graph, patch in-memory state. Skips work
- * when `nextEnabledFn` matches the current state.
+ * Suppress + unlink the indexed physical file plus any stray main-dir aliases
+ * (`<fn>` and `<fn>.disabled` in main) external tools may have left around.
+ * Each path is unlinked at most once. Caller is responsible for `deletePackage`.
  */
-async function applyEnabledChange(filenames, nextEnabledFn) {
-  const vamDir = getSetting('vam_dir')
-  if (!vamDir) throw new Error('VaM directory not configured')
-  const addonDir = join(vamDir, ADDON_PACKAGES)
+async function unlinkPackagePhysicalAndAliases(pkg, filename) {
+  const physical = pkg ? pkgVarPath(pkg) : null
+  const mainDir = getMainLibraryDirPath()
+  const targets = [physical]
+  if (mainDir) targets.push(join(mainDir, filename), join(mainDir, filename + '.disabled'))
+  const seen = new Set()
+  for (const p of targets) {
+    if (!p || seen.has(p)) continue
+    seen.add(p)
+    suppressPath(p)
+    try {
+      await unlink(p)
+    } catch {}
+  }
+}
+
+/**
+ * Shared worker for `packages:toggle-enabled` and `packages:set-enabled`. The
+ * caller supplies `intentFn(pkg)` returning `'enable' | 'disable'`; for each
+ * filename we resolve the resulting storage_state target via the
+ * `nextStorageStateForIntent` matrix (which encodes "no-op when already at
+ * the target end of the spectrum"), apply it via `applyStorageState`, and
+ * cascade through `computeCascadeEnable / computeCascadeDisable` according
+ * to the same intent. The `disable_behavior` setting decides whether disable
+ * means `.var.disabled` in main or move-to-aux.
+ *
+ * Returns the same shape on toggle and set-enabled so the renderer doesn't
+ * branch: `{ ok, isEnabled, storageState, cascadeCount, unchanged? }` per
+ * filename, wrapped in the standard single/array envelope.
+ */
+async function applyStorageStateChange(filenames, intentFn) {
+  if (!getSetting('vam_dir')) throw new Error('VaM directory not configured')
+  const parsedBehavior = parseDisableBehavior(getSetting('disable_behavior'))
+  const disableTarget =
+    parsedBehavior.kind === 'move-to'
+      ? { storageState: 'offloaded', libraryDirId: parsedBehavior.auxDirId }
+      : { storageState: 'disabled', libraryDirId: null }
+
   const out = []
   for (const filename of filenames) {
     const pkg = getPackageIndex().get(filename)
     if (!pkg) throw new Error(`Package not found: ${filename}`)
 
-    const newEnabled = !!nextEnabledFn(pkg)
-    if (newEnabled === !!pkg.is_enabled) {
-      out.push({ ok: true, isEnabled: newEnabled, cascadeCount: 0, unchanged: true })
+    const intent = intentFn(pkg)
+    const target = nextStorageStateForIntent({ current: pkg.storage_state, intent, disableTarget })
+    if (!target) {
+      out.push({
+        ok: true,
+        isEnabled: pkg.storage_state === 'enabled',
+        storageState: pkg.storage_state,
+        cascadeCount: 0,
+        unchanged: true,
+      })
       continue
     }
 
-    const cascadeSet = newEnabled
-      ? computeCascadeEnable(filename, getPackageIndex(), getForwardDeps())
-      : computeCascadeDisable(filename, getPackageIndex(), getForwardDeps(), getReverseDeps())
+    const cascadeSet =
+      intent === 'enable'
+        ? computeCascadeEnable(filename, getPackageIndex(), getForwardDeps())
+        : computeCascadeDisable(filename, getPackageIndex(), getForwardDeps(), getReverseDeps())
 
-    const oldDiskPath = join(addonDir, newEnabled ? filename + '.disabled' : filename)
-    const newDiskPath = join(addonDir, newEnabled ? filename : filename + '.disabled')
-
-    suppressPath(oldDiskPath)
-    suppressPath(newDiskPath)
     try {
-      await rename(oldDiskPath, newDiskPath)
+      await applyStorageState(filename, target)
     } catch (err) {
-      throw new Error(`Failed to ${newEnabled ? 'enable' : 'disable'} package: ${err.message}`)
+      throw new Error(`Failed to ${intent} package: ${err.message}`)
     }
-    setPackageEnabled(filename, newEnabled)
 
     for (const depFilename of cascadeSet) {
-      const oldDepPath = join(addonDir, newEnabled ? depFilename + '.disabled' : depFilename)
-      const newDepPath = join(addonDir, newEnabled ? depFilename : depFilename + '.disabled')
-      suppressPath(oldDepPath)
-      suppressPath(newDepPath)
+      const depPkg = getPackageIndex().get(depFilename)
+      if (!depPkg) continue
+      const depTarget = nextStorageStateForIntent({ current: depPkg.storage_state, intent, disableTarget })
+      if (!depTarget) continue
       try {
-        await rename(oldDepPath, newDepPath)
-      } catch {
-        continue
+        await applyStorageState(depFilename, depTarget)
+      } catch (err) {
+        console.warn(`Cascade ${intent} failed for ${depFilename}:`, err.message)
       }
-      setPackageEnabled(depFilename, newEnabled)
     }
 
-    patchEnabled([filename, ...cascadeSet], newEnabled)
-    out.push({ ok: true, isEnabled: newEnabled, cascadeCount: cascadeSet.size })
+    out.push({
+      ok: true,
+      isEnabled: target.storageState === 'enabled',
+      storageState: target.storageState,
+      cascadeCount: cascadeSet.size,
+    })
   }
 
   notify('packages:updated')
+  notify('contents:updated')
   return filenames.length === 1 ? out[0] : { ok: true, results: out }
 }
 
@@ -191,7 +222,6 @@ export function registerPackageHandlers() {
   ipcMain.handle('packages:uninstall', async (_, filenameOrFilenames) => {
     const vamDir = getSetting('vam_dir')
     if (!vamDir) throw new Error('VaM directory not configured')
-    const addonDir = join(vamDir, ADDON_PACKAGES)
     const filenames = normalizeFilenameArgs(filenameOrFilenames)
     const results = []
     for (const filename of filenames) {
@@ -224,14 +254,7 @@ export function registerPackageHandlers() {
       })
       const toDelete = [filename, ...filteredRemovable]
       for (const fn of toDelete) {
-        suppressPath(join(addonDir, fn))
-        suppressPath(join(addonDir, fn + '.disabled'))
-        try {
-          await unlink(join(addonDir, fn))
-        } catch {}
-        try {
-          await unlink(join(addonDir, fn + '.disabled'))
-        } catch {}
+        await unlinkPackagePhysicalAndAliases(getPackageIndex().get(fn), fn)
         deletePackage(fn)
       }
       buildFromDb()
@@ -262,29 +285,24 @@ export function registerPackageHandlers() {
   })
 
   ipcMain.handle('packages:toggle-enabled', async (_, filenameOrFilenames) => {
-    return await applyEnabledChange(normalizeFilenameArgs(filenameOrFilenames), (pkg) => !pkg.is_enabled)
+    return await applyStorageStateChange(normalizeFilenameArgs(filenameOrFilenames), (pkg) =>
+      pkg.storage_state === 'enabled' ? 'disable' : 'enable',
+    )
   })
 
+  // Explicit-target setter (used by labels' "enable matching" bulk action). Maps
+  // boolean → intent so the same nextStorageStateForIntent matrix decides per
+  // package whether it's a no-op (already at that end of the spectrum) or a
+  // real move (e.g. enabling an offloaded pkg moves it back to main).
   ipcMain.handle('packages:set-enabled', async (_, { filenames, enabled }) => {
-    const fnames = normalizeFilenameArgs(filenames)
-    const target = !!enabled
-    return await applyEnabledChange(fnames, () => target)
+    const intent = enabled ? 'enable' : 'disable'
+    return await applyStorageStateChange(normalizeFilenameArgs(filenames), () => intent)
   })
 
   ipcMain.handle('packages:force-remove', async (_, filenameOrFilenames) => {
-    const vamDir = getSetting('vam_dir')
-    if (!vamDir) throw new Error('VaM directory not configured')
-    const addonDir = join(vamDir, ADDON_PACKAGES)
     const filenames = normalizeFilenameArgs(filenameOrFilenames)
     for (const filename of filenames) {
-      suppressPath(join(addonDir, filename))
-      suppressPath(join(addonDir, filename + '.disabled'))
-      try {
-        await unlink(join(addonDir, filename))
-      } catch {}
-      try {
-        await unlink(join(addonDir, filename + '.disabled'))
-      } catch {}
+      await unlinkPackagePhysicalAndAliases(getPackageIndex().get(filename), filename)
       deletePackage(filename)
     }
     buildFromDb()
@@ -326,10 +344,6 @@ export function registerPackageHandlers() {
   })
 
   ipcMain.handle('packages:remove-orphans', async () => {
-    const vamDir = getSetting('vam_dir')
-    if (!vamDir) throw new Error('VaM directory not configured')
-    const addonDir = join(vamDir, ADDON_PACKAGES)
-
     const orphans = getOrphanSet()
     if (orphans.size === 0) return { ok: true, count: 0, freedBytes: 0 }
 
@@ -337,14 +351,7 @@ export function registerPackageHandlers() {
     for (const fn of orphans) {
       const pkg = getPackageIndex().get(fn)
       if (pkg) freedBytes += pkg.size_bytes
-      suppressPath(join(addonDir, fn))
-      suppressPath(join(addonDir, fn + '.disabled'))
-      try {
-        await unlink(join(addonDir, fn))
-      } catch {}
-      try {
-        await unlink(join(addonDir, fn + '.disabled'))
-      } catch {}
+      await unlinkPackagePhysicalAndAliases(pkg, fn)
       deletePackage(fn)
     }
 
@@ -367,18 +374,11 @@ export function registerPackageHandlers() {
   })
 
   ipcMain.handle('packages:file-list', async (_, filename) => {
-    const vamDir = getSetting('vam_dir')
-    if (!vamDir) throw new Error('VaM directory not configured')
-    const addonDir = join(vamDir, ADDON_PACKAGES)
-
-    let varPath = join(addonDir, filename)
-    try {
-      await access(varPath)
-    } catch {
-      varPath = join(addonDir, filename + '.disabled')
-      await access(varPath)
-    }
-
+    const pkg = getPackageIndex().get(filename)
+    if (!pkg) throw new Error(`Package not found: ${filename}`)
+    const varPath = pkgVarPath(pkg)
+    if (!varPath) throw new Error('Library directory not configured')
+    await access(varPath)
     const { fileList } = await readVar(varPath)
     return { fileList, varPath }
   })
@@ -401,9 +401,11 @@ export function registerPackageHandlers() {
   ipcMain.handle('packages:redownload', async (_, filename) => {
     const vamDir = getSetting('vam_dir')
     if (!vamDir) throw new Error('VaM directory not configured')
-    const addonDir = join(vamDir, ADDON_PACKAGES)
     const pkg = getPackageIndex().get(filename)
     if (!pkg) throw new Error('Package not found')
+    const finalPath = pkgVarPath(pkg)
+    if (!finalPath) throw new Error('Library directory not configured for this package')
+    const targetDir = dirname(finalPath)
 
     let downloadUrl = null
     let hubResourceId = pkg.hub_resource_id
@@ -436,7 +438,7 @@ export function registerPackageHandlers() {
 
     if (!downloadUrl) throw new Error('Could not resolve download URL from Hub')
 
-    const tempPath = join(addonDir, filename + '.redownload.tmp')
+    const tempPath = join(targetDir, filename + '.redownload.tmp')
 
     try {
       const hubSession = session.fromPartition('persist:hub')
@@ -464,23 +466,18 @@ export function registerPackageHandlers() {
       // Verify the newly downloaded file
       await verifyPackageFull(tempPath)
 
-      // Replace the old file
-      const isDisabled = !pkg.is_enabled
-      const finalPath = join(addonDir, isDisabled ? filename + '.disabled' : filename)
-      suppressPath(finalPath)
-      // Remove both enabled and disabled variants before replacing
-      try {
-        await unlink(join(addonDir, filename))
-      } catch {}
-      try {
-        await unlink(join(addonDir, filename + '.disabled'))
-      } catch {}
+      // Replace the old file (unlink indexed path and any stray main-dir aliases, then write temp → final)
+      await unlinkPackagePhysicalAndAliases(pkg, filename)
       await rename(tempPath, finalPath)
 
       // Clear corrupted flag and re-scan the package
       setPackageCorrupted(filename, false)
       try {
-        await scanAndUpsert(finalPath, { isDirect: pkg.is_direct ? 1 : 0, isEnabled: !isDisabled })
+        await scanAndUpsert(finalPath, {
+          isDirect: pkg.is_direct ? 1 : 0,
+          storageState: pkg.storage_state,
+          libraryDirId: pkg.library_dir_id ?? null,
+        })
       } catch (err) {
         console.warn(`Post-redownload rescan failed for ${filename}:`, err.message)
       }

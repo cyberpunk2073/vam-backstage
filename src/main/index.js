@@ -12,6 +12,7 @@ import { resolvePackageThumbnails } from './thumb-resolver.js'
 import { initNotify, notify } from './notify.js'
 import { initLogForward, forwardLogToRenderer, flushBufferedLogs } from './log-forward.js'
 import { runScan } from './scanner/index.js'
+import { refreshLibraryDirs } from './library-dirs.js'
 import { setPendingStartupUnreadable } from './ipc/scanner.js'
 import { fetchPackagesJson, loadPackagesJsonFromCache } from './hub/packages-json.js'
 import { scanHubDetails } from './hub/scanner.js'
@@ -209,6 +210,8 @@ function initBackend() {
   initLogForward(() => mainWindow)
   setupHubConsent()
   initDownloadManager()
+
+  refreshLibraryDirs()
 
   // Load existing data immediately so the UI has something to show
   const vamDir = getSetting('vam_dir')

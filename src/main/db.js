@@ -4,7 +4,7 @@ import { app } from 'electron'
 import { join } from 'path'
 import { LOCAL_PACKAGE_FILENAME } from '../shared/local-package.js'
 
-const SCHEMA_VERSION = 20
+const SCHEMA_VERSION = 21
 
 let db
 
@@ -67,6 +67,7 @@ function migrate() {
     if (current < 18) applyV18()
     if (current < 19) applyV19()
     if (current < 20) applyV20()
+    if (current < 21) applyV21()
   }
 
   ensureLocalPackage()
@@ -141,24 +142,79 @@ function applyV20() {
 }
 
 /**
+ * v21 — offload library directories.
+ *  - `library_dirs` table (aux only; main is implicit, NULL pointer in packages).
+ *  - `packages.library_dir_id` (NULL = main).
+ *  - `packages.storage_state` TEXT replaces `is_enabled` (backfilled, then dropped).
+ *  - On-disk suffix follows storage_state in main; aux dirs are always suffix-less
+ *    (any stray `.disabled` in aux is normalized to bare `.var` on first scan).
+ *  - `needs_rescan = '1'` so storage_state is reconciled against disk on startup.
+ *
+ * Order matters relative to ensureLocalPackage(): migrate() runs all migrations
+ * before ensureLocalPackage() so the local sentinel insert below sees the new
+ * column shape.
+ */
+function applyV21() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS library_dirs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      path TEXT UNIQUE NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+  `)
+  const cols = db
+    .prepare(`PRAGMA table_info(packages)`)
+    .all()
+    .map((c) => c.name)
+  if (!cols.includes('library_dir_id')) {
+    db.exec(
+      'ALTER TABLE packages ADD COLUMN library_dir_id INTEGER NULL REFERENCES library_dirs(id) ON DELETE RESTRICT',
+    )
+  }
+  if (!cols.includes('storage_state')) {
+    db.exec(`ALTER TABLE packages ADD COLUMN storage_state TEXT NOT NULL DEFAULT 'enabled'`)
+  }
+  // Backfill while is_enabled still exists. Idempotent: if a previous run added storage_state
+  // but crashed before dropping is_enabled, this rewrites storage_state from is_enabled again,
+  // which is correct because external state changes are reconciled by the post-migration rescan.
+  if (cols.includes('is_enabled')) {
+    db.prepare(`UPDATE packages SET storage_state = CASE WHEN is_enabled = 1 THEN 'enabled' ELSE 'disabled' END`).run()
+    try {
+      db.exec('ALTER TABLE packages DROP COLUMN is_enabled')
+    } catch (err) {
+      console.warn('Could not drop is_enabled column:', err.message)
+    }
+  }
+  db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('needs_rescan', '1')`).run()
+}
+
+/**
  * Ensure the synthetic "local content" package row exists. Loose files under
  * `vamDir/Saves` and `vamDir/Custom` are stored as `contents` rows that point
  * at this sentinel so the foreign key holds without nullable columns. The
  * sentinel is filtered out of every user-visible Library iteration in
- * `store.js`. Idempotent — safe to call on every open.
+ * `store.js`. Idempotent — safe to call on every open. Lives in main
+ * (`library_dir_id` NULL) with `storage_state='enabled'` so the compat
+ * `isEnabled` derived field stays true.
  */
 export function ensureLocalPackage() {
   db.prepare(
     `INSERT OR IGNORE INTO packages (
       filename, creator, package_name, version, type, title, description, license,
-      size_bytes, file_mtime, is_direct, is_enabled, dep_refs, first_seen_at
-    ) VALUES (?, '', '', '', NULL, 'Local content', NULL, NULL, 0, 0, 1, 1, '[]', unixepoch())`,
+      size_bytes, file_mtime, is_direct, storage_state, library_dir_id, dep_refs, first_seen_at
+    ) VALUES (?, '', '', '', NULL, 'Local content', NULL, NULL, 0, 0, 1, 'enabled', NULL, '[]', unixepoch())`,
   ).run(LOCAL_PACKAGE_FILENAME)
 }
 
-/** Full schema as of LEGACY_SCHEMA_CUTOFF — new installs skip incremental migrations. */
+/** Full schema as of current SCHEMA_VERSION — new installs skip incremental migrations. */
 function createSchema() {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS library_dirs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      path TEXT UNIQUE NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
     CREATE TABLE IF NOT EXISTS packages (
       filename TEXT PRIMARY KEY,
       creator TEXT NOT NULL,
@@ -171,7 +227,8 @@ function createSchema() {
       size_bytes INTEGER NOT NULL,
       file_mtime REAL NOT NULL,
       is_direct INTEGER NOT NULL DEFAULT 0,
-      is_enabled INTEGER NOT NULL DEFAULT 1,
+      storage_state TEXT NOT NULL DEFAULT 'enabled',
+      library_dir_id INTEGER NULL REFERENCES library_dirs(id) ON DELETE RESTRICT,
       hub_resource_id TEXT,
       dep_refs TEXT NOT NULL DEFAULT '[]',
       first_seen_at INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -283,13 +340,15 @@ function stmt(sql) {
 // Packages
 export function upsertPackage(pkg) {
   stmt(`
-    INSERT INTO packages (filename, creator, package_name, version, type, title, description, license, size_bytes, file_mtime, is_direct, is_enabled, dep_refs, scanned_at)
-    VALUES (@filename, @creator, @packageName, @version, @type, @title, @description, @license, @sizeBytes, @fileMtime, @isDirect, @isEnabled, @depRefs, unixepoch())
+    INSERT INTO packages (filename, creator, package_name, version, type, title, description, license, size_bytes, file_mtime, is_direct, storage_state, library_dir_id, dep_refs, scanned_at)
+    VALUES (@filename, @creator, @packageName, @version, @type, @title, @description, @license, @sizeBytes, @fileMtime, @isDirect, @storageState, @libraryDirId, @depRefs, unixepoch())
     ON CONFLICT(filename) DO UPDATE SET
       creator = excluded.creator, package_name = excluded.package_name, version = excluded.version,
       type = excluded.type, title = excluded.title, description = excluded.description,
       license = excluded.license, size_bytes = excluded.size_bytes, file_mtime = excluded.file_mtime,
-      is_enabled = excluded.is_enabled, dep_refs = excluded.dep_refs, scanned_at = excluded.scanned_at
+      storage_state = excluded.storage_state,
+      library_dir_id = excluded.library_dir_id,
+      dep_refs = excluded.dep_refs, scanned_at = excluded.scanned_at
   `).run(pkg)
 }
 
@@ -319,12 +378,56 @@ export function setPackageTypeFromHub(filename, hubType) {
   stmt('UPDATE packages SET type = ? WHERE filename = ?').run(t, filename)
 }
 
-export function setPackageEnabled(filename, isEnabled) {
-  stmt('UPDATE packages SET is_enabled = ? WHERE filename = ?').run(isEnabled ? 1 : 0, filename)
+/**
+ * Update storage_state and library_dir_id for a package. The on-disk suffix is implied by
+ * storage_state (`.disabled` only when storage_state==='disabled', and only ever in main).
+ */
+export function setStorageState(filename, storageState, libraryDirId) {
+  stmt('UPDATE packages SET storage_state = ?, library_dir_id = ? WHERE filename = ?').run(
+    storageState,
+    libraryDirId ?? null,
+    filename,
+  )
 }
 
 export function getPackageCacheInfo(filename) {
-  return stmt('SELECT file_mtime, size_bytes, is_enabled FROM packages WHERE filename = ?').get(filename)
+  return stmt('SELECT file_mtime, size_bytes, storage_state, library_dir_id FROM packages WHERE filename = ?').get(
+    filename,
+  )
+}
+
+// Library directories (aux only — main is implicit via vam_dir setting + NULL pointer)
+
+export function listLibraryDirs() {
+  return stmt('SELECT id, path, created_at FROM library_dirs ORDER BY created_at ASC').all()
+}
+
+export function getLibraryDir(id) {
+  return stmt('SELECT id, path, created_at FROM library_dirs WHERE id = ?').get(id)
+}
+
+export function getLibraryDirByPath(path) {
+  return stmt('SELECT id, path, created_at FROM library_dirs WHERE path = ?').get(path)
+}
+
+export function insertLibraryDir(path) {
+  const info = stmt('INSERT INTO library_dirs (path) VALUES (?)').run(path)
+  return info.lastInsertRowid
+}
+
+export function deleteLibraryDir(id) {
+  stmt('DELETE FROM library_dirs WHERE id = ?').run(id)
+}
+
+export function countPackagesInLibraryDir(id) {
+  if (id == null) {
+    return stmt(
+      'SELECT COUNT(*) AS n, COALESCE(SUM(size_bytes), 0) AS bytes FROM packages WHERE library_dir_id IS NULL',
+    ).get()
+  }
+  return stmt('SELECT COUNT(*) AS n, COALESCE(SUM(size_bytes), 0) AS bytes FROM packages WHERE library_dir_id = ?').get(
+    id,
+  )
 }
 
 export function getAllPackages() {
@@ -593,10 +696,8 @@ export function deleteDownload(id) {
 }
 
 // Bulk operations
-export function getAllDbFilenames() {
-  return stmt('SELECT filename FROM packages')
-    .all()
-    .map((r) => r.filename)
+export function getAllDbFilenamesWithDir() {
+  return stmt('SELECT filename, library_dir_id FROM packages').all()
 }
 
 // Thumbnail resolution.

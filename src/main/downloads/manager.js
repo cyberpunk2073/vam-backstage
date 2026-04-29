@@ -1,7 +1,6 @@
 import { createWriteStream } from 'fs'
 import { stat as fsStat, rename, unlink, mkdir } from 'fs/promises'
 import { join, dirname } from 'path'
-import { ADDON_PACKAGES } from '../../shared/paths.js'
 import { HUB_HTTP_USER_AGENT } from '../../shared/hub-http.js'
 import { session } from 'electron'
 import yauzl from 'yauzl'
@@ -25,7 +24,6 @@ import {
   setHubResourceId,
   setHubUserId,
   setPackageHubMeta,
-  setPackageEnabled,
 } from '../db.js'
 import { getResourceDetail, getResourceDetailByName, getCachedDetail, findPackages } from '../hub/client.js'
 import { notify } from '../notify.js'
@@ -34,9 +32,9 @@ import { computeCascadeEnable, parseDepRef, isFlexibleRef } from '../scanner/gra
 import {
   buildFromDb,
   buildGraphOnly,
-  patchEnabled,
   setPrefsMap,
   getForwardDeps,
+  getReverseDeps,
   getPackageIndex,
   getTransitiveMissingRefs,
   findLocalByFilename,
@@ -44,6 +42,8 @@ import {
 import { readAllPrefs, hidePackageContent } from '../vam-prefs.js'
 import { suppressPrefsStem, unsuppressPrefsStem, suppressPath } from '../watcher.js'
 import { resolvePackageThumbnails } from '../thumb-resolver.js'
+import { applyStorageState, computeInstallTarget, parseDisableBehavior } from '../storage-state.js'
+import { getMainLibraryDirPath } from '../library-dirs.js'
 
 const MAX_CONCURRENT = 5
 const PROGRESS_INTERVAL_MS = 250
@@ -710,7 +710,14 @@ async function startDownload(entry) {
     return
   }
 
-  const addonDir = join(vamDir, ADDON_PACKAGES)
+  const addonDir = getMainLibraryDirPath()
+  if (!addonDir) {
+    updateDownloadStatus(id, 'failed', { error: 'Main library directory not configured' })
+    emitFailed(entry, 'Main library directory not configured')
+    emitUpdated()
+    processQueue()
+    return
+  }
   const finalPath = join(addonDir, package_ref)
   const tempPath = finalPath + '.tmp'
 
@@ -925,7 +932,8 @@ async function postDownloadIntegrate(filename, fullPath, isDirect, hubResourceId
 
     const result = await scanAndUpsert(fullPath, {
       isDirect: isDirect ? 1 : 0,
-      isEnabled: true,
+      storageState: 'enabled',
+      libraryDirId: null,
       typeOverride: hubType || undefined,
     })
     if (!result) return
@@ -959,28 +967,38 @@ async function postDownloadIntegrate(filename, fullPath, isDirect, hubResourceId
     }
 
     // Build graph only (skip expensive aggregates) — we need packageIndex + deps
-    // for cascade-enable and auto-queue-deps, but full aggregates come at the end.
+    // for cascade-enable, target-state lookup, and auto-queue-deps; full aggregates come at the end.
     buildGraphOnly()
 
-    // Re-enable any disabled deps that this newly installed package needs
-    const vamDirForCascade = vamDir || getSetting('vam_dir')
-    if (vamDirForCascade) {
+    // Plan §"Dep install target": land at max(storage_state) of installed dependents.
+    // The file is currently 'enabled' in main; relocate iff a less-active state satisfies all dependents.
+    let landingState = 'enabled'
+    try {
+      const dependents = getReverseDeps().get(filename) || null
+      const parsed = parseDisableBehavior(getSetting('disable_behavior'))
+      const target = computeInstallTarget({
+        dependents,
+        packageIndex: getPackageIndex(),
+        disableBehaviorTargetId: parsed.kind === 'move-to' ? parsed.auxDirId : null,
+      })
+      if (target) {
+        await applyStorageState(filename, target)
+        landingState = target.storageState
+      }
+    } catch (err) {
+      console.warn(`Install-target relocation failed for ${filename}:`, err.message)
+    }
+
+    // Cascade-enable forward deps only when the new package itself ends up active.
+    // An offloaded/disabled new package doesn't require its forward deps to be enabled.
+    if (landingState === 'enabled') {
       const cascadeEnable = computeCascadeEnable(filename, getPackageIndex(), getForwardDeps())
-      if (cascadeEnable.size > 0) {
-        const addonDir = join(vamDirForCascade, ADDON_PACKAGES)
-        for (const depFn of cascadeEnable) {
-          const oldPath = join(addonDir, depFn + '.disabled')
-          const newPath = join(addonDir, depFn)
-          suppressPath(oldPath)
-          suppressPath(newPath)
-          try {
-            await rename(oldPath, newPath)
-          } catch {
-            continue
-          }
-          setPackageEnabled(depFn, true)
+      for (const depFn of cascadeEnable) {
+        try {
+          await applyStorageState(depFn, { storageState: 'enabled', libraryDirId: null })
+        } catch (err) {
+          console.warn(`Cascade-enable after install failed for ${depFn}:`, err.message)
         }
-        patchEnabled([...cascadeEnable], true)
       }
     }
 

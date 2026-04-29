@@ -4,6 +4,7 @@ import {
   Grid2x2,
   List,
   AlertTriangle,
+  Archive,
   Eye,
   EyeOff,
   Plus,
@@ -264,8 +265,7 @@ export default function LibraryView({ onNavigate, navContext }) {
         return p.type && typeSet.has(p.type)
       })
     }
-    if (enabledFilter === 'enabled') items = items.filter((p) => p.isEnabled)
-    else if (enabledFilter === 'disabled') items = items.filter((p) => !p.isEnabled)
+    if (enabledFilter !== 'all') items = items.filter((p) => p.storageState === enabledFilter)
     items = items.filter((p) => packageMatchesSelectedTags(p, selectedTags))
     items = items.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
     let direct = 0,
@@ -294,8 +294,7 @@ export default function LibraryView({ onNavigate, navContext }) {
         return p.type && typeSet.has(p.type)
       })
     }
-    if (enabledFilter === 'enabled') items = items.filter((p) => p.isEnabled)
-    else if (enabledFilter === 'disabled') items = items.filter((p) => !p.isEnabled)
+    if (enabledFilter !== 'all') items = items.filter((p) => p.storageState === enabledFilter)
     items = items.filter((p) => packageMatchesSelectedTags(p, selectedTags))
     items = items.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
     let n = 0
@@ -322,8 +321,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     else if (statusFilter === 'updates') items = items.filter((p) => updateCheckResults?.[p.filename])
     else if (statusFilter === 'local') items = items.filter((p) => p.isLocalOnly)
     else if (statusFilter === 'missing') items = []
-    if (enabledFilter === 'enabled') items = items.filter((p) => p.isEnabled)
-    else if (enabledFilter === 'disabled') items = items.filter((p) => !p.isEnabled)
+    if (enabledFilter !== 'all') items = items.filter((p) => p.storageState === enabledFilter)
     items = items.filter((p) => packageMatchesSelectedTags(p, selectedTags))
     items = items.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
     const counts = { _total: items.length }
@@ -343,8 +341,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     else if (statusFilter === 'orphan') result = result.filter((p) => p.isOrphan)
     else if (statusFilter === 'updates') result = result.filter((p) => updateCheckResults?.[p.filename])
     else if (statusFilter === 'local') result = result.filter((p) => p.isLocalOnly)
-    if (enabledFilter === 'enabled') result = result.filter((p) => p.isEnabled)
-    else if (enabledFilter === 'disabled') result = result.filter((p) => !p.isEnabled)
+    if (enabledFilter !== 'all') result = result.filter((p) => p.storageState === enabledFilter)
     if (selectedTypes.length > 0) {
       const typeSet = new Set(selectedTypes)
       result = result.filter((p) => {
@@ -473,6 +470,7 @@ export default function LibraryView({ onNavigate, navContext }) {
           { value: 'all', label: 'All' },
           { value: 'enabled', label: 'Enabled' },
           { value: 'disabled', label: 'Disabled' },
+          { value: 'offloaded', label: 'Offloaded' },
         ],
       },
       {
@@ -1833,7 +1831,10 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                   <span className={cn(THUMB_OVERLAY_CHIP, 'bg-accent-blue/20 text-accent-blue')}>DEP</span>
                 )}
                 {!pkg.isEnabled && (
-                  <span className={cn(THUMB_OVERLAY_CHIP, 'bg-warning/20 text-warning')}>DISABLED</span>
+                  <span className={cn(THUMB_OVERLAY_CHIP, 'bg-warning/20 text-warning flex items-center gap-1')}>
+                    {pkg.storageState === 'offloaded' ? <Archive size={10} /> : <EyeOff size={10} />}
+                    {pkg.storageState === 'offloaded' ? 'OFFLOADED' : 'DISABLED'}
+                  </span>
                 )}
                 {pkg.isCorrupted && <span className={cn(THUMB_OVERLAY_CHIP, 'bg-error/20 text-error')}>CORRUPTED</span>}
                 {pkg.isLocalOnly && (
@@ -2130,7 +2131,12 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
           </div>
           {hasContent && !pkg.isEnabled && (
             <p className="text-[10px] text-warning mb-2 flex items-center gap-1">
-              <EyeOff size={10} className="shrink-0" /> All content hidden in gallery while disabled
+              {pkg.storageState === 'offloaded' ? (
+                <Archive size={10} className="shrink-0" />
+              ) : (
+                <EyeOff size={10} className="shrink-0" />
+              )}
+              All content hidden in gallery while {pkg.storageState === 'offloaded' ? 'offloaded' : 'disabled'}
             </p>
           )}
           {hasContent && (

@@ -100,6 +100,12 @@ const api = {
     set: (key, value) => ipcRenderer.invoke('settings:set', key, value),
     getDatabasePath: () => ipcRenderer.invoke('settings:getDatabasePath'),
   },
+  libraryDirs: {
+    list: () => ipcRenderer.invoke('library-dirs:list'),
+    browse: () => ipcRenderer.invoke('library-dirs:browse'),
+    add: (path) => ipcRenderer.invoke('library-dirs:add', path),
+    remove: (id) => ipcRenderer.invoke('library-dirs:remove', id),
+  },
   dev: {
     isDev: () => ipcRenderer.invoke('dev:is-dev'),
     nukeDatabase: () => ipcRenderer.invoke('dev:nuke-database'),

@@ -36,12 +36,16 @@ export function personAtomIdsJsonFromBuffer(buf, packageFilename = null) {
  * Read a .var file, classify its contents, and upsert the package + contents into the DB.
  * @param {string} fullPath - absolute path to the .var file on disk
  * @param {object} [opts]
- * @param {boolean} [opts.isEnabled=true]
+ * @param {'enabled'|'disabled'|'offloaded'} [opts.storageState='enabled']
+ * @param {number|null} [opts.libraryDirId=null] - NULL for main, aux dir id otherwise
  * @param {number}  [opts.isDirect=0] - 0 or 1
  * @param {string}  [opts.typeOverride] - if set, used instead of derived type
  * @returns {Promise<{ filename, contentItems, meta, size } | null>} null if filename unparseable
  */
-export async function scanAndUpsert(fullPath, { isEnabled = true, isDirect = 0, typeOverride } = {}) {
+export async function scanAndUpsert(
+  fullPath,
+  { storageState = 'enabled', libraryDirId = null, isDirect = 0, typeOverride } = {},
+) {
   const filename = canonicalVarFilename(basename(fullPath))
   const s = await stat(fullPath)
   const { meta, contentItems, extracts } = await readVar(fullPath, { extractSceneJsons: true })
@@ -63,7 +67,8 @@ export async function scanAndUpsert(fullPath, { isEnabled = true, isDirect = 0, 
     sizeBytes: s.size,
     fileMtime: s.mtimeMs / 1000,
     isDirect: isDirect ? 1 : 0,
-    isEnabled: isEnabled ? 1 : 0,
+    storageState,
+    libraryDirId: libraryDirId == null ? null : libraryDirId,
     depRefs: JSON.stringify(depRefs),
   })
 

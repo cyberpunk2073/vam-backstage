@@ -13,15 +13,10 @@ import { existsSync } from 'fs'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
 import JSON5 from 'json5'
-import { ADDON_PACKAGES } from '../../shared/paths.js'
 import { isLocalPackage } from '../../shared/local-package.js'
 import { extractFiles } from '../scanner/var-reader.js'
 import { getPackageIndex } from '../store.js'
-
-function resolveVarPath(addonDir, filename) {
-  const pkg = getPackageIndex().get(filename)
-  return join(addonDir, !pkg || pkg.is_enabled ? filename : filename + '.disabled')
-}
+import { pkgVarPath } from '../library-dirs.js'
 
 function thumbPathFor(internalPath) {
   return internalPath.replace(/\.json$/i, '.jpg')
@@ -53,8 +48,9 @@ export async function readScene({ vamDir, packageFilename, internalPath }) {
   const thumbPath = thumbPathFor(internalPath)
 
   if (packageFilename && !isLocalPackage(packageFilename)) {
-    const addonDir = join(vamDir, ADDON_PACKAGES)
-    const varPath = resolveVarPath(addonDir, packageFilename)
+    const pkg = getPackageIndex().get(packageFilename)
+    const varPath = pkgVarPath(pkg)
+    if (!varPath) throw new Error(`Package not found or library dir missing: ${packageFilename}`)
     const extracted = await extractFiles(varPath, [internalPath, thumbPath])
     const sceneBuf = extracted.get(internalPath)
     if (!sceneBuf) throw new Error(`Scene JSON not found in ${packageFilename}: ${internalPath}`)

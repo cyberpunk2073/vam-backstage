@@ -1,9 +1,8 @@
-import { readdir, stat } from 'fs/promises'
-import { join } from 'path'
+import { stat } from 'fs/promises'
 import { crc32 } from 'zlib'
 import yauzl from 'yauzl'
-import { ADDON_PACKAGES } from '../../shared/paths.js'
-import { isVarFilename, canonicalVarFilename } from './var-reader.js'
+import { pkgVarPath } from '../library-dirs.js'
+import { getPackageIndex } from '../store.js'
 
 /**
  * Full integrity verification of a .var ZIP archive.
@@ -54,19 +53,30 @@ export async function verifyPackageFull(varPath) {
 }
 
 /**
- * Walk AddonPackages for all .var files and verify each one.
- * @param {string} vamDir
+ * Verify every indexed package, in whatever library dir it currently lives.
+ * Iterates the in-memory package index rather than re-walking the filesystem,
+ * so the scanner's collision/state policy is the single source of truth for
+ * "which physical file represents this canonical filename".
+ *
+ * @param {string} _vamDir unused (kept for backward-compatible IPC signature)
  * @param {(progress: { step: number, total: number, filename: string, status: string }) => void} onProgress
  * @returns {Promise<{ checked: number, corrupted: number, corruptedFiles: string[] }>}
  */
-export async function runIntegrityCheck(vamDir, onProgress = () => {}) {
-  const addonDir = join(vamDir, ADDON_PACKAGES)
-  const varFiles = await walkForVars(addonDir)
-  const corruptedFiles = []
+export async function runIntegrityCheck(_vamDir, onProgress = () => {}) {
+  const targets = []
+  for (const pkg of getPackageIndex().values()) {
+    const fullPath = pkgVarPath(pkg)
+    if (!fullPath) continue
+    try {
+      await stat(fullPath)
+      targets.push({ filename: pkg.filename, fullPath })
+    } catch {}
+  }
 
-  for (let i = 0; i < varFiles.length; i++) {
-    const { filename, fullPath } = varFiles[i]
-    onProgress({ step: i + 1, total: varFiles.length, filename, status: 'checking' })
+  const corruptedFiles = []
+  for (let i = 0; i < targets.length; i++) {
+    const { filename, fullPath } = targets[i]
+    onProgress({ step: i + 1, total: targets.length, filename, status: 'checking' })
     try {
       await verifyPackageFull(fullPath)
     } catch (err) {
@@ -75,39 +85,6 @@ export async function runIntegrityCheck(vamDir, onProgress = () => {}) {
     }
   }
 
-  onProgress({
-    step: varFiles.length,
-    total: varFiles.length,
-    filename: '',
-    status: 'done',
-  })
-
-  return { checked: varFiles.length, corrupted: corruptedFiles.length, corruptedFiles }
-}
-
-async function walkForVars(dir) {
-  const results = []
-  try {
-    const entries = await readdir(dir, { withFileTypes: true })
-    const localFiles = new Map()
-    for (const entry of entries) {
-      const fullPath = join(dir, entry.name)
-      if (entry.isDirectory()) {
-        results.push(...(await walkForVars(fullPath)))
-      } else if (entry.isFile() && isVarFilename(entry.name)) {
-        const isDisabled = /\.disabled$/i.test(entry.name)
-        const canonical = isDisabled ? canonicalVarFilename(entry.name) : entry.name
-        const existing = localFiles.get(canonical)
-        if (existing && !existing.isDisabled) continue
-        localFiles.set(canonical, { fullPath, isDisabled })
-      }
-    }
-    for (const [canonical, { fullPath }] of localFiles) {
-      try {
-        await stat(fullPath)
-        results.push({ filename: canonical, fullPath })
-      } catch {}
-    }
-  } catch {}
-  return results
+  onProgress({ step: targets.length, total: targets.length, filename: '', status: 'done' })
+  return { checked: targets.length, corrupted: corruptedFiles.length, corruptedFiles }
 }

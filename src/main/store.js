@@ -192,7 +192,9 @@ export function buildFromDb({ skipGraph = false } = {}) {
       packageHubDisplayName: pkg?.hub_display_name ?? null,
       hubTags: pkg?.hub_tags ?? null,
       isDirect: !!pkg?.is_direct,
-      isEnabled: !!pkg?.is_enabled,
+      isEnabled: pkg?.storage_state === 'enabled',
+      storageState: pkg?.storage_state ?? 'enabled',
+      libraryDirId: pkg?.library_dir_id ?? null,
       first_seen_at: pkg?.first_seen_at ?? 0,
     }
   })
@@ -538,6 +540,13 @@ export function updatePref(packageFilename, internalPath, field, value) {
  * filtering / sorting client-side off `useLibraryStore.packages`, so the
  * `packages:list` IPC still forwards filters from the preload bridge; they are
  * ignored here because the renderer filters client-side.
+ *
+ * Each enriched row includes `storageState` and `libraryDirId` plus the legacy
+ * `isEnabled` derived field so unmigrated renderer call sites
+ * (LibraryPackageContextMenu, ContentItemContextMenu, ContentView, parts of
+ * LibraryView) keep working under the compat shim. The Library "enabled
+ * filter" axis (Enabled / Disabled / Offloaded) is implemented in the renderer
+ * against `pkg.storageState`.
  */
 export function getFilteredPackages() {
   return userPackageValues().map((p) => enrichPackageSummary(p))
@@ -574,7 +583,9 @@ function enrichPackageSummary(pkg) {
     sizeBytes: pkg.size_bytes,
     removableSize,
     isDirect: !!pkg.is_direct,
-    isEnabled: !!pkg.is_enabled,
+    isEnabled: pkg.storage_state === 'enabled',
+    storageState: pkg.storage_state,
+    libraryDirId: pkg.library_dir_id ?? null,
     hubResourceId: pkg.hub_resource_id,
     hubUserId: pkg.hub_user_id,
     hubTags: pkg.hub_tags || null,
@@ -613,7 +624,8 @@ function buildDepTree(rootFilename, visited = new Set()) {
       type: depPkg ? effectivePackageType(depPkg) : undefined,
       sizeBytes: depPkg?.size_bytes,
       isDirect: depPkg ? !!depPkg.is_direct : false,
-      isEnabled: depPkg ? !!depPkg.is_enabled : true,
+      isEnabled: depPkg ? depPkg.storage_state === 'enabled' : true,
+      storageState: depPkg?.storage_state ?? 'enabled',
       children,
     }
   })
@@ -664,12 +676,13 @@ export function getPackageDetail(filename) {
       }
     })
 
-  const cascadeDisableDeps = pkg.is_enabled
-    ? [...computeCascadeDisable(filename, packageIndex, forwardDeps, reverseDeps)].map((f) => {
-        const p = packageIndex.get(f)
-        return { filename: f, name: p?.package_name?.split('.').pop() || f }
-      })
-    : []
+  const cascadeDisableDeps =
+    pkg.storage_state === 'enabled'
+      ? [...computeCascadeDisable(filename, packageIndex, forwardDeps, reverseDeps)].map((f) => {
+          const p = packageIndex.get(f)
+          return { filename: f, name: p?.package_name?.split('.').pop() || f }
+        })
+      : []
 
   const hubType = hubReportedType(pkg.hub_resource_id)
 
@@ -735,12 +748,14 @@ export function getStatusCounts() {
     dependency = 0,
     broken = 0,
     orphan = orphanSet.size,
-    local = 0
+    local = 0,
+    offloaded = 0
   for (const [filename, pkg] of userPackageEntries()) {
     if (pkg.is_direct) direct++
     else dependency++
     if ((transitiveMissingMap.get(filename) || 0) > 0 || pkg.is_corrupted) broken++
     if (isNotDownloadable(pkg)) local++
+    if (pkg.storage_state === 'offloaded') offloaded++
   }
 
   const missingGroups = new Set()
@@ -752,7 +767,7 @@ export function getStatusCounts() {
     }
   }
 
-  return { direct, dependency, broken, orphan, local, missingUnique: missingGroups.size }
+  return { direct, dependency, broken, orphan, local, offloaded, missingUnique: missingGroups.size }
 }
 
 export function getOrphanSet() {
@@ -905,13 +920,44 @@ export function patchTypeOverride(filename, typeOverride) {
   if (pkg) pkg.type_override = typeOverride ?? null
 }
 
-export function patchEnabled(filenames, newEnabled) {
-  const val = newEnabled ? 1 : 0
+/**
+ * Fast-path patch of `storage_state` (+ optionally `library_dir_id`) on `packageIndex`
+ * rows and the derived `isEnabled` / `storageState` fields on cached content rows in
+ * `contentByPackage`. Used by `applyStorageState` so a toggle/move doesn't pay for
+ * a full `buildFromDb()` rebuild.
+ *
+ * NOT refreshed by this function (and currently fine because none of these
+ * aggregates depend on `storage_state`):
+ *  - `forwardDeps` / `reverseDeps` / `groupIndex` — graph topology, keyed on filename + package_name.
+ *  - `removableSizeMap`, `aggregateMorphCountMap`, `transitiveDepsCountMap`,
+ *    `transitiveMissingMap` — derived from `is_direct` and the dep graph.
+ *  - `orphanSet` / `directOrphanSet` — derived from `is_direct` + reverse deps.
+ *  - `stats` (broken count, sizes, content totals) — `brokenCount` uses `is_corrupted`
+ *    + `transitiveMissingMap`, sizes/counts use `is_direct`.
+ *  - `tagCounts`, `authorCounts`, `nonDownloadableRids` — Hub/metadata, state-independent.
+ *
+ * Live count `getStatusCounts().offloaded` re-iterates `packageIndex` on every call,
+ * so it sees the patch immediately without needing to be invalidated here.
+ *
+ * If you ever add a derived map that branches on `storage_state` (e.g. an
+ * "effective broken" set that treats offloaded deps as missing), either extend
+ * this function or fall back to `buildFromDb()` at the call site — otherwise
+ * a toggle-enabled will silently leave that map stale until the next rescan.
+ */
+export function patchStorageState(filenames, storageState, libraryDirId) {
+  const enabled = storageState === 'enabled'
   for (const fn of filenames) {
     const pkg = packageIndex.get(fn)
-    if (pkg) pkg.is_enabled = val
+    if (pkg) {
+      pkg.storage_state = storageState
+      if (libraryDirId !== undefined) pkg.library_dir_id = libraryDirId == null ? null : libraryDirId
+    }
     const items = contentByPackage.get(fn)
-    if (items) for (const item of items) item.isEnabled = newEnabled
+    if (items)
+      for (const item of items) {
+        item.isEnabled = enabled
+        item.storageState = storageState
+      }
   }
 }
 

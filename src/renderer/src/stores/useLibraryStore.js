@@ -71,6 +71,7 @@ export const useLibraryStore = create((set, get) => ({
   viewMode: 'grid',
   cardWidth: 220,
   compactCards: false,
+  dimInactive: true,
 
   // Missing deps (lazy loaded when missing filter activates)
   missingDeps: null,
@@ -109,19 +110,26 @@ export const useLibraryStore = create((set, get) => ({
     set({ compactCards })
     void window.api.settings.set('library_compact_cards', compactCards ? '1' : '0')
   },
+  setDimInactive: (dimInactive) => {
+    set({ dimInactive })
+    void window.api.settings.set('dim_inactive_packages', dimInactive ? '1' : '0')
+  },
 
   hydrateLibraryVisualPreferences: async () => {
     try {
-      const [vm, widthStr, compactStr] = await Promise.all([
+      const [vm, widthStr, compactStr, dimStr] = await Promise.all([
         window.api.settings.get('library_view_mode'),
         window.api.settings.get('library_card_width'),
         window.api.settings.get('library_compact_cards'),
+        window.api.settings.get('dim_inactive_packages'),
       ])
       const patch = {}
       if (vm === 'grid' || vm === 'table') patch.viewMode = vm
       const w = parseInt(String(widthStr ?? ''), 10)
       if (!Number.isNaN(w) && w >= 100 && w <= 500) patch.cardWidth = w
       if (compactStr === '1' || compactStr === '0') patch.compactCards = compactStr === '1'
+      if (dimStr === '0') patch.dimInactive = false
+      else if (dimStr === '1' || dimStr == null) patch.dimInactive = true
       if (Object.keys(patch).length) set(patch)
     } catch {}
   },

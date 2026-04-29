@@ -303,7 +303,7 @@ Cross-package deduplication also occurs: when multiple versions of the same pack
 
 ## 7. Database Schema
 
-SQLite with WAL journaling, managed by `better-sqlite3` in the main process. Current schema version: **18**. New databases are created at the legacy cutoff (version 16) in one step (`createSchema` in `db.js`) and then walked through incremental migrations to the current version; pre-release builds at versions 1–15 cannot be upgraded — delete `backstage.db` under the app userData directory if you hit that error. The `migrate()` framework adds new steps in place; v17 added `contents.person_atom_ids`, v18 added `contents.file_mtime` + `contents.size_bytes` (used by the loose-content scan to mtime-gate scene re-parses). The `__local__` sentinel package row that owns loose Saves/Custom content (see §7.x and §11) is seeded by `ensureLocalPackage()` on every open — no schema change, just an idempotent data fixup that works on both new installs and existing DBs.
+SQLite with WAL journaling, managed by `better-sqlite3` in the main process. Current schema version: **21**. New databases are created at the latest version in one step (`createSchema` in `db.js`); existing DBs walk forward through incremental steps in `migrate()` (v17 → v18 → v19 → v20 → v21). Pre-release builds at versions 1–15 cannot be upgraded — delete `backstage.db` under the app userData directory if you hit that error. The `__local__` sentinel package row that owns loose Saves/Custom content (see §7.x and §11) is seeded by `ensureLocalPackage()` on every open — no schema change, just an idempotent data fixup that works on both new installs and existing DBs.
 
 ### `packages` — Package Scan Cache
 
@@ -322,7 +322,8 @@ CREATE TABLE packages (
   size_bytes       INTEGER NOT NULL,
   file_mtime       REAL NOT NULL,     -- fractional seconds since epoch
   is_direct        INTEGER NOT NULL DEFAULT 0,  -- 1=user installed, 0=dependency
-  is_enabled       INTEGER NOT NULL DEFAULT 1,  -- .var vs .var.disabled on disk
+  storage_state    TEXT NOT NULL DEFAULT 'enabled',  -- 'enabled' | 'disabled' | 'offloaded'
+  library_dir_id   INTEGER REFERENCES library_dirs(id) ON DELETE RESTRICT,  -- NULL = main AddonPackages
   hub_resource_id  TEXT,              -- VaM Hub resource ID (learned from Hub API)
   hub_user_id      TEXT,              -- Hub user ID for author avatar
   hub_display_name TEXT,              -- Hub display title (often differs from meta title)
@@ -339,6 +340,32 @@ CREATE TABLE packages (
 CREATE INDEX idx_packages_package_name ON packages(package_name);
 CREATE INDEX idx_packages_creator ON packages(creator);
 ```
+
+`storage_state` replaces the legacy `is_enabled` boolean (v21). It encodes three physical placements:
+
+| state       | location                                              | on-disk name (canonical) |
+| ----------- | ----------------------------------------------------- | ------------------------ |
+| `enabled`   | main `AddonPackages` (`library_dir_id IS NULL`)       | `Foo.1.var`              |
+| `disabled`  | main `AddonPackages` (`library_dir_id IS NULL`)       | `Foo.1.var.disabled`     |
+| `offloaded` | a registered aux library directory (`library_dir_id`) | `Foo.1.var`              |
+
+For dependency-graph purposes, `disabled` and `offloaded` behave identically (the package is unavailable to VaM at runtime). On-disk names are fully derived from `storage_state`: `disabled` carries the `.var.disabled` suffix; `enabled` and `offloaded` are suffix-less. Aux dirs are normalized — any externally-placed `.var.disabled` found in an aux dir is renamed to bare `.var` (or unlinked if a bare sibling already exists) by both the scanner and the watcher on first observation, so `pkgVarPath()` can rebuild the path from `(library_dir_id, filename, storage_state)` alone.
+
+All app-initiated transitions go through `applyStorageState` in `src/main/storage-state.js`, which performs an `fs.rename`, updates the DB row (`storage_state` + `library_dir_id`), patches the in-memory store, and suppresses the watcher for both source and dest paths. Aux dirs are guaranteed to be on the same filesystem as main `AddonPackages` (validated by a probe-rename on registration in `ipc/library-dirs.js`), so a plain rename is always sufficient — cross-disk offload is intentionally out of scope for v1. External (watcher-observed) transitions are reconciled separately and never go through `applyStorageState`.
+
+### `library_dirs` — Offload Library Directories
+
+Registered offload directories. Main `AddonPackages` is implicit (derived from `vam_dir`) and represented by `packages.library_dir_id IS NULL`; only aux dirs live in this table.
+
+```sql
+CREATE TABLE library_dirs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  path       TEXT UNIQUE NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+```
+
+The scanner walks every registered library dir; the watcher monitors all of them; a package moved between dirs by an external tool is reconciled as a move (single update of `storage_state` + `library_dir_id`) rather than uninstall + reinstall. Removing an aux dir is allowed only when no packages still point at it (`ON DELETE RESTRICT`). Aux dirs must live on the same filesystem as main `AddonPackages` — `library-dirs:add` runs a probe-rename and rejects cross-disk paths; cross-filesystem offload is deferred to v2.
 
 ### `contents` — Content Item Scan Cache
 
@@ -429,6 +456,7 @@ CREATE TABLE settings (
 - `hub_filters_json` — cached Hub filter metadata (types, tags, sort options)
 - `blur_thumbnails` — `'1'` when thumbnail blur (privacy) is enabled
 - `update_channel` — `'stable'` | `'dev'`; selects updater feed (see §21)
+- `disable_behavior` — `'suffix'` (rename to `.var.disabled` in main; default) or `'move-to:<auxDirId>'` (move to the named aux library directory). Removing the referenced aux dir resets this to `'suffix'`.
 
 ### Legacy Fields
 
@@ -436,7 +464,7 @@ CREATE TABLE settings (
 
 ### Local content sentinel (`__local__`)
 
-Loose user files under `vamDir/Saves` and `vamDir/Custom` (scenes, looks, poses, presets, morphs, plugins, …) are indexed into the same `contents` table used for packaged content, but the table requires `package_filename` to point at a real `packages` row. To avoid a schema-wide nullable column or a separate join table, every install gets a synthetic row with `filename = '__local__'` (creator/`package_name`/`version` empty, `is_direct = 1`, `is_enabled = 1`). Loose-content rows reference this sentinel.
+Loose user files under `vamDir/Saves` and `vamDir/Custom` (scenes, looks, poses, presets, morphs, plugins, …) are indexed into the same `contents` table used for packaged content, but the table requires `package_filename` to point at a real `packages` row. To avoid a schema-wide nullable column or a separate join table, every install gets a synthetic row with `filename = '__local__'` (creator/`package_name`/`version` empty, `is_direct = 1`, `storage_state = 'enabled'`, `library_dir_id = NULL`). Loose-content rows reference this sentinel.
 
 The sentinel is filtered out of every user-visible iteration in `store.js` via `userPackageEntries()` / `userPackageValues()` — it never appears in the Library view, in package facets, or in stats. Internal code that joins from `contents.package_filename` back to a package (scene reader, thumbnail resolver, content-by-package lookups) still sees it via the unfiltered `packageIndex`. `db.js#ensureLocalPackage()` is idempotent and runs from `migrate()` on every open, so the sentinel re-appears even if it was manually deleted.
 
@@ -444,7 +472,13 @@ Loose `.hide` / `.fav` sidecars live next to the source file (e.g. `Saves/scene/
 
 ### Future migrations
 
-To evolve the schema, bump `SCHEMA_VERSION` and add an incremental step in `migrate()` after the `createSchema` / legacy-cutoff logic — do not modify `createSchema` itself, or new installs and upgrades will diverge. Migrations should be idempotent for the post-`createSchema` path so that fresh installs running each step in turn end up identical to upgraded ones.
+To evolve the schema, bump `SCHEMA_VERSION` and add an incremental step in `migrate()` after the `createSchema` / legacy-cutoff logic. New installs go through `createSchema` directly at the latest version, so any new column or table must be reflected in **both** places — leaving them out of `createSchema` will diverge new installs from upgraded ones. Migrations should be idempotent for the post-`createSchema` path so fresh installs running each step in turn end up identical to upgraded ones. Existing increments:
+
+- **16** → **17**: adds `contents.person_atom_ids` and zeroes `packages.file_mtime` so the next scan re-reads every package once.
+- **17** → **18**: adds `contents.file_mtime` + `contents.size_bytes` so the loose-content scanner can mtime-gate scene re-parses (var-owned rows leave both at 0; the package-level gate covers them).
+- **18** → **19**: adds `packages.hub_detail_applied_at` so `scanHubDetails` can skip rows whose cached Hub detail has already been applied.
+- **19** → **20**: introduces user-defined Labels (`labels`, `label_packages`, `label_contents`). `label_contents` keys on `(package_filename, internal_path)` rather than `contents.id` because `contents` rows can be REPLACEd during rescans.
+- **20** → **21**: introduces `library_dirs` and replaces `packages.is_enabled` (BOOL) with `packages.storage_state` (TEXT) + `packages.library_dir_id` (FK). Backfills `storage_state` from `is_enabled` (`1 → 'enabled'`, `0 → 'disabled'`), drops `is_enabled`, and sets `needs_rescan` so the next startup picks up any externally-placed files in newly registered aux dirs. The on-disk `.disabled` suffix is implied by `storage_state` (aux dirs are normalized to suffix-less `.var` on first observation), so no separate column tracks it.
 
 ---
 
@@ -734,13 +768,13 @@ VaM stores hidden/favorite state as empty sidecar files alongside content items:
 
 `runScan(vamDir, onProgress)` runs on startup and on user request, emitting phases via `scan:progress` (see `scanner/index.js`):
 
-| Phase        | What it does                                                                                                                                      | Key operations                                     |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `indexing`   | Walk `AddonPackages/` recursively for `.var` and `.var.disabled` files                                                                            | directory traversal                                |
-| `reading`    | Per-file: skip if `file_mtime` + `size_bytes` match cache; otherwise read the ZIP, extract `meta.json`, classify and dedup content, write DB rows | `scanAndUpsert`                                    |
-| `graph`      | Drop DB rows for files no longer on disk; on initial scan / structural changes, rebuild graph and run leaf detection                              | `buildGraphOnly`, `detectLeaves`, `batchSetDirect` |
-| `local`      | Walk `Saves/` and `Custom/` for loose user content; classify with the same rules as packaged content; upsert under the `__local__` sentinel       | `runLocalScan`                                     |
-| `finalizing` | Optional prefs extension migration; reload prefs; rebuild in-memory state                                                                         | `readAllPrefs`, `buildFromDb()`                    |
+| Phase        | What it does                                                                                                                                                                                                                          | Key operations                                     |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `indexing`   | Walk every registered library directory (main `AddonPackages/` + any registered aux dirs) recursively for `.var` files; main also accepts `.var.disabled`. Aux-dir `.var.disabled` is normalized to bare `.var` on first observation. | directory traversal                                |
+| `reading`    | Per-file: skip if `file_mtime` + `size_bytes` match cache; otherwise read the ZIP, extract `meta.json`, classify and dedup content, write DB rows                                                                                     | `scanAndUpsert`                                    |
+| `graph`      | Drop DB rows for files no longer on disk; on initial scan / structural changes, rebuild graph and run leaf detection                                                                                                                  | `buildGraphOnly`, `detectLeaves`, `batchSetDirect` |
+| `local`      | Walk `Saves/` and `Custom/` for loose user content; classify with the same rules as packaged content; upsert under the `__local__` sentinel                                                                                           | `runLocalScan`                                     |
+| `finalizing` | Optional prefs extension migration; reload prefs; rebuild in-memory state                                                                                                                                                             | `readAllPrefs`, `buildFromDb()`                    |
 
 Hub metadata enrichment is driven separately by the first-run wizard via `wizard:enrich-hub`, which emits `hub-scan:progress` events (`lookup` / `cache` / `fetching` / `hub-finalize`). Outside first-run, enrichment is incremental and background-only.
 
@@ -846,8 +880,9 @@ When search results return from the Hub, the client enriches each resource with 
 
 The watcher (`src/main/watcher.js`) uses two different mechanisms:
 
-1. **chokidar** watches `AddonPackages/` for `.var` and `.var.disabled` files. Configured with `awaitWriteFinish` (2000ms stability threshold) to handle large file copies. Depth limit: 10.
-2. **Native `fs.watch`** monitors `AddonPackagesFilePrefs/` for `.hide`/`.fav` sidecar changes. This is lighter-weight than chokidar for the high-frequency, small-file changes typical of sidecar operations.
+1. **chokidar** (the `packageWatcher`) watches every registered library directory — main `AddonPackages/` plus any registered aux/offload dirs — for `.var` and (in main only) `.var.disabled` files. Restarts whenever the `library_dirs` registry changes. Configured with `followSymlinks: false`, `awaitWriteFinish` (2000ms stability threshold) to handle large file copies, and depth limit 10. Cross-dir moves are reconciled in a single batch (unlink + add for the same canonical filename → `setStorageState` UPDATE) so packages rows — and their label_packages/label_contents FKs — are preserved.
+2. **chokidar** (the `localWatcher`) watches loose-content roots (`Saves/`, `Custom/`) for both content changes (debounced `runLocalScan`) and sibling `.hide`/`.fav` sidecars. Same `followSymlinks: false` for the BrowserAssist symlink farm reason.
+3. **Native `fs.watch`** monitors `AddonPackagesFilePrefs/` for `.hide`/`.fav` sidecar changes. Lighter-weight than chokidar for the high-frequency, small-file changes typical of sidecar operations.
 
 ### Event Processing
 
@@ -855,7 +890,7 @@ Events are debounced for 500ms and processed as a batch:
 
 **Package events** (add/change/unlink):
 
-- Detect `.var` ↔ `.var.disabled` renames → call `setPackageEnabled()` instead of add/remove
+- Detect `.var` ↔ `.var.disabled` renames and cross-dir moves → call `setStorageState()` instead of add/remove
 - New/changed files: `scanAndUpsert()` reads the ZIP and updates the database
 - Removed files: Delete from database (CASCADE removes content rows)
 - After all changes: `buildFromDb()` to rebuild in-memory structures
@@ -1111,22 +1146,22 @@ User clicks "Disable" on package A
   ├─ rename A.var → A.var.disabled
   ├─ rename B.var → B.var.disabled        (cascade)
   ├─ rename C.var → C.var.disabled        (cascade)
-  ├─ DB: setPackageEnabled for A, B, C
-  ├─ In-mem: patchEnabled([A, B, C], false)  ── fast in-place patch
+  ├─ DB: setStorageState for A, B, C  (via applyStorageState chokepoint)
+  ├─ In-mem: patchStorageState([A, B, C], 'disabled')  ── fast in-place patch
   ├─ notify('packages:updated')
   └─ Return {ok, isEnabled: false, cascadeCount: 2}
   │
   Renderer: toast "Disabled A and 2 dependencies"
 ```
 
-**Note**: `patchEnabled` is an optimization — it mutates the in-memory `packageIndex` and `contentByPackage` entries directly without a full `buildFromDb()`. This avoids an expensive O(P×D) rebuild for what is conceptually a flag flip. The tradeoff is that derived data (stats, orphan sets) may be slightly stale until the next full rebuild. In practice, the renderer immediately re-fetches, which returns data from the patched in-memory state. `patchTypeOverride` (for the type-override mutation) uses the same fast-path pattern.
+**Note**: `patchStorageState` is an optimization — it mutates the in-memory `packageIndex` and `contentByPackage` entries directly without a full `buildFromDb()`. This avoids an expensive O(P×D) rebuild for what is conceptually a flag flip. The tradeoff is that derived data (stats, orphan sets) may be slightly stale until the next full rebuild. In practice, the renderer immediately re-fetches, which returns data from the patched in-memory state. `patchTypeOverride` (for the type-override mutation) uses the same fast-path pattern.
 
 ### Data Staleness and Consistency
 
 The system accepts bounded staleness in exchange for responsiveness:
 
 - **Renderer data lags by one IPC round-trip** after a mutation. Between `notify()` and the renderer's `fetchPackages()` completing, the UI shows stale data — typically <50ms and imperceptible.
-- **Fast-path patches** (`patchEnabled`, `patchTypeOverride`) mutate the in-memory index directly. Derived aggregates (stats, orphan sets) may be stale until the next `buildFromDb()`; full rebuilds run on any structural change.
+- **Fast-path patches** (`patchStorageState`, `patchTypeOverride`) mutate the in-memory index directly. Derived aggregates (stats, orphan sets) may be stale until the next `buildFromDb()`; full rebuilds run on any structural change.
 - **The graph is never incrementally patched** — it's rebuilt from scratch on every structural change. This keeps graph code simple at the cost of O(P × D) per change (<100ms for typical libraries of <5000 packages).
 - **Concurrent mutations are serialized** by Node.js's single-threaded event loop; two IPC handlers cannot interleave reads and writes to in-memory structures.
 

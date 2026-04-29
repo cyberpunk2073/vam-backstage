@@ -1,14 +1,14 @@
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { readFile, access, writeFile, mkdir } from 'fs/promises'
 import { constants } from 'fs'
 import { createHash } from 'crypto'
-import { ADDON_PACKAGES } from '../shared/paths.js'
 import { isLocalPackage } from '../shared/local-package.js'
 import { app } from 'electron'
 import { getSetting, getContentThumbnailPath } from './db.js'
 import { extractFile, extractFiles } from './scanner/var-reader.js'
 import { getPackageIndex } from './store.js'
 import { pLimit } from './p-limit.js'
+import { pkgVarPath } from './library-dirs.js'
 
 const MAX_ENTRIES = 3000
 // Bounded concurrency for thumbnail jobs (companion-jpg reads, loose ct: reads,
@@ -45,9 +45,9 @@ async function tryReadFile(filePath) {
   }
 }
 
-function resolveVarPath(addonDir, filename) {
+function resolveVarPath(filename) {
   const pkg = getPackageIndex().get(filename)
-  return join(addonDir, !pkg || pkg.is_enabled ? filename : filename + '.disabled')
+  return pkgVarPath(pkg) ?? null
 }
 
 // Persist extracted thumbnails to thumb-cache/ so subsequent launches read a
@@ -102,7 +102,6 @@ export function invalidateThumbnailCache(keys) {
 export async function getThumbnails(keys) {
   const vamDir = getSetting('vam_dir')
   if (!vamDir) return {}
-  const addonDir = join(vamDir, ADDON_PACKAGES)
   const thumbCacheDir = getThumbCacheDir()
   const results = {}
 
@@ -151,7 +150,11 @@ export async function getThumbnails(keys) {
         ctLooseJobs.push({ key, fullPath: join(vamDir, thumbPath) })
         continue
       }
-      const varPath = resolveVarPath(addonDir, filename)
+      const varPath = resolveVarPath(filename)
+      if (!varPath) {
+        setKey(key, null)
+        continue
+      }
       let group = varExtractions.get(varPath)
       if (!group) {
         group = { filename, items: [] }
@@ -165,16 +168,24 @@ export async function getThumbnails(keys) {
 
   const pkgPromises = pkgJobs.map(({ key, filename }) =>
     limit(async () => {
+      // Resolve once per job so a missing/aux-relocated package contributes a
+      // null thumb rather than throwing. Companion .jpg lives next to the
+      // current physical .var (could be aux dir or `.var.disabled` in main).
+      const varPath = resolveVarPath(filename)
+
       // 1. Companion .jpg next to the .var (always named with .var stem, never .disabled)
-      let buf = await tryReadFile(join(addonDir, filename.replace(/\.var$/i, '.jpg')))
+      let buf = null
+      if (varPath) {
+        buf = await tryReadFile(join(dirname(varPath), filename.replace(/\.var$/i, '.jpg')))
+      }
       // 2. Hub thumbnail cache (also where persistVarThumb writes to)
       if (!buf) buf = await tryReadFile(join(thumbCacheDir, filename + '.jpg'))
       // 3. First content thumbnail from inside the .var (may be .var.disabled on disk)
-      if (!buf) {
+      if (!buf && varPath) {
         const internalPath = getContentThumbnailPath(filename)
         if (internalPath) {
           try {
-            buf = await extractFile(resolveVarPath(addonDir, filename), internalPath)
+            buf = await extractFile(varPath, internalPath)
           } catch {}
           // Race-free gating: only persist when this package isn't on the Hub.
           // If hub_resource_id is set, thumb-resolver owns the same path and

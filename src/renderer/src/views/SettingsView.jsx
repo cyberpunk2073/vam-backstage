@@ -14,12 +14,15 @@ import {
   CurlyBraces,
 } from 'lucide-react'
 import { formatBytes } from '../lib/utils'
+import { parseDisableBehavior, disableBehaviorMoveTo } from '../../../shared/disable-behavior.js'
 import { toast } from '../components/Toast'
 import { useStatusStore } from '../stores/useStatusStore'
+import { useLibraryStore } from '../stores/useLibraryStore'
 import { Button } from '../components/ui/button'
 import { Progress } from '../components/ui/progress'
 import { Switch } from '../components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
+import { TruncateWithTooltip } from '../components/TruncateWithTooltip'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -57,8 +60,22 @@ export default function SettingsView() {
   const [hideDialogOpen, setHideDialogOpen] = useState(false)
   const [hiding, setHiding] = useState(false)
   const [hideProgress, setHideProgress] = useState(null)
+  const [libDirs, setLibDirs] = useState({ main: '', aux: [] })
+  const [libDirsLoading, setLibDirsLoading] = useState(false)
+  const [disableBehavior, setDisableBehavior] = useState('suffix')
   const stats = useStatusStore((s) => s.stats)
   const fetchStats = useStatusStore((s) => s.fetchStats)
+  const dimInactive = useLibraryStore((s) => s.dimInactive)
+  const setDimInactive = useLibraryStore((s) => s.setDimInactive)
+
+  const refreshLibDirs = useCallback(async () => {
+    try {
+      const r = await window.api.libraryDirs.list()
+      setLibDirs(r)
+    } catch (err) {
+      console.warn('library-dirs:list failed:', err.message)
+    }
+  }, [])
 
   useEffect(() => {
     window.api.settings.get('vam_dir').then((v) => setVamDir(v || ''))
@@ -66,9 +83,53 @@ export default function SettingsView() {
     window.api.settings.get('blur_thumbnails').then((v) => setBlurThumbnails(v === '1'))
     window.api.settings.get('hub_debug_requests').then((v) => setHubDebugRequests(v === '1'))
     window.api.settings.get('developer_options_unlocked').then((v) => setDeveloperUnlocked(v === '1'))
+    window.api.settings.get('disable_behavior').then((v) => setDisableBehavior(v || 'suffix'))
     window.api.dev.isDev().then(setIsDev)
     window.api.app.getVersion().then(setAppVersion)
     window.api.updater.getChannel().then((c) => setUpdateChannel(c === 'dev' ? 'dev' : 'stable'))
+    refreshLibDirs()
+  }, [refreshLibDirs])
+
+  const handleAddAuxDir = useCallback(async () => {
+    if (libDirsLoading) return
+    try {
+      const browseResult = await window.api.libraryDirs.browse()
+      if (browseResult?.cancelled) return
+      setLibDirsLoading(true)
+      await window.api.libraryDirs.add(browseResult.path)
+      await refreshLibDirs()
+      fetchStats()
+      toast(`Offload directory added: ${browseResult.path}`, 'success')
+    } catch (err) {
+      toast(`Failed to add directory: ${err.message}`, 'error')
+    } finally {
+      setLibDirsLoading(false)
+    }
+  }, [libDirsLoading, refreshLibDirs, fetchStats])
+
+  const handleRemoveAuxDir = useCallback(
+    async (id) => {
+      if (libDirsLoading) return
+      setLibDirsLoading(true)
+      try {
+        await window.api.libraryDirs.remove(id)
+        await refreshLibDirs()
+        const next = await window.api.settings.get('disable_behavior')
+        setDisableBehavior(next || 'suffix')
+        fetchStats()
+        toast('Library directory removed', 'success')
+      } catch (err) {
+        toast(`Failed to remove: ${err.message}`, 'error')
+      } finally {
+        setLibDirsLoading(false)
+      }
+    },
+    [libDirsLoading, refreshLibDirs, fetchStats],
+  )
+
+  const handleDisableBehaviorChange = useCallback(async (value) => {
+    setDisableBehavior(value)
+    await window.api.settings.set('disable_behavior', value)
   }, [])
 
   useEffect(() => {
@@ -378,19 +439,100 @@ export default function SettingsView() {
         {/* Library */}
         <Section title="Library">
           <div>
-            <div className="text-xs text-text-primary font-medium">VaM Directory</div>
-            <div className="text-[11px] text-text-tertiary mt-0.5">
-              Location of your VaM installation containing AddonPackages.
+            <div className="text-sm text-text-primary font-medium flex items-center gap-1.5 mb-2">
+              <HardDrive size={14} className="text-text-tertiary" />
+              VaM Directory
             </div>
-            <div className="flex items-center gap-2 mt-2">
-              <div className="flex-1 min-w-0 h-9 bg-elevated border border-border rounded-lg px-3 flex items-center text-xs text-text-secondary font-mono truncate select-text cursor-text">
-                {vamDir || <span className="text-text-tertiary italic">Not configured</span>}
-              </div>
-              <Button variant="outline" size="lg" onClick={handleBrowseDir}>
+            <div className="flex items-center gap-2">
+              <TruncateWithTooltip
+                text={vamDir || ''}
+                className="flex-1 min-w-0 h-10 bg-elevated border border-border rounded-lg px-3 flex items-center text-xs text-text-secondary font-mono truncate select-text cursor-text"
+              >
+                {vamDir || <span className="italic text-text-tertiary font-sans">Not configured</span>}
+              </TruncateWithTooltip>
+              <Button variant="outline" size="lg" onClick={handleBrowseDir} className="shrink-0 h-10 px-3.5">
                 <FolderOpen size={14} /> Browse
               </Button>
             </div>
           </div>
+
+          <div className="space-y-2">
+            <div className="flex items-start gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-text-primary font-medium">Offload directories</div>
+                <div className="text-[11px] text-text-tertiary mt-0.5">
+                  Folders for packages you want to keep around but not load in VaM.
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="lg"
+                onClick={handleAddAuxDir}
+                disabled={libDirsLoading}
+                className="shrink-0"
+              >
+                {libDirsLoading ? <Loader2 size={14} className="animate-spin" /> : <FolderOpen size={14} />}
+                Add Folder
+              </Button>
+            </div>
+            {libDirs.aux.length > 0 && (
+              <ul className="rounded-lg border border-border divide-y divide-border bg-surface/50">
+                {libDirs.aux.map((d) => (
+                  <li key={d.id} className="flex items-center gap-3 px-3 py-2">
+                    <TruncateWithTooltip
+                      text={d.path}
+                      className="flex-1 min-w-0 text-xs font-mono truncate select-text cursor-text text-text-secondary"
+                    />
+                    <div className="text-[11px] text-text-tertiary tabular-nums whitespace-nowrap shrink-0">
+                      {d.packageCount} pkg · {formatBytes(d.sizeBytes)}
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => handleRemoveAuxDir(d.id)}
+                      disabled={libDirsLoading || d.packageCount > 0}
+                      title={d.packageCount > 0 ? 'Move all packages out before removing' : 'Remove'}
+                      className="shrink-0 text-text-tertiary hover:text-error"
+                    >
+                      <Trash2 size={14} />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {libDirs.aux.length > 0 && (
+            <div className="flex items-start gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-text-primary font-medium">When disabling a package</div>
+                <div className="text-[11px] text-text-tertiary mt-0.5">
+                  Either use VaM&apos;s native disable behavior, or move the package to an offload directory.
+                </div>
+              </div>
+              <Select value={disableBehavior} onValueChange={handleDisableBehaviorChange}>
+                <SelectTrigger
+                  className="shrink-0 min-w-[180px] max-w-[240px] h-9 text-xs"
+                  title={getDisableBehaviorTooltip(disableBehavior, libDirs.aux)}
+                >
+                  <SelectValue>
+                    <span className="block min-w-0 truncate">
+                      {getDisableBehaviorLabel(disableBehavior, libDirs.aux)}
+                    </span>
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent className="max-w-[420px]">
+                  <SelectItem value="suffix">VaM native (rename to .var.disabled)</SelectItem>
+                  {libDirs.aux.map((d) => (
+                    <SelectItem key={d.id} value={disableBehaviorMoveTo(d.id)} title={d.path}>
+                      <span className="block min-w-0 truncate">Move to {d.path}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           <div className="space-y-3 border-t border-border pt-3">
             <div className="flex items-center gap-3 text-xs">
               <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 flex-1">
@@ -516,6 +658,16 @@ export default function SettingsView() {
                 </div>
               </div>
               <Switch checked={blurThumbnails} onCheckedChange={handleToggleBlurThumbnails} />
+            </label>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-text-primary font-medium">Dim inactive packages</div>
+                <div className="text-[11px] text-text-tertiary mt-0.5">
+                  When ON, disabled and offloaded packages are greyed out with a small corner icon. When OFF, they
+                  render at full color with an informational chip — handy if a large part of your library is archived.
+                </div>
+              </div>
+              <Switch checked={dimInactive} onCheckedChange={setDimInactive} />
             </label>
           </div>
         </Section>
@@ -817,6 +969,23 @@ function Section({ title, description, danger, children }) {
       </div>
     </div>
   )
+}
+
+function getDisableBehaviorLabel(value, auxDirs) {
+  const parsed = parseDisableBehavior(value)
+  if (parsed.kind === 'suffix') return 'VaM native'
+  const dir = auxDirs.find((d) => d.id === parsed.auxDirId)
+  if (!dir) return 'Move to …'
+  const parts = dir.path.split(/[\\/]/).filter(Boolean)
+  const basename = parts[parts.length - 1] || dir.path
+  return `Move to ${basename}`
+}
+
+function getDisableBehaviorTooltip(value, auxDirs) {
+  const parsed = parseDisableBehavior(value)
+  if (parsed.kind === 'suffix') return 'VaM native disable (rename to .var.disabled)'
+  const dir = auxDirs.find((d) => d.id === parsed.auxDirId)
+  return dir ? `Move to ${dir.path}` : undefined
 }
 
 function StatRow({ label, value, warn }) {

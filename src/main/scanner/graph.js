@@ -220,10 +220,17 @@ export function getTransitiveDeps(filename, forwardDeps) {
   return visited
 }
 
+/** Internal: a package is "active" when its storage_state === 'enabled'. */
+function isActive(pkg) {
+  return !!pkg && pkg.storage_state === 'enabled'
+}
+
 /**
  * Compute dependencies to cascade-disable when disabling `filename`.
  * Returns the set of dep filenames whose only enabled dependents are `filename`
  * or other deps already in the cascade set (fixpoint iteration).
+ *
+ * Both `disabled` and `offloaded` deps are skipped (they're already inactive).
  */
 export function computeCascadeDisable(filename, packageIndex, forwardDeps, reverseDeps) {
   const toDisable = new Set()
@@ -234,12 +241,11 @@ export function computeCascadeDisable(filename, packageIndex, forwardDeps, rever
     for (const dep of transitiveDeps) {
       if (toDisable.has(dep)) continue
       const pkg = packageIndex.get(dep)
-      if (!pkg || !pkg.is_enabled) continue
+      if (!isActive(pkg)) continue
       const dependents = reverseDeps.get(dep) || new Set()
       const hasOtherEnabledDependent = [...dependents].some((d) => {
         if (d === filename || toDisable.has(d)) return false
-        const p = packageIndex.get(d)
-        return p && p.is_enabled
+        return isActive(packageIndex.get(d))
       })
       if (!hasOtherEnabledDependent) {
         toDisable.add(dep)
@@ -252,14 +258,15 @@ export function computeCascadeDisable(filename, packageIndex, forwardDeps, rever
 
 /**
  * Compute dependencies to cascade-enable when enabling `filename`.
- * Returns the set of transitive dep filenames that are currently disabled.
+ * Returns the set of transitive dep filenames that are currently inactive
+ * (`disabled` or `offloaded`).
  */
 export function computeCascadeEnable(filename, packageIndex, forwardDeps) {
   const toEnable = new Set()
   const transitiveDeps = getTransitiveDeps(filename, forwardDeps)
   for (const dep of transitiveDeps) {
     const pkg = packageIndex.get(dep)
-    if (pkg && !pkg.is_enabled) toEnable.add(dep)
+    if (pkg && !isActive(pkg)) toEnable.add(dep)
   }
   return toEnable
 }

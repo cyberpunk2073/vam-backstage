@@ -1,6 +1,7 @@
-import { useState, useRef, useLayoutEffect, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import {
   AlertTriangle,
+  Archive,
   HardDrive,
   Layers,
   Eye,
@@ -33,12 +34,31 @@ import {
 import { isLocalPackage } from '../../../shared/local-package.js'
 import { Button } from './ui/button'
 import { Avatar, AvatarImage, AvatarFallback } from './ui/avatar'
+import { TruncateWithTooltip } from './TruncateWithTooltip'
 import { useThumbnail } from '../hooks/useThumbnail'
 import { useHubInstallState } from '../hooks/useHubInstallState'
 import { useDownloadStore } from '../stores/useDownloadStore'
+import { useLibraryStore } from '../stores/useLibraryStore'
 import { useAvatar } from '../hooks/useAvatar'
 import { LabelDots } from './labels/LabelDots'
 import { useLabelObjects } from './labels/useLabelObjects'
+
+/**
+ * Derive the "inactive package" visual state (`disabled` or `offloaded`) and
+ * whether the user wants those cards dimmed (corner icon) vs full-color (chip).
+ */
+function useInactiveStyle(pkg) {
+  const dimInactive = useLibraryStore((s) => s.dimInactive)
+  const isOffloaded = pkg.storageState === 'offloaded'
+  const isDisabled = pkg.storageState === 'disabled'
+  const inactive = isOffloaded || isDisabled
+  return { isOffloaded, isDisabled, inactive, dim: inactive && dimInactive }
+}
+
+const inactiveTitle = (isOffloaded) =>
+  isOffloaded
+    ? 'Stored in an offload library directory (inactive in VaM)'
+    : 'Renamed to .var.disabled (inactive in VaM)'
 
 /** Non-interactive bulk-selection marker; whole card handles clicks */
 function BulkSelectChip({ checked }) {
@@ -387,7 +407,7 @@ export function LibraryCard({
   bulkSelected = false,
 }) {
   const minimal = mode === 'minimal'
-  const disabled = !pkg.isEnabled
+  const { isOffloaded, inactive, dim } = useInactiveStyle(pkg)
   const name = displayName(pkg)
   const thumbUrl = useThumbnail(`pkg:${pkg.filename}`)
   const versionStr = pkg.version != null && pkg.version !== '' ? String(pkg.version) : null
@@ -401,10 +421,10 @@ export function LibraryCard({
       onClick={(e) => onClick?.(pkg, e)}
       className={`@container w-full bg-surface border rounded-lg overflow-hidden text-left transition-all duration-150 card-glow cursor-pointer shrink-0 group
         ${selected || bulkSelected ? 'border-accent-blue/40 bg-elevated' : 'border-border hover:bg-elevated'}
-        ${disabled ? 'opacity-60 hover:opacity-90' : ''}`}
+        ${dim ? 'opacity-60 hover:opacity-90' : ''}`}
     >
       <div
-        className={`relative aspect-square ${disabled ? 'saturate-25 brightness-80 group-hover:saturate-100 group-hover:brightness-100 transition-[filter] duration-200' : ''}`}
+        className={`relative aspect-square ${dim ? 'saturate-25 brightness-80 group-hover:saturate-100 group-hover:brightness-100 transition-[filter] duration-200' : ''}`}
       >
         <div className="absolute inset-0" style={{ background: getGradient(pkg.filename) }} />
         {thumbUrl && <div className="absolute inset-0 bg-elevated" />}
@@ -416,6 +436,7 @@ export function LibraryCard({
           !pkg.isDirect ||
           pkg.isLocalOnly ||
           pkg.noLookPresetTag ||
+          (inactive && !dim) ||
           (minimal && pkg.missingDeps > 0)) && (
           <div className="absolute top-2 left-2 z-2 flex max-w-[calc(100%-2.75rem)] items-center gap-1 overflow-x-auto scrollbar-hide flex-nowrap">
             {bulkMode && <BulkSelectChip checked={bulkSelected} />}
@@ -451,6 +472,15 @@ export function LibraryCard({
                 LOCAL
               </div>
             )}
+            {inactive && !dim && (
+              <div
+                className={`${THUMB_OVERLAY_CHIP} bg-warning/25 text-warning backdrop-blur-sm flex items-center gap-1`}
+                title={inactiveTitle(isOffloaded)}
+              >
+                {isOffloaded ? <Archive size={10} className="shrink-0" /> : <EyeOff size={10} className="shrink-0" />}
+                {isOffloaded ? 'OFFLOADED' : 'DISABLED'}
+              </div>
+            )}
             {minimal && pkg.missingDeps > 0 && !bulkMode && (
               <div
                 className={`${THUMB_OVERLAY_CHIP} bg-warning/20 text-warning backdrop-blur-sm flex items-center gap-0.5`}
@@ -462,9 +492,12 @@ export function LibraryCard({
           </div>
         )}
         <div className="absolute top-2 right-2 flex items-center gap-1 z-1">
-          {disabled && (
-            <div className={`${THUMB_OVERLAY_CHIP} bg-warning/25 text-warning backdrop-blur-sm`}>
-              <EyeOff size={10} className="shrink-0" />
+          {dim && (
+            <div
+              className={`${THUMB_OVERLAY_CHIP} bg-warning/25 text-warning backdrop-blur-sm`}
+              title={inactiveTitle(isOffloaded)}
+            >
+              {isOffloaded ? <Archive size={10} className="shrink-0" /> : <EyeOff size={10} className="shrink-0" />}
             </div>
           )}
           {pkg.isCorrupted && (
@@ -577,7 +610,7 @@ export function LibraryTableRow({
   onBulkToggle,
 }) {
   const typeColor = libraryTypeBadgeColor(pkg.type)
-  const disabled = !pkg.isEnabled
+  const { isOffloaded, inactive, dim } = useInactiveStyle(pkg)
   const name = displayName(pkg)
   const versionStr = pkg.version != null && pkg.version !== '' ? String(pkg.version) : null
   const thumbUrl = useThumbnail(`pkg:${pkg.filename}`)
@@ -585,7 +618,7 @@ export function LibraryTableRow({
   return (
     <div
       onClick={(e) => onClick?.(pkg, e)}
-      className={`flex items-center cursor-pointer transition-colors border-b border-border h-full ${selected || bulkSelected ? 'bg-elevated' : 'hover:bg-elevated/50'} ${disabled ? 'opacity-60 hover:opacity-90' : ''}`}
+      className={`flex items-center cursor-pointer transition-colors border-b border-border h-full ${selected || bulkSelected ? 'bg-elevated' : 'hover:bg-elevated/50'} ${dim ? 'opacity-60 hover:opacity-90' : ''}`}
     >
       {bulkMode && (
         <div
@@ -640,9 +673,10 @@ export function LibraryTableRow({
           >
             Corrupted
           </span>
-        ) : disabled ? (
+        ) : inactive ? (
           <span className="whitespace-nowrap text-warning inline-flex items-center gap-1">
-            <EyeOff size={10} className="shrink-0" /> Disabled
+            {isOffloaded ? <Archive size={10} className="shrink-0" /> : <EyeOff size={10} className="shrink-0" />}
+            {isOffloaded ? 'Offloaded' : 'Disabled'}
           </span>
         ) : pkg.isDirect ? (
           <span className="whitespace-nowrap text-success">Installed</span>
@@ -1021,28 +1055,6 @@ function depStatusTag(dep, dlStatus, dlProgress) {
   return (
     <span title="Not found on the hub — no install source available" className={`${TAG} text-error bg-error/8`}>
       Missing
-    </span>
-  )
-}
-
-/** Ellipsis via CSS; native tooltip only when text overflows (no :overflow in CSS). */
-function TruncateWithTooltip({ text, className }) {
-  const ref = useRef(null)
-  const [clipped, setClipped] = useState(false)
-
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const measure = () => setClipped(el.scrollWidth > el.clientWidth)
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [text])
-
-  return (
-    <span ref={ref} className={className} title={clipped ? text : undefined}>
-      {text}
     </span>
   )
 }

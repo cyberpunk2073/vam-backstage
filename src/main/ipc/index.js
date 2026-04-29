@@ -11,6 +11,7 @@ import { registerDevHandlers } from './dev.js'
 import { registerShellHandlers } from './shell.js'
 import { registerExtractHandlers } from './extract.js'
 import { registerLabelHandlers } from './labels.js'
+import { registerLibraryDirHandlers } from './library-dirs.js'
 
 export function registerAllHandlers() {
   registerAppHandlers()
@@ -26,4 +27,5 @@ export function registerAllHandlers() {
   registerDevHandlers()
   registerExtractHandlers()
   registerLabelHandlers()
+  registerLibraryDirHandlers()
 }

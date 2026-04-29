@@ -1,16 +1,15 @@
 import { readdir, stat } from 'fs/promises'
 import { join } from 'path'
-import { ADDON_PACKAGES } from '../../shared/paths.js'
 import { isLocalPackage } from '../../shared/local-package.js'
 import { isVarFilename, canonicalVarFilename } from './var-reader.js'
 import { detectLeaves } from './graph.js'
 import { scanAndUpsert } from './ingest.js'
 import {
   getPackageCacheInfo,
-  getAllDbFilenames,
+  getAllDbFilenamesWithDir,
   deletePackages,
   batchSetDirect,
-  setPackageEnabled,
+  setStorageState,
   getSetting,
   setSetting,
 } from '../db.js'
@@ -26,25 +25,50 @@ import {
   getReverseDeps,
   getContentByPackage,
 } from '../store.js'
+import { refreshLibraryDirs, getAllLibraryDirs } from '../library-dirs.js'
+import { normalizeAuxDisabled } from '../watcher.js'
 
 /**
- * Run a full library scan.
+ * Run a full library scan across the main dir and every registered aux dir.
  * @param {string} vamDir - VaM installation root
  * @param {function} onProgress - callback({ phase, step, total, message })
  * @returns {Promise<{ scanned: number, added: number, removed: number }>}
  */
 export async function runScan(vamDir, onProgress = () => {}) {
-  const addonDir = join(vamDir, ADDON_PACKAGES)
+  refreshLibraryDirs()
+  const dirs = getAllLibraryDirs() // [{ id: null|number, path }] (main first)
   const isInitialScan = !getSetting('initial_scan_done')
 
   // Phase 1: Index .var files on disk
   onProgress({ phase: 'indexing', step: 0, total: 0, message: 'Indexing .var files…' })
-  const varFiles = await walkForVars(addonDir)
+  const varFiles = []
+  // Cross-dir collision policy: main wins, then offload dirs by created_at ascending.
+  // `dirs` is already in that order, so dedup-by-first-seen implements the policy.
+  // The shadowed copies are byte-identical (.var is content-addressed and immutable),
+  // so silently picking one is invisible to the user.
+  const seenFilenames = new Set()
+  // Track which dir ids we successfully reached so we don't treat packages
+  // sitting in a temporarily-offline offload dir (unmounted drive, etc.) as removed.
+  const reachableDirIds = new Set()
+  for (const dir of dirs) {
+    const { results, ok } = await walkForVars(dir.path, dir.id)
+    if (!ok) {
+      console.warn(`[scanner] Library directory unreachable, skipping prune for it: ${dir.path}`)
+      continue
+    }
+    reachableDirIds.add(dir.id ?? null)
+    for (const r of results) {
+      if (seenFilenames.has(r.filename)) continue
+      seenFilenames.add(r.filename)
+      varFiles.push(r)
+    }
+  }
+  const offlineCount = dirs.length - reachableDirIds.size
   onProgress({
     phase: 'indexing',
     step: varFiles.length,
     total: varFiles.length,
-    message: `Found ${varFiles.length} .var files`,
+    message: `Found ${varFiles.length} .var files${offlineCount ? ` (${offlineCount} dir(s) offline)` : ''}`,
   })
 
   // Phase 2: Read manifests (with scan cache)
@@ -53,18 +77,19 @@ export async function runScan(vamDir, onProgress = () => {}) {
   const newFilenames = new Set()
   const unreadable = []
   for (let i = 0; i < varFiles.length; i++) {
-    const { filename, fullPath, mtime, size, isEnabled } = varFiles[i]
+    const { filename, fullPath, mtime, size, storageState, libraryDirId } = varFiles[i]
     onProgress({ phase: 'reading', step: i + 1, total: varFiles.length, message: filename })
-    const enabledInt = isEnabled ? 1 : 0
 
     const cached = getPackageCacheInfo(filename)
     if (cached && cached.file_mtime === mtime && cached.size_bytes === size) {
-      if (cached.is_enabled !== enabledInt) setPackageEnabled(filename, isEnabled)
+      if (cached.storage_state !== storageState || (cached.library_dir_id ?? null) !== (libraryDirId ?? null)) {
+        setStorageState(filename, storageState, libraryDirId)
+      }
       continue // scan cache hit
     }
 
     try {
-      const result = await scanAndUpsert(fullPath, { isEnabled, isDirect: 0 })
+      const result = await scanAndUpsert(fullPath, { storageState, libraryDirId, isDirect: 0 })
       if (!result) continue
       scanned++
       if (!cached) {
@@ -80,8 +105,15 @@ export async function runScan(vamDir, onProgress = () => {}) {
   // Phase 3: Build dependency graph — remove stale packages, classify direct vs dependency
   onProgress({ phase: 'graph', step: 0, total: 1, message: 'Detecting removed packages…' })
   const diskFilenames = new Set(varFiles.map((v) => v.filename))
-  const dbFilenames = getAllDbFilenames()
-  const removed = dbFilenames.filter((f) => !isLocalPackage(f) && !diskFilenames.has(f))
+  // Removed = rows whose home dir we successfully scanned AND whose canonical filename
+  // wasn't seen on disk. Offline-aux protection (skip prune for packages whose dir
+  // failed to enumerate) AND `__local__` sentinel exclusion (it's never on disk).
+  const removed = getAllDbFilenamesWithDir()
+    .filter(
+      (r) =>
+        !isLocalPackage(r.filename) && reachableDirIds.has(r.library_dir_id ?? null) && !diskFilenames.has(r.filename),
+    )
+    .map((r) => r.filename)
   if (removed.length > 0) deletePackages(removed)
 
   const needsLeafDetection = isInitialScan || newFilenames.size > 0 || removed.length > 0
@@ -140,26 +172,54 @@ export async function runScan(vamDir, onProgress = () => {}) {
 const VAR_STAT_CONCURRENCY = 8
 
 /**
- * Recursively find all .var and .var.disabled files under a directory.
- * Returns [{ filename, fullPath, mtime, size, isEnabled }]
- * filename is always the canonical .var form.
- * Within a single directory, .var takes precedence if both .var and .var.disabled exist.
+ * Recursively find all `.var` (and `.var.disabled`) files under `dir`.
  *
- * Two-pass: first walk dirents (cheap, single-threaded by directory) collecting
- * candidate paths, then `stat` them under bounded concurrency to mask per-call
- * AV / FS latency without thrashing the libuv pool.
+ * Returns `{ results: [{ filename, fullPath, mtime, size, storageState, libraryDirId }], ok }`:
+ *  - `ok` is false only when the root `dir` itself was unreachable (offline aux dir,
+ *    missing path); caller uses this to skip pruning packages that may still live there.
+ *  - Unreadable subdirectories are silently skipped without flipping `ok`.
+ *
+ * `filename` is always the canonical `.var` form. Within one directory the suffix-less
+ * `.var` wins if both variants are present.
+ *
+ * Aux dirs (`libraryDirId != null`) are always suffix-less in our model. Stray
+ * `.var.disabled` files from external tooling are normalized via `normalizeAuxDisabled`
+ * (rename to bare `.var` when no sibling exists, otherwise unlink). One-time fixup.
+ *
+ * Two-pass for performance: collect dirents (cheap, sequential by directory) then `stat`
+ * candidates under `pLimit(VAR_STAT_CONCURRENCY)` so AV / cross-FS latency doesn't
+ * serialize on a single libuv worker. Symlinks skipped explicitly (Windows quirk:
+ * directory symlinks return `isDirectory() === false` so we'd otherwise miss them
+ * here only to have chokidar follow them later).
  */
-async function walkForVars(dir) {
+async function walkForVars(dir, libraryDirId) {
   const t0 = Date.now()
   const candidates = []
-  await collectVarCandidates(dir, candidates)
+  const ok = await collectVarCandidates(dir, candidates, true)
+  if (!ok) return { results: [], ok: false }
+
   const limit = pLimit(VAR_STAT_CONCURRENCY)
   const records = await Promise.all(
-    candidates.map(({ canonical, fullPath, isDisabled }) =>
+    candidates.map((c) =>
       limit(async () => {
+        let { fullPath, isDisabled, canonical } = c
+        if (libraryDirId != null && isDisabled) {
+          const bare = await normalizeAuxDisabled(fullPath)
+          if (!bare) return null
+          fullPath = bare
+          isDisabled = false
+        }
         try {
           const s = await stat(fullPath)
-          return { filename: canonical, fullPath, mtime: s.mtimeMs / 1000, size: s.size, isEnabled: !isDisabled }
+          const storageState = libraryDirId != null ? 'offloaded' : isDisabled ? 'disabled' : 'enabled'
+          return {
+            filename: canonical,
+            fullPath,
+            mtime: s.mtimeMs / 1000,
+            size: s.size,
+            storageState,
+            libraryDirId,
+          }
         } catch {
           return null
         }
@@ -167,27 +227,35 @@ async function walkForVars(dir) {
     ),
   )
   const results = records.filter(Boolean)
-  console.info(`Library scan: indexed ${results.length} .var files in ${Date.now() - t0} ms`)
-  return results
+  console.info(
+    `Library scan: indexed ${results.length} .var files in ${Date.now() - t0} ms (libraryDirId=${libraryDirId ?? 'main'})`,
+  )
+  return { results, ok: true }
 }
 
-async function collectVarCandidates(dir, out) {
+/**
+ * Recursive dirent walk that pushes `{canonical, fullPath, isDisabled}` candidates
+ * into `out`. Returns false only when the **root** `dir` is unreachable so the
+ * caller can distinguish "nothing here" from "couldn't read here". Sub-directory
+ * read failures are silently skipped (matches today's silent-skip semantics).
+ */
+async function collectVarCandidates(dir, out, isRoot) {
   let entries
   try {
     entries = await readdir(dir, { withFileTypes: true })
   } catch {
-    return
+    return !isRoot
   }
   const localFiles = new Map()
   for (const entry of entries) {
     const fullPath = join(dir, entry.name)
-    if (entry.isDirectory()) {
-      await collectVarCandidates(fullPath, out)
-    } else if (entry.isSymbolicLink()) {
+    if (entry.isSymbolicLink()) {
       // Belt-and-braces: the load-bearing Windows quirk is that isDirectory()
       // returns false for directory symlinks (so we skip them by accident);
       // explicit check survives any future refactor that resolves symlinks.
       continue
+    } else if (entry.isDirectory()) {
+      await collectVarCandidates(fullPath, out, false)
     } else if (entry.isFile() && isVarFilename(entry.name)) {
       const isDisabled = /\.disabled$/i.test(entry.name)
       const canonical = isDisabled ? canonicalVarFilename(entry.name) : entry.name
@@ -199,6 +267,7 @@ async function collectVarCandidates(dir, out) {
   for (const [canonical, { fullPath, isDisabled }] of localFiles) {
     out.push({ canonical, fullPath, isDisabled })
   }
+  return true
 }
 
 /**
