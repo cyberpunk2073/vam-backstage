@@ -1,9 +1,10 @@
 /** In-app release notes (substantial user-facing changes only), newest first. */
 export const CHANGELOG = [
   {
-    version: '0.1.12',
-    date: '2026-04-27',
+    version: '0.2.1',
+    date: '2026-04-30',
     notes: [
+      'Register package offload directories outside AddonPackages to keep packages in your library without VaM loading them.',
       'Loose files outside .var packages now show up in the library alongside your installs, with a filter to view local-only items.',
       'User-defined labels for organizing packages and content items into your own groups, filterable in the library and content views.',
       'Faster startup, smoother browsing after scans, and quicker thumbnail loads.',
