@@ -1,3 +1,4 @@
+import { Gift, Wrench, Bug } from 'lucide-react'
 import {
   Dialog,
   DialogClose,
@@ -9,10 +10,19 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 
+/** @typedef {import('@/lib/changelog').ChangelogEntry} ChangelogEntry */
+/** @typedef {import('@/lib/changelog').ChangelogNote} ChangelogNote */
+
+const KIND_META = {
+  new: { Icon: Gift, label: 'New', colorCls: 'text-emerald-400/70' },
+  improved: { Icon: Wrench, label: 'Improved', colorCls: 'text-sky-400/70' },
+  fixed: { Icon: Bug, label: 'Fixed', colorCls: 'text-amber-400/70' },
+}
+
 /**
  * @param {object} props
  * @param {boolean} props.open
- * @param {readonly { version: string, date: string, notes: string[] }[]} props.entries
+ * @param {readonly ChangelogEntry[]} props.entries
  * @param {string} props.version app version to record when dismissed
  * @param {() => void} props.onDismiss called on close (X, overlay click, or Got it)
  */
@@ -25,7 +35,7 @@ export function WhatsNewDialog({ open, entries, version, onDismiss }) {
         if (!next) onDismiss()
       }}
     >
-      <DialogContent className="flex flex-col max-h-[85vh] max-w-md sm:max-w-md">
+      <DialogContent className="flex flex-col max-h-[85vh] max-w-lg sm:max-w-lg gap-3">
         <DialogHeader>
           <DialogTitle className="text-popover-foreground text-lg">
             What&apos;s new{version ? ` in v${version}` : ''}
@@ -34,19 +44,18 @@ export function WhatsNewDialog({ open, entries, version, onDismiss }) {
             Here&apos;s what&apos;s changed since your last launch.
           </DialogDescription>
         </DialogHeader>
-        <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1 -mr-1">
+        <div className="flex-1 min-h-0 overflow-y-auto pr-1 -mr-1 space-y-5">
           {entries.map((entry) => (
-            <section key={entry.version}>
+            <section key={entry.version} className="space-y-2.5">
               {!single && (
-                <h3 className="text-xs font-medium text-muted-foreground mb-1.5">
-                  v{entry.version} · {entry.date}
-                </h3>
+                <div className="flex items-baseline gap-2 pb-1 border-b border-border/60">
+                  <span className="font-heading text-sm font-semibold text-accent-blue">v{entry.version}</span>
+                  <span className="text-xs text-muted-foreground">{entry.date}</span>
+                </div>
               )}
-              <ul className="list-disc pl-4 space-y-1 text-sm text-foreground/95">
+              <ul className="space-y-2.5">
                 {entry.notes.map((note, i) => (
-                  <li key={i} className="leading-relaxed select-text">
-                    {note}
-                  </li>
+                  <NoteRow key={i} note={note} />
                 ))}
               </ul>
             </section>
@@ -59,5 +68,20 @@ export function WhatsNewDialog({ open, entries, version, onDismiss }) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/** @param {{ note: ChangelogNote }} props */
+function NoteRow({ note }) {
+  const meta = KIND_META[note.kind] ?? KIND_META.new
+  const { Icon } = meta
+  return (
+    <li className="flex gap-2.5">
+      <Icon size={13} className={`mt-[5px] shrink-0 ${meta.colorCls}`} aria-label={meta.label} />
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-foreground select-text">{note.title}</div>
+        <div className="text-[13px] text-foreground/65 leading-snug select-text">{note.body}</div>
+      </div>
+    </li>
   )
 }
