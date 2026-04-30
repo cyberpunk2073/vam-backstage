@@ -4,7 +4,7 @@ import {
   Compass,
   Download,
   Eye,
-  EyeOff,
+  Power,
   FolderTree,
   Heart,
   LayoutGrid,
@@ -34,6 +34,7 @@ import {
 } from '@/components/package-action-dialogs'
 import FileTreeDialog from '@/components/FileTreeDialog'
 import { displayName } from '@/lib/utils'
+import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { useDownloadStore } from '@/stores/useDownloadStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
@@ -184,8 +185,8 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
   const p = detail || pkg
   const name = displayName(p)
   const hasDependents = (p.dependents?.length ?? 0) > 0
-  const hasCascadeDeps = (p.cascadeDisableDeps?.length ?? 0) > 0
-  const showDisableDialog = isPackageActive(p.storageState) && (hasDependents || hasCascadeDeps)
+  const suppressDisablePackageWarning = useLibraryStore((s) => s.suppressDisablePackageWarning)
+  const showDisableDialog = packageNeedsDisableConfirmation(p, suppressDisablePackageWarning)
   const dependentNames = hasDependents
     ? p.dependents
         .slice(0, 2)
@@ -420,13 +421,16 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
               </ContextMenuSub>
               <ContextMenuSeparator />
               <ContextMenuItem onSelect={() => void runLibraryBulkToggleEnabledFromStore()}>
-                {bulkEnableUi.allEnabled && !bulkEnableUi.mixed ? (
-                  <EyeOff size={12} className="shrink-0 text-text-secondary" />
-                ) : bulkEnableUi.mixed ? (
-                  <Eye size={12} className="shrink-0 text-text-tertiary" />
-                ) : (
-                  <Eye size={12} className="shrink-0 text-text-secondary" />
-                )}
+                <Power
+                  size={12}
+                  className={
+                    bulkEnableUi.mixed
+                      ? 'shrink-0 text-text-tertiary'
+                      : bulkEnableUi.allDisabled
+                        ? 'shrink-0 text-error'
+                        : 'shrink-0 text-text-secondary'
+                  }
+                />
                 {bulkEnableUi.label} ({bulkSelectedFilenames.length})
               </ContextMenuItem>
               <ContextMenuItem variant="destructive" onSelect={() => void runLibraryBulkRemoveFromStore()}>
@@ -598,16 +602,15 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
               <ContextMenuSeparator />
               {showDisableDialog ? (
                 <ContextMenuItem onSelect={() => setDisableOpen(true)} disabled={!detail}>
-                  <EyeOff size={12} className="shrink-0" />
+                  <Power size={12} className="shrink-0" />
                   Disable…
                 </ContextMenuItem>
               ) : (
                 <ContextMenuItem onSelect={() => void handleToggleEnabled()}>
-                  {isPackageActive(p.storageState ?? 'enabled') ? (
-                    <EyeOff size={12} className="shrink-0" />
-                  ) : (
-                    <Eye size={12} className="shrink-0" />
-                  )}
+                  <Power
+                    size={12}
+                    className={isPackageActive(p.storageState ?? 'enabled') ? 'shrink-0' : 'shrink-0 text-error'}
+                  />
                   {isPackageActive(p.storageState ?? 'enabled') ? 'Disable' : 'Enable'}
                 </ContextMenuItem>
               )}

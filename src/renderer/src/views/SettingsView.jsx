@@ -67,6 +67,8 @@ export default function SettingsView() {
   const fetchStats = useStatusStore((s) => s.fetchStats)
   const dimInactive = useLibraryStore((s) => s.dimInactive)
   const setDimInactive = useLibraryStore((s) => s.setDimInactive)
+  const suppressDisablePackageWarning = useLibraryStore((s) => s.suppressDisablePackageWarning)
+  const setSuppressDisablePackageWarning = useLibraryStore((s) => s.setSuppressDisablePackageWarning)
 
   const refreshLibDirs = useCallback(async () => {
     try {
@@ -668,6 +670,16 @@ export default function SettingsView() {
                 </div>
               </div>
               <Switch checked={dimInactive} onCheckedChange={setDimInactive} />
+            </label>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-text-primary font-medium">Skip confirmation when disabling packages</div>
+                <div className="text-[11px] text-text-tertiary mt-0.5">
+                  When ON, disabling a package that has dependents or cascade-disabled deps runs immediately with no
+                  confirmation dialog.
+                </div>
+              </div>
+              <Switch checked={suppressDisablePackageWarning} onCheckedChange={setSuppressDisablePackageWarning} />
             </label>
           </div>
         </Section>

@@ -7,7 +7,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Button } from '@/components/ui/button'
 import { LabelChip } from '@/components/labels/LabelChip'
 import { LabelManageMenu } from '@/components/labels/LabelManageMenu'
-import { enableMatchingPackages } from '@/components/labels/labelActions'
 import { useLabelRename } from '@/components/labels/useLabelRename'
 import { labelColor } from '@/lib/labels'
 
@@ -164,17 +163,33 @@ export default function FilterPanel({
             )}
 
             {section.type === 'select' && (
-              <Select value={section.value} onValueChange={section.onChange}>
+              <Select value={String(section.value)} onValueChange={section.onChange}>
                 <SelectTrigger className="w-full h-8 bg-elevated text-xs text-text-secondary">
-                  <SelectValue />
+                  <SelectValue placeholder={section.placeholder} />
                 </SelectTrigger>
                 <SelectContent>
                   {section.options.map((opt) => {
                     const val = typeof opt === 'string' ? opt : opt.value
-                    const label = typeof opt === 'string' ? opt : opt.label
+                    const key = String(val)
+                    if (typeof opt === 'string') {
+                      return (
+                        <SelectItem key={key} value={key}>
+                          {opt}
+                        </SelectItem>
+                      )
+                    }
+                    const hasCount = opt.count != null
+                    if (hasCount) {
+                      return (
+                        <SelectItem key={key} value={key} selectLabel={opt.label ?? key}>
+                          <span className="text-text-tertiary text-[11px] shrink-0 ml-auto">{opt.count}</span>
+                        </SelectItem>
+                      )
+                    }
+                    const menuText = opt.menuLabel ?? opt.label ?? key
                     return (
-                      <SelectItem key={val} value={val}>
-                        {label}
+                      <SelectItem key={key} value={key}>
+                        {menuText}
                       </SelectItem>
                     )
                   })}
@@ -437,8 +452,6 @@ function LabelsAutocomplete({ value = [], onChange, labels = [], placeholder = '
               surface="sidebar"
               applicationCount={(label.packageCount || 0) + (label.contentCount || 0)}
               onStartRename={() => startRename(label)}
-              onEnableMatching={() => enableMatchingPackages(label.id, true)}
-              onDisableMatching={() => enableMatchingPackages(label.id, false)}
               onDeleted={() => removeLabel(label.id)}
             >
               <LabelChip
@@ -511,8 +524,6 @@ function LabelsAutocomplete({ value = [], onChange, labels = [], placeholder = '
                 surface="sidebar"
                 applicationCount={total}
                 onStartRename={() => startRename(label)}
-                onEnableMatching={() => enableMatchingPackages(label.id, true)}
-                onDisableMatching={() => enableMatchingPackages(label.id, false)}
               >
                 <button
                   type="button"

@@ -5,7 +5,7 @@ import { getContentGradient } from '@/lib/utils'
 import { useThumbnail } from '@/hooks/useThumbnail'
 import { useContentCategoryExpandedStore } from '@/stores/useContentCategoryExpandedStore'
 
-export function ContentRow({ item, onSelect, disabled, suppressHiddenStyle = false }) {
+export function ContentRow({ item, onSelect, suppressHiddenStyle = false }) {
   const thumbKey = item.thumbnailPath ? `ct:${item.packageFilename}\0${item.thumbnailPath}` : null
   const thumbUrl = useThumbnail(thumbKey)
 
@@ -63,19 +63,13 @@ export function ContentRow({ item, onSelect, disabled, suppressHiddenStyle = fal
           </span>
         )}
       </span>
-      {disabled ? (
-        <span className="text-warning opacity-50" title="Package is disabled">
-          {item.hidden ? <EyeOff size={12} /> : <Eye size={12} />}
-        </span>
-      ) : (
-        <button
-          type="button"
-          onClick={handleToggleHidden}
-          className={`cursor-pointer ${item.hidden ? 'text-error' : 'text-text-tertiary hover:text-text-secondary'}`}
-        >
-          {item.hidden ? <EyeOff size={12} /> : <Eye size={12} />}
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={handleToggleHidden}
+        className={`cursor-pointer ${item.hidden ? 'text-error' : 'text-text-tertiary hover:text-text-secondary'}`}
+      >
+        {item.hidden ? <EyeOff size={12} /> : <Eye size={12} />}
+      </button>
       <button
         type="button"
         onClick={handleToggleFavorite}
@@ -87,7 +81,7 @@ export function ContentRow({ item, onSelect, disabled, suppressHiddenStyle = fal
   )
 }
 
-export function ContentCategory({ items, label, onSelectRow, disabled, suppressHiddenRowStyle = false }) {
+export function ContentCategory({ items, label, onSelectRow, suppressHiddenRowStyle = false }) {
   const expanded = useContentCategoryExpandedStore((s) => s.expandedByType[label] ?? true)
   const toggleCategory = useContentCategoryExpandedStore((s) => s.toggle)
   const allHidden = items.every((i) => i.hidden)
@@ -126,20 +120,14 @@ export function ContentCategory({ items, label, onSelectRow, disabled, suppressH
           <span className="normal-case tracking-normal">({items.length})</span>
         </button>
         <div className="flex items-center gap-0.5 ml-auto opacity-0 group-hover/cat:opacity-100 transition-opacity">
-          {disabled ? (
-            <span className="p-0.5 text-warning opacity-50" title="Package is disabled">
-              {allHidden ? <EyeOff size={10} /> : <Eye size={10} />}
-            </span>
-          ) : (
-            <button
-              type="button"
-              onClick={handleToggleHidden}
-              className={`cursor-pointer p-0.5 rounded hover:bg-elevated transition-colors ${allHidden ? 'text-error' : 'text-text-tertiary hover:text-text-secondary'}`}
-              title={allHidden ? 'Show all' : 'Hide all'}
-            >
-              {allHidden ? <EyeOff size={10} /> : <Eye size={10} />}
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={handleToggleHidden}
+            className={`cursor-pointer p-0.5 rounded hover:bg-elevated transition-colors ${allHidden ? 'text-error' : 'text-text-tertiary hover:text-text-secondary'}`}
+            title={allHidden ? 'Show all' : 'Hide all'}
+          >
+            {allHidden ? <EyeOff size={10} /> : <Eye size={10} />}
+          </button>
           <button
             type="button"
             onClick={handleToggleFavorite}
@@ -153,13 +141,7 @@ export function ContentCategory({ items, label, onSelectRow, disabled, suppressH
       {expanded && (
         <div className="border border-border rounded overflow-hidden divide-y divide-border">
           {items.map((item) => (
-            <ContentRow
-              key={item.id}
-              item={item}
-              onSelect={onSelectRow}
-              disabled={disabled}
-              suppressHiddenStyle={suppressHiddenRowStyle}
-            />
+            <ContentRow key={item.id} item={item} onSelect={onSelectRow} suppressHiddenStyle={suppressHiddenRowStyle} />
           ))}
         </div>
       )}

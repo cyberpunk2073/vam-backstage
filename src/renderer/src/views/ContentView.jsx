@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   Eye,
   EyeOff,
+  Power,
   Star,
   X,
   Loader2,
@@ -15,6 +16,8 @@ import {
   Tag,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { AlertDialog, AlertDialogTrigger } from '@/components/ui/alert-dialog'
+import { DisablePackageDialogContent } from '@/components/package-action-dialogs'
 import { toast } from '@/components/Toast'
 import {
   TYPE_COLORS,
@@ -32,6 +35,7 @@ import {
 } from '@/lib/utils'
 import { useThumbnail } from '@/hooks/useThumbnail'
 import { useContentStore } from '@/stores/useContentStore'
+import { useLibraryStore } from '@/stores/useLibraryStore'
 import { useLabelsStore } from '@/stores/useLabelsStore'
 import { AuthorAvatar, AuthorLink, ContentCard, ContentTableRow } from '@/components/PackageCard'
 import { ContentItemContextMenu } from '@/components/ContentItemContextMenu'
@@ -52,10 +56,18 @@ import { openLightbox } from '@/components/ThumbnailLightbox'
 import { haystacksMatchAllTerms, searchAndTerms } from '@shared/search-text.js'
 import { isLocalPackage } from '@shared/local-package.js'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
+import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
 import { StorageStateChip } from '@/components/StorageStateChip'
 
 const SORT_OPTIONS = ['Recently installed', 'Name A-Z', 'Package', 'Type']
-const isEffectivelyHidden = (c) => c.hidden || !isPackageActive(c.storageState ?? 'enabled')
+const isPackageDisabled = (c) => !isPackageActive(c.storageState ?? 'enabled')
+
+function matchesContentPackageStatus(c, packageStatusFilter) {
+  if (packageStatusFilter === 'all') return true
+  const disabled = isPackageDisabled(c)
+  if (packageStatusFilter === 'disabled') return disabled
+  return !disabled
+}
 
 function contentMatchesSelectedTags(c, selectedTags) {
   if (selectedTags.length === 0) return true
@@ -93,6 +105,46 @@ function matchesContentPackageFilter(c, packageFilter) {
   return !c.isDirect
 }
 
+/** Shared sidebar facet pipeline; pass `omit` to skip one dimension being counted/filtered. */
+function applyContentSidebarFilters(baseItems, ctx, omit = {}) {
+  let items = baseItems
+
+  if (!omit.selectedTypes && ctx.selectedTypes.length > 0) {
+    const typeSet = new Set(ctx.selectedTypes)
+    items = items.filter((c) => typeSet.has(c.category))
+  }
+
+  if (!omit.selectedPackageTypes && ctx.selectedPackageTypes.length > 0) {
+    const ptSet = new Set(ctx.selectedPackageTypes)
+    items = items.filter((c) => {
+      if (ptSet.has('Other') && !isCoreLibraryCategory(c.parentPackageType)) return true
+      return ptSet.has(libraryTypeBadgeLabel(c.parentPackageType))
+    })
+  }
+
+  if (!omit.packageFilter) {
+    items = items.filter((c) => matchesContentPackageFilter(c, ctx.packageFilter))
+  }
+
+  if (!omit.packageStatus) {
+    items = items.filter((c) => matchesContentPackageStatus(c, ctx.packageStatusFilter))
+  }
+
+  if (!omit.visibility) {
+    const vf = ctx.visibilityFilter
+    if (vf === 'visible') items = items.filter((c) => !c.hidden)
+    else if (vf === 'hidden') items = items.filter((c) => c.hidden)
+    else if (vf === 'favorites') items = items.filter((c) => c.favorite)
+  }
+
+  if (!omit.tagsLabels) {
+    items = items.filter((c) => contentMatchesSelectedTags(c, ctx.selectedTags))
+    items = items.filter((c) => contentMatchesSelectedLabels(c, ctx.selectedLabelIds))
+  }
+
+  return items
+}
+
 export default function ContentView({ onNavigate, navContext }) {
   const {
     contents,
@@ -105,6 +157,7 @@ export default function ContentView({ onNavigate, navContext }) {
     selectedTags,
     selectedLabelIds,
     packageFilter,
+    packageStatusFilter,
     visibilityFilter,
     primarySort,
     secondarySort,
@@ -118,6 +171,7 @@ export default function ContentView({ onNavigate, navContext }) {
     setSelectedTags,
     setSelectedLabelIds,
     setPackageFilter,
+    setPackageStatusFilter,
     setVisibilityFilter,
     setPrimarySort,
     setSecondarySort,
@@ -209,64 +263,78 @@ export default function ContentView({ onNavigate, navContext }) {
   }, [contents, search, authorSearch])
 
   const typeCounts = useMemo(() => {
-    let items = baseFiltered
-    if (selectedPackageTypes.length > 0) {
-      const ptSet = new Set(selectedPackageTypes)
-      items = items.filter((c) => {
-        const label = libraryTypeBadgeLabel(c.parentPackageType)
-        if (ptSet.has('Other') && !isCoreLibraryCategory(c.parentPackageType)) return true
-        return ptSet.has(label)
-      })
-    }
-    items = items.filter((c) => matchesContentPackageFilter(c, packageFilter))
-    if (visibilityFilter === 'visible') items = items.filter((c) => !isEffectivelyHidden(c))
-    else if (visibilityFilter === 'hidden') items = items.filter((c) => isEffectivelyHidden(c))
-    else if (visibilityFilter === 'favorites') items = items.filter((c) => c.favorite)
-    items = items.filter((c) => contentMatchesSelectedTags(c, selectedTags))
-    items = items.filter((c) => contentMatchesSelectedLabels(c, selectedLabelIds))
+    const items = applyContentSidebarFilters(
+      baseFiltered,
+      {
+        selectedTypes,
+        selectedPackageTypes,
+        packageFilter,
+        packageStatusFilter,
+        visibilityFilter,
+        selectedTags,
+        selectedLabelIds,
+      },
+      { selectedTypes: true },
+    )
     const counts = { _total: items.length }
     for (const c of items) counts[c.category] = (counts[c.category] || 0) + 1
     return counts
-  }, [baseFiltered, selectedPackageTypes, packageFilter, visibilityFilter, selectedTags, selectedLabelIds])
+  }, [
+    baseFiltered,
+    selectedTypes,
+    selectedPackageTypes,
+    packageFilter,
+    packageStatusFilter,
+    visibilityFilter,
+    selectedTags,
+    selectedLabelIds,
+  ])
 
   const packageTypeCounts = useMemo(() => {
-    let items = baseFiltered
-    if (selectedTypes.length > 0) {
-      const typeSet = new Set(selectedTypes)
-      items = items.filter((c) => typeSet.has(c.category))
-    }
-    items = items.filter((c) => matchesContentPackageFilter(c, packageFilter))
-    if (visibilityFilter === 'visible') items = items.filter((c) => !isEffectivelyHidden(c))
-    else if (visibilityFilter === 'hidden') items = items.filter((c) => isEffectivelyHidden(c))
-    else if (visibilityFilter === 'favorites') items = items.filter((c) => c.favorite)
-    items = items.filter((c) => contentMatchesSelectedTags(c, selectedTags))
-    items = items.filter((c) => contentMatchesSelectedLabels(c, selectedLabelIds))
+    const items = applyContentSidebarFilters(
+      baseFiltered,
+      {
+        selectedTypes,
+        selectedPackageTypes,
+        packageFilter,
+        packageStatusFilter,
+        visibilityFilter,
+        selectedTags,
+        selectedLabelIds,
+      },
+      { selectedPackageTypes: true },
+    )
     const counts = { _total: items.length }
     for (const c of items) {
       const label = libraryTypeBadgeLabel(c.parentPackageType)
       counts[label] = (counts[label] || 0) + 1
     }
     return counts
-  }, [baseFiltered, selectedTypes, packageFilter, visibilityFilter, selectedTags, selectedLabelIds])
+  }, [
+    baseFiltered,
+    selectedTypes,
+    selectedPackageTypes,
+    packageFilter,
+    packageStatusFilter,
+    visibilityFilter,
+    selectedTags,
+    selectedLabelIds,
+  ])
 
   const packageFilterCounts = useMemo(() => {
-    let items = baseFiltered
-    if (selectedTypes.length > 0) {
-      const typeSet = new Set(selectedTypes)
-      items = items.filter((c) => typeSet.has(c.category))
-    }
-    if (selectedPackageTypes.length > 0) {
-      const ptSet = new Set(selectedPackageTypes)
-      items = items.filter((c) => {
-        if (ptSet.has('Other') && !isCoreLibraryCategory(c.parentPackageType)) return true
-        return ptSet.has(libraryTypeBadgeLabel(c.parentPackageType))
-      })
-    }
-    if (visibilityFilter === 'visible') items = items.filter((c) => !isEffectivelyHidden(c))
-    else if (visibilityFilter === 'hidden') items = items.filter((c) => isEffectivelyHidden(c))
-    else if (visibilityFilter === 'favorites') items = items.filter((c) => c.favorite)
-    items = items.filter((c) => contentMatchesSelectedTags(c, selectedTags))
-    items = items.filter((c) => contentMatchesSelectedLabels(c, selectedLabelIds))
+    const items = applyContentSidebarFilters(
+      baseFiltered,
+      {
+        selectedTypes,
+        selectedPackageTypes,
+        packageFilter,
+        packageStatusFilter,
+        visibilityFilter,
+        selectedTags,
+        selectedLabelIds,
+      },
+      { packageFilter: true },
+    )
     let installed = 0,
       dependency = 0,
       local = 0
@@ -276,66 +344,93 @@ export default function ContentView({ onNavigate, navContext }) {
       else dependency++
     }
     return { all: items.length, installed, dependency, local }
-  }, [baseFiltered, selectedTypes, selectedPackageTypes, visibilityFilter, selectedTags, selectedLabelIds])
+  }, [
+    baseFiltered,
+    selectedTypes,
+    selectedPackageTypes,
+    packageFilter,
+    packageStatusFilter,
+    visibilityFilter,
+    selectedTags,
+    selectedLabelIds,
+  ])
+
+  const packageStatusCounts = useMemo(() => {
+    const items = applyContentSidebarFilters(
+      baseFiltered,
+      {
+        selectedTypes,
+        selectedPackageTypes,
+        packageFilter,
+        packageStatusFilter,
+        visibilityFilter,
+        selectedTags,
+        selectedLabelIds,
+      },
+      { packageStatus: true },
+    )
+    let enabled = 0,
+      disabled = 0
+    for (const c of items) {
+      if (isPackageDisabled(c)) disabled++
+      else enabled++
+    }
+    return { all: enabled + disabled, enabled, disabled }
+  }, [
+    baseFiltered,
+    selectedTypes,
+    selectedPackageTypes,
+    packageFilter,
+    packageStatusFilter,
+    visibilityFilter,
+    selectedTags,
+    selectedLabelIds,
+  ])
 
   const visibilityCounts = useMemo(() => {
-    let items = baseFiltered
-    if (selectedTypes.length > 0) {
-      const typeSet = new Set(selectedTypes)
-      items = items.filter((c) => typeSet.has(c.category))
-    }
-    if (selectedPackageTypes.length > 0) {
-      const ptSet = new Set(selectedPackageTypes)
-      items = items.filter((c) => {
-        if (ptSet.has('Other') && !isCoreLibraryCategory(c.parentPackageType)) return true
-        return ptSet.has(libraryTypeBadgeLabel(c.parentPackageType))
-      })
-    }
-    items = items.filter((c) => matchesContentPackageFilter(c, packageFilter))
-    items = items.filter((c) => contentMatchesSelectedTags(c, selectedTags))
-    items = items.filter((c) => contentMatchesSelectedLabels(c, selectedLabelIds))
+    const items = applyContentSidebarFilters(
+      baseFiltered,
+      {
+        selectedTypes,
+        selectedPackageTypes,
+        packageFilter,
+        packageStatusFilter,
+        visibilityFilter,
+        selectedTags,
+        selectedLabelIds,
+      },
+      { visibility: true },
+    )
     let visible = 0,
       hidden = 0,
       favorites = 0
     for (const c of items) {
-      if (isEffectivelyHidden(c)) hidden++
+      if (c.hidden) hidden++
       else visible++
       if (c.favorite) favorites++
     }
     return { all: visible + hidden, visible, hidden, favorites }
-  }, [baseFiltered, selectedTypes, selectedPackageTypes, packageFilter, selectedTags, selectedLabelIds])
+  }, [
+    baseFiltered,
+    selectedTypes,
+    selectedPackageTypes,
+    packageFilter,
+    packageStatusFilter,
+    visibilityFilter,
+    selectedTags,
+    selectedLabelIds,
+  ])
 
   const filtered = useMemo(() => {
-    let result = [...baseFiltered]
-    if (selectedTypes.length > 0) {
-      const typeSet = new Set(selectedTypes)
-      result = result.filter((c) => typeSet.has(c.category))
-    }
-    if (selectedPackageTypes.length > 0) {
-      const ptSet = new Set(selectedPackageTypes)
-      result = result.filter((c) => {
-        if (ptSet.has('Other') && !isCoreLibraryCategory(c.parentPackageType)) return true
-        return ptSet.has(libraryTypeBadgeLabel(c.parentPackageType))
-      })
-    }
-    result = result.filter((c) => matchesContentPackageFilter(c, packageFilter))
-    if (visibilityFilter === 'visible') result = result.filter((c) => !isEffectivelyHidden(c))
-    else if (visibilityFilter === 'hidden') result = result.filter((c) => isEffectivelyHidden(c))
-    else if (visibilityFilter === 'favorites') result = result.filter((c) => c.favorite)
-    if (selectedTags.length > 0) {
-      result = result.filter((c) => {
-        if (!c.hubTags) return false
-        const tags = c.hubTags
-          .toLowerCase()
-          .split(',')
-          .map((t) => t.trim())
-        return selectedTags.every((st) => tags.includes(st))
-      })
-    }
-    if (selectedLabelIds.length > 0) {
-      result = result.filter((c) => contentMatchesSelectedLabels(c, selectedLabelIds))
-    }
-
+    let result = applyContentSidebarFilters(baseFiltered, {
+      selectedTypes,
+      selectedPackageTypes,
+      packageFilter,
+      packageStatusFilter,
+      visibilityFilter,
+      selectedTags,
+      selectedLabelIds,
+    })
     const sortFns = {
       'Recently installed': (a, b) => (b.firstSeenAt || 0) - (a.firstSeenAt || 0),
       'Name A-Z': (a, b) => (a.displayName || '').localeCompare(b.displayName || ''),
@@ -366,6 +461,7 @@ export default function ContentView({ onNavigate, navContext }) {
     selectedTags,
     selectedLabelIds,
     packageFilter,
+    packageStatusFilter,
     visibilityFilter,
     primarySort,
     secondarySort,
@@ -411,19 +507,6 @@ export default function ContentView({ onNavigate, navContext }) {
         ],
       },
       {
-        key: 'package',
-        label: 'Package',
-        type: 'list',
-        value: packageFilter,
-        onChange: setPackageFilter,
-        items: [
-          { value: 'all', label: 'All', count: packageFilterCounts.all },
-          { value: 'installed', label: 'Installed', count: packageFilterCounts.installed },
-          { value: 'dependency', label: 'Dependencies', count: packageFilterCounts.dependency },
-          { value: 'local', label: 'Local', count: packageFilterCounts.local },
-        ],
-      },
-      {
         key: 'visibility',
         label: 'Visibility',
         type: 'list',
@@ -437,13 +520,29 @@ export default function ContentView({ onNavigate, navContext }) {
         ],
       },
       {
-        key: 'author',
-        label: 'Author',
-        type: 'text-autocomplete',
-        value: authorSearch,
-        onChange: setAuthorSearch,
-        suggestions: authorCounts,
-        placeholder: 'Filter by author…',
+        key: 'packageStatus',
+        label: 'Package status',
+        type: 'list',
+        value: packageStatusFilter,
+        onChange: setPackageStatusFilter,
+        items: [
+          { value: 'all', label: 'All', count: packageStatusCounts.all },
+          { value: 'enabled', label: 'Enabled', count: packageStatusCounts.enabled },
+          { value: 'disabled', label: 'Disabled', count: packageStatusCounts.disabled },
+        ],
+      },
+      {
+        key: 'package',
+        label: 'Package',
+        type: 'select',
+        value: packageFilter,
+        onChange: setPackageFilter,
+        options: [
+          { value: 'all', label: 'All', count: packageFilterCounts.all },
+          { value: 'installed', label: 'Installed', count: packageFilterCounts.installed },
+          { value: 'dependency', label: 'Dependencies', count: packageFilterCounts.dependency },
+          { value: 'local', label: 'Local', count: packageFilterCounts.local },
+        ],
       },
       ...(labels.length
         ? [
@@ -466,6 +565,15 @@ export default function ContentView({ onNavigate, navContext }) {
         onChange: setSelectedTags,
         suggestions: tagCounts,
         placeholder: 'Filter by tags…',
+      },
+      {
+        key: 'author',
+        label: 'Author',
+        type: 'text-autocomplete',
+        value: authorSearch,
+        onChange: setAuthorSearch,
+        suggestions: authorCounts,
+        placeholder: 'Filter by author…',
       },
       {
         key: 'primarySort',
@@ -491,6 +599,8 @@ export default function ContentView({ onNavigate, navContext }) {
       packageTypeCounts,
       packageFilter,
       packageFilterCounts,
+      packageStatusFilter,
+      packageStatusCounts,
       visibilityFilter,
       visibilityCounts,
       authorSearch,
@@ -507,6 +617,7 @@ export default function ContentView({ onNavigate, navContext }) {
       selectSinglePackageType,
       togglePackageType,
       setPackageFilter,
+      setPackageStatusFilter,
       setVisibilityFilter,
       setAuthorSearch,
       setSelectedTags,
@@ -544,7 +655,7 @@ export default function ContentView({ onNavigate, navContext }) {
 
   const bulkActive = bulkSelectedIds.length > 0
 
-  const scrollResetKey = `${search}\0${authorSearch}\0${selectedTypes.join(',')}\0${selectedPackageTypes.join(',')}\0${selectedTags.join(',')}\0${selectedLabelIds.join(',')}\0${packageFilter}\0${visibilityFilter}\0${primarySort}\0${secondarySort}`
+  const scrollResetKey = `${search}\0${authorSearch}\0${selectedTypes.join(',')}\0${selectedPackageTypes.join(',')}\0${selectedTags.join(',')}\0${selectedLabelIds.join(',')}\0${packageFilter}\0${packageStatusFilter}\0${visibilityFilter}\0${primarySort}\0${secondarySort}`
 
   const lastSelectedIdxRef = useRef(0)
   const prevScrollResetKeyRef = useRef(scrollResetKey)
@@ -667,10 +778,8 @@ export default function ContentView({ onNavigate, navContext }) {
   const bulkVisibilityState = useMemo(() => {
     const items = filtered.filter((c) => bulkSelectedIds.includes(c.id))
     if (!items.length) return { disabled: true, mixed: false, allHidden: false }
-    const eligible = items.filter((c) => isPackageActive(c.storageState ?? 'enabled'))
-    if (!eligible.length) return { disabled: true, mixed: false, allHidden: false }
-    const hiddenCount = eligible.filter((c) => c.hidden).length
-    const allHidden = hiddenCount === eligible.length
+    const hiddenCount = items.filter((c) => c.hidden).length
+    const allHidden = hiddenCount === items.length
     const allVisible = hiddenCount === 0
     return {
       disabled: false,
@@ -692,7 +801,7 @@ export default function ContentView({ onNavigate, navContext }) {
   const runBulkHidden = useCallback(
     async (hidden) => {
       const items = filtered
-        .filter((c) => bulkSelectedIds.includes(c.id) && isPackageActive(c.storageState ?? 'enabled'))
+        .filter((c) => bulkSelectedIds.includes(c.id))
         .map((c) => ({
           id: c.id,
           packageFilename: c.packageFilename,
@@ -733,6 +842,41 @@ export default function ContentView({ onNavigate, navContext }) {
     if (st.mixed || st.allVisible) void runBulkHidden(true)
     else void runBulkHidden(false)
   }, [bulkVisibilityState, runBulkHidden])
+
+  /** Owning-package enable/disable across the bulk selection: collapse content items
+   *  to their unique parent packages, ignore local-only files (no .var to toggle). */
+  const bulkPackageEnabledState = useMemo(() => {
+    const items = filtered.filter((c) => bulkSelectedIds.includes(c.id))
+    const byFilename = new Map()
+    for (const c of items) {
+      if (!c.packageFilename || isLocalPackage(c.packageFilename)) continue
+      if (!byFilename.has(c.packageFilename)) byFilename.set(c.packageFilename, c.storageState ?? 'enabled')
+    }
+    const states = [...byFilename.values()]
+    if (!states.length)
+      return { disabled: true, allEnabled: false, allDisabled: false, mixed: false, packageCount: 0, filenames: [] }
+    const enabledCount = states.filter((s) => isPackageActive(s)).length
+    return {
+      disabled: false,
+      allEnabled: enabledCount === states.length,
+      allDisabled: enabledCount === 0,
+      mixed: enabledCount > 0 && enabledCount < states.length,
+      packageCount: byFilename.size,
+      filenames: [...byFilename.keys()],
+    }
+  }, [filtered, bulkSelectedIds])
+
+  const handleBulkPackageToggleEnabled = useCallback(async () => {
+    const st = bulkPackageEnabledState
+    if (st.disabled) return
+    const enabled = !st.allEnabled
+    try {
+      await window.api.packages.setEnabled(st.filenames, enabled)
+      await useLibraryStore.getState().fetchPackages()
+    } catch (err) {
+      toast(`Failed: ${err.message}`)
+    }
+  }, [bulkPackageEnabledState])
 
   const handleBulkFavoriteClick = useCallback(() => {
     const st = bulkFavoriteState
@@ -828,6 +972,36 @@ export default function ContentView({ onNavigate, navContext }) {
                 fill={bulkFavoriteState.allFav && !bulkFavoriteState.mixed ? 'none' : 'currentColor'}
               />
               {bulkFavoriteState.allFav && !bulkFavoriteState.mixed ? 'Unfavorite' : 'Favorite'}
+            </button>
+            <button
+              type="button"
+              disabled={bulkPackageEnabledState.disabled}
+              onClick={handleBulkPackageToggleEnabled}
+              title={
+                bulkPackageEnabledState.disabled
+                  ? 'Selection has no togglable packages (local files only)'
+                  : bulkPackageEnabledState.allEnabled
+                    ? `Disable ${bulkPackageEnabledState.packageCount} owning package${bulkPackageEnabledState.packageCount !== 1 ? 's' : ''}`
+                    : `Enable ${bulkPackageEnabledState.packageCount} owning package${bulkPackageEnabledState.packageCount !== 1 ? 's' : ''}`
+              }
+              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded cursor-pointer border border-border hover:bg-elevated text-[11px] text-text-primary disabled:opacity-40 disabled:pointer-events-none"
+            >
+              <Power
+                size={16}
+                className={cn(
+                  'shrink-0',
+                  bulkPackageEnabledState.mixed
+                    ? 'text-text-tertiary'
+                    : bulkPackageEnabledState.allDisabled
+                      ? 'text-error'
+                      : 'text-text-secondary',
+                )}
+              />
+              <span>
+                {bulkPackageEnabledState.allEnabled && !bulkPackageEnabledState.mixed ? 'Disable' : 'Enable'} package
+                {bulkPackageEnabledState.packageCount !== 1 ? 's' : ''}
+                {!bulkPackageEnabledState.disabled ? ` (${bulkPackageEnabledState.packageCount})` : ''}
+              </span>
             </button>
             <LabelApplyPopover
               align="end"
@@ -1180,18 +1354,12 @@ function ContentDetailPanel({
                 </button>
               </LabelApplyPopover>
             )}
-            {!isPackageActive(item.storageState ?? 'enabled') ? (
-              <span className="shrink-0 p-1 text-warning opacity-60" title="Package is disabled">
-                <EyeOff size={14} />
-              </span>
-            ) : (
-              <button
-                onClick={() => onToggleHidden?.(item)}
-                className={`shrink-0 p-1 rounded cursor-pointer transition-colors ${item.hidden ? 'text-error hover:text-error/70' : 'text-text-tertiary hover:text-text-secondary'}`}
-              >
-                {item.hidden ? <EyeOff size={14} /> : <Eye size={14} />}
-              </button>
-            )}
+            <button
+              onClick={() => onToggleHidden?.(item)}
+              className={`shrink-0 p-1 rounded cursor-pointer transition-colors ${item.hidden ? 'text-error hover:text-error/70' : 'text-text-tertiary hover:text-text-secondary'}`}
+            >
+              {item.hidden ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
             <button
               onClick={() => onToggleFavorite?.(item)}
               className={`shrink-0 p-1 rounded cursor-pointer transition-colors ${item.favorite ? 'text-warning hover:text-warning/70' : 'text-text-tertiary hover:text-warning'}`}
@@ -1251,7 +1419,7 @@ function ContentDetailPanel({
             </>
           ) : pkg ? (
             <>
-              <div className="flex items-start gap-2.5">
+              <div className="flex items-center gap-2.5">
                 <div
                   className={`w-10 h-10 rounded shrink-0 relative overflow-hidden${pkgThumbUrl ? ' cursor-pointer' : ''}`}
                   onClick={() => openLightbox(pkgThumbUrl)}
@@ -1279,6 +1447,7 @@ function ContentDetailPanel({
                     </span>
                   </div>
                 </div>
+                <PackageEnableButton pkg={pkg} pkgTitle={pkgTitle} />
               </div>
 
               <div className="flex w-full items-center gap-1.5 mt-2 min-w-0 flex-wrap text-[10px]">
@@ -1358,7 +1527,6 @@ function ContentDetailPanel({
             <MoreFromPackage
               grouped={moreGrouped}
               onSelectRelated={onSelectRelated}
-              disabled={!isPackageActive(pkg.storageState ?? 'enabled')}
               suppressHiddenRowStyle={suppressHiddenRowStyle}
             />
           </div>
@@ -1373,7 +1541,6 @@ function ContentDetailPanel({
             <MoreFromPackage
               grouped={localGrouped}
               onSelectRelated={onSelectRelated}
-              disabled={false}
               suppressHiddenRowStyle={suppressHiddenRowStyle}
             />
           </div>
@@ -1383,7 +1550,44 @@ function ContentDetailPanel({
   )
 }
 
-function MoreFromPackage({ grouped, onSelectRelated, disabled, suppressHiddenRowStyle = false }) {
+function PackageEnableButton({ pkg, pkgTitle }) {
+  const active = isPackageActive(pkg.storageState ?? 'enabled')
+  const suppressDisablePackageWarning = useLibraryStore((s) => s.suppressDisablePackageWarning)
+  const needsDialog = packageNeedsDisableConfirmation(pkg, suppressDisablePackageWarning)
+
+  const onToggle = async () => {
+    try {
+      await window.api.packages.toggleEnabled(pkg.filename)
+    } catch (err) {
+      toast(`Failed to toggle package: ${err.message}`)
+    }
+  }
+
+  const label = active ? 'Disable package' : 'Enable package'
+  const className = `shrink-0 p-1 rounded cursor-pointer transition-colors ${active ? 'text-text-tertiary hover:text-text-secondary' : 'text-error hover:text-error/70'}`
+  const icon = <Power size={14} />
+
+  if (needsDialog) {
+    return (
+      <AlertDialog>
+        <AlertDialogTrigger asChild>
+          <button type="button" title={label} aria-label={label} className={className}>
+            {icon}
+          </button>
+        </AlertDialogTrigger>
+        <DisablePackageDialogContent pkg={pkg} name={pkgTitle} onConfirm={onToggle} />
+      </AlertDialog>
+    )
+  }
+
+  return (
+    <button type="button" onClick={onToggle} title={label} aria-label={label} className={className}>
+      {icon}
+    </button>
+  )
+}
+
+function MoreFromPackage({ grouped, onSelectRelated, suppressHiddenRowStyle = false }) {
   const types = Object.keys(grouped).sort(compareContentTypes)
 
   return (
@@ -1394,7 +1598,6 @@ function MoreFromPackage({ grouped, onSelectRelated, disabled, suppressHiddenRow
           items={grouped[type]}
           label={type}
           onSelectRow={onSelectRelated}
-          disabled={disabled}
           suppressHiddenRowStyle={suppressHiddenRowStyle}
         />
       ))}

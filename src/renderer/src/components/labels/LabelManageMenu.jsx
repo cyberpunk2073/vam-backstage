@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, CircleMinus, Eye, EyeOff, Pencil, Trash2 } from 'lucide-react'
+import { Check, CircleMinus, Pencil, Trash2 } from 'lucide-react'
 import { toast } from '@/components/Toast'
 import {
   ContextMenu,
@@ -29,10 +29,9 @@ const SOFT_PALETTE_INDICES = LABEL_PALETTE.map((_, i) => i).filter((i) => LABEL_
 
 /**
  * Right-click menu wrapping a label chip / row. Surface variants:
- *   - 'item'    — chip in detail panel; includes "Remove from this item"; can add
- *                 "Enable / Disable all packages" when `onEnableMatching` / `onDisableMatching` are passed
+ *   - 'item'    — chip in detail panel; includes "Remove from this item"
  *   - 'card'    — chip / dot in a card or apply-widget row; standard set
- *   - 'sidebar' — row in filter sidebar; same package enable/disable actions when those callbacks are passed
+ *   - 'sidebar' — filter sidebar row; same core actions as card
  *
  * All callbacks are optional. `onRemoveFromItem` only matters in 'item' surface.
  * `onStartRename` flips the chip into inline-edit mode in the parent. `onDeleted`
@@ -48,11 +47,7 @@ export function LabelManageMenu({
   onStartRename,
   onRemoveFromItem,
   onDeleted,
-  // sidebar & detail row: enable/disable every package carrying this label
-  onEnableMatching,
-  onDisableMatching,
 }) {
-  const matchingPackageCount = label?.packageCount ?? 0
   const [confirmOpen, setConfirmOpen] = useState(false)
 
   if (!label) return children ?? null
@@ -129,26 +124,6 @@ export function LabelManageMenu({
               ))}
             </ContextMenuSubContent>
           </ContextMenuSub>
-
-          {(surface === 'sidebar' || surface === 'item') &&
-            (onEnableMatching || onDisableMatching) &&
-            matchingPackageCount > 0 && (
-              <>
-                <ContextMenuSeparator />
-                {onEnableMatching && (
-                  <ContextMenuItem onSelect={() => onEnableMatching()}>
-                    <Eye size={12} className="shrink-0" />
-                    {`Enable all packages (${matchingPackageCount})`}
-                  </ContextMenuItem>
-                )}
-                {onDisableMatching && (
-                  <ContextMenuItem onSelect={() => onDisableMatching()}>
-                    <EyeOff size={12} className="shrink-0" />
-                    {`Disable all packages (${matchingPackageCount})`}
-                  </ContextMenuItem>
-                )}
-              </>
-            )}
 
           <ContextMenuSeparator />
           <ContextMenuItem

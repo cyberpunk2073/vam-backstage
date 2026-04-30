@@ -64,7 +64,26 @@ function SelectLabel({ className, ...props }) {
   )
 }
 
-function SelectItem({ className, children, ...props }) {
+/** When `selectLabel` is set, only that text becomes the trigger label; `children` render beside it (e.g. count). */
+function SelectItem({ className, children, selectLabel, ...props }) {
+  if (selectLabel != null) {
+    return (
+      <SelectPrimitive.Item
+        data-slot="select-item"
+        className={cn(
+          "relative flex w-full cursor-default items-center gap-1.5 rounded px-2.5 py-1.5 text-xs outline-hidden select-none focus:bg-hover focus:text-text-primary data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
+          className,
+        )}
+        {...props}
+      >
+        <SelectPrimitive.ItemText className="min-w-0 flex-1 truncate">{selectLabel}</SelectPrimitive.ItemText>
+        <SelectPrimitive.ItemIndicator className="inline-flex shrink-0">
+          <CheckIcon className="pointer-events-none size-3 text-accent-blue" />
+        </SelectPrimitive.ItemIndicator>
+        {children}
+      </SelectPrimitive.Item>
+    )
+  }
   return (
     <SelectPrimitive.Item
       data-slot="select-item"

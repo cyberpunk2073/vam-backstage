@@ -6,6 +6,7 @@ import {
   Layers,
   Eye,
   EyeOff,
+  Power,
   Star,
   Download,
   Heart,
@@ -35,6 +36,7 @@ import { isLocalPackage } from '@shared/local-package.js'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { TruncateWithTooltip } from './TruncateWithTooltip'
 import { useThumbnail } from '@/hooks/useThumbnail'
 import { useHubInstallState } from '@/hooks/useHubInstallState'
@@ -478,7 +480,7 @@ export function LibraryCard({
                 className={`${THUMB_OVERLAY_CHIP} bg-warning/25 text-warning backdrop-blur-sm flex items-center gap-1`}
                 title={inactiveTitle(isOffloaded)}
               >
-                {isOffloaded ? <Archive size={10} className="shrink-0" /> : <EyeOff size={10} className="shrink-0" />}
+                {isOffloaded ? <Archive size={10} className="shrink-0" /> : <Power size={10} className="shrink-0" />}
                 {isOffloaded ? 'OFFLOADED' : 'DISABLED'}
               </div>
             )}
@@ -498,7 +500,7 @@ export function LibraryCard({
               className={`${THUMB_OVERLAY_CHIP} bg-warning/25 text-warning backdrop-blur-sm`}
               title={inactiveTitle(isOffloaded)}
             >
-              {isOffloaded ? <Archive size={10} className="shrink-0" /> : <EyeOff size={10} className="shrink-0" />}
+              {isOffloaded ? <Archive size={10} className="shrink-0" /> : <Power size={10} className="shrink-0" />}
             </div>
           )}
           {pkg.isCorrupted && (
@@ -676,7 +678,7 @@ export function LibraryTableRow({
           </span>
         ) : inactive ? (
           <span className="whitespace-nowrap text-warning inline-flex items-center gap-1">
-            {isOffloaded ? <Archive size={10} className="shrink-0" /> : <EyeOff size={10} className="shrink-0" />}
+            {isOffloaded ? <Archive size={10} className="shrink-0" /> : <Power size={10} className="shrink-0" />}
             {isOffloaded ? 'Offloaded' : 'Disabled'}
           </span>
         ) : pkg.isDirect ? (
@@ -742,13 +744,14 @@ export function ContentTableRow({
   bulkMode = false,
   bulkSelected = false,
   onBulkToggle,
-  /** When true, content that is only user-hidden (not disabled package) renders at full saturation/opacity — for the gallery "Hidden" visibility filter */
+  /** When true, user-hidden items render at full saturation/opacity (e.g. Hidden visibility filter). Inactive-package dimming follows Settings → dim inactive packages. */
   suppressHiddenDimming = false,
 }) {
   const typeColor = TYPE_COLORS[item.category] || '#6366f1'
   const isHidden = item.hidden
   const isDisabledPkg = !isPackageActive(item.storageState ?? 'enabled')
-  const dimHiddenChrome = isDisabledPkg || (isHidden && !suppressHiddenDimming)
+  const dimInactive = useLibraryStore((s) => s.dimInactive)
+  const dimHiddenChrome = (isHidden && !suppressHiddenDimming) || (isDisabledPkg && dimInactive)
   const thumbKey = item.thumbnailPath ? `ct:${item.packageFilename}\0${item.thumbnailPath}` : null
   const thumbUrl = useThumbnail(thumbKey)
   const isLocalContent = isLocalPackage(item.packageFilename)
@@ -790,7 +793,10 @@ export function ContentTableRow({
           <div className="flex items-baseline gap-2 min-w-0">
             <span className="text-[12px] font-medium text-text-primary truncate">{item.displayName}</span>
           </div>
-          <div className="text-[10px] text-text-tertiary truncate">{pkgLabel}</div>
+          <div className="text-[10px] text-text-tertiary truncate flex items-center gap-1 min-w-0">
+            {isDisabledPkg && <Power size={9} className="shrink-0 text-error" />}
+            <span className="truncate">{pkgLabel}</span>
+          </div>
         </div>
       </div>
       <div
@@ -837,11 +843,7 @@ export function ContentTableRow({
         </div>
       </div>
       <div className="w-14 py-2 px-3 text-[11px]">
-        {isDisabledPkg ? (
-          <span className="text-warning opacity-60" title="Package is disabled">
-            <EyeOff size={12} />
-          </span>
-        ) : bulkMode ? (
+        {bulkMode ? (
           <span className={item.hidden ? 'text-error' : 'text-text-tertiary'}>
             {item.hidden ? <EyeOff size={12} /> : <Eye size={12} />}
           </span>
@@ -894,7 +896,8 @@ export function ContentCard({
   const typeColor = TYPE_COLORS[item.category] || '#6366f1'
   const isHidden = item.hidden
   const isDisabledPkg = !isPackageActive(item.storageState ?? 'enabled')
-  const dimHiddenChrome = isDisabledPkg || (isHidden && !suppressHiddenDimming)
+  const dimInactive = useLibraryStore((s) => s.dimInactive)
+  const dimHiddenChrome = (isHidden && !suppressHiddenDimming) || (isDisabledPkg && dimInactive)
   const pkgLabel = displayName({
     hubDisplayName: item.packageHubDisplayName,
     title: item.packageTitle,
@@ -964,45 +967,51 @@ export function ContentCard({
             )}
           </div>
         )}
-        {!bulkMode && (
+        {/* Corner slot: disabled indicator and/or hover actions (hidden in bulk mode except disabled badge) */}
+        {(isDisabledPkg || !bulkMode) && (
           <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 z-2">
-            {isDisabledPkg ? (
-              <div
-                title="Package is disabled"
-                className="size-7 shrink-0 inline-flex items-center justify-center rounded opacity-60 text-warning [&_svg]:filter-[drop-shadow(0_0_1px_rgba(0,0,0,1))_drop-shadow(0_0_2.5px_rgba(0,0,0,1))_drop-shadow(0_0_5px_rgba(0,0,0,1))_drop-shadow(0_1px_10px_rgba(0,0,0,0.85))]"
-              >
-                <EyeOff size={13} />
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onToggleHidden?.(item)
-                }}
-                className={`size-7 shrink-0 inline-flex items-center justify-center rounded cursor-pointer transition-opacity ${
-                  isHidden
-                    ? 'opacity-100 text-error bg-transparent [&_svg]:filter-[drop-shadow(0_0_1px_rgba(0,0,0,1))_drop-shadow(0_0_2.5px_rgba(0,0,0,1))_drop-shadow(0_0_5px_rgba(0,0,0,1))_drop-shadow(0_1px_10px_rgba(0,0,0,0.85))] group-hover:[&_svg]:filter-none group-hover:text-error/70 group-hover:bg-black/50 group-hover:backdrop-blur-sm'
-                    : 'opacity-0 group-hover:opacity-100 text-white/70 bg-black/50 backdrop-blur-sm'
-                }`}
-              >
-                {isHidden ? <EyeOff size={13} /> : <Eye size={13} />}
-              </button>
+            {isDisabledPkg && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="size-7 shrink-0 inline-flex items-center justify-center rounded text-error [&_svg]:filter-[drop-shadow(0_0_1px_rgba(0,0,0,1))_drop-shadow(0_0_2.5px_rgba(0,0,0,1))_drop-shadow(0_0_5px_rgba(0,0,0,1))_drop-shadow(0_1px_10px_rgba(0,0,0,0.85))]">
+                    <Power size={13} />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>Package is disabled</TooltipContent>
+              </Tooltip>
             )}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                onToggleFavorite?.(item)
-              }}
-              className={`size-7 shrink-0 inline-flex items-center justify-center rounded cursor-pointer transition-opacity ${
-                item.favorite
-                  ? 'text-warning opacity-100 bg-transparent [&_svg]:filter-[drop-shadow(0_0_1.5px_rgba(0,0,0,1))_drop-shadow(0_0_3px_rgba(0,0,0,1))_drop-shadow(0_1px_8px_rgba(0,0,0,0.9))] group-hover:[&_svg]:filter-none group-hover:bg-black/50 group-hover:backdrop-blur-sm'
-                  : 'text-white/50 bg-black/50 backdrop-blur-sm opacity-0 group-hover:opacity-100'
-              }`}
-            >
-              <Star size={13} fill={item.favorite ? 'currentColor' : 'none'} />
-            </button>
+            {!bulkMode && (
+              <>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onToggleHidden?.(item)
+                  }}
+                  className={`size-7 shrink-0 inline-flex items-center justify-center rounded cursor-pointer transition-opacity ${
+                    isHidden
+                      ? 'opacity-100 text-error bg-transparent [&_svg]:filter-[drop-shadow(0_0_1px_rgba(0,0,0,1))_drop-shadow(0_0_2.5px_rgba(0,0,0,1))_drop-shadow(0_0_5px_rgba(0,0,0,1))_drop-shadow(0_1px_10px_rgba(0,0,0,0.85))] group-hover:[&_svg]:filter-none group-hover:text-error/70 group-hover:bg-black/50 group-hover:backdrop-blur-sm'
+                      : 'opacity-0 group-hover:opacity-100 text-white/70 bg-black/50 backdrop-blur-sm'
+                  }`}
+                >
+                  {isHidden ? <EyeOff size={13} /> : <Eye size={13} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onToggleFavorite?.(item)
+                  }}
+                  className={`size-7 shrink-0 inline-flex items-center justify-center rounded cursor-pointer transition-opacity ${
+                    item.favorite
+                      ? 'text-warning opacity-100 bg-transparent [&_svg]:filter-[drop-shadow(0_0_1.5px_rgba(0,0,0,1))_drop-shadow(0_0_3px_rgba(0,0,0,1))_drop-shadow(0_1px_8px_rgba(0,0,0,0.9))] group-hover:[&_svg]:filter-none group-hover:bg-black/50 group-hover:backdrop-blur-sm'
+                      : 'text-white/50 bg-black/50 backdrop-blur-sm opacity-0 group-hover:opacity-100'
+                  }`}
+                >
+                  <Star size={13} fill={item.favorite ? 'currentColor' : 'none'} />
+                </button>
+              </>
+            )}
           </div>
         )}
         <div className="absolute bottom-0 inset-x-0 px-2.5 pb-2 pt-8 bg-linear-to-t from-black/80 to-transparent">
@@ -1082,7 +1091,7 @@ export function DepRow({ dep, depth = 0, renderChildren = true, onNavigate }) {
           (dep.storageState === 'offloaded' ? (
             <Archive size={11} className="shrink-0 text-warning" />
           ) : dep.storageState === 'disabled' ? (
-            <EyeOff size={11} className="shrink-0 text-warning" />
+            <Power size={11} className="shrink-0 text-warning" />
           ) : null)}
         <TruncateWithTooltip
           text={dep.ref}

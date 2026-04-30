@@ -1,6 +1,5 @@
 import { LabelChip } from './LabelChip'
 import { LabelManageMenu } from './LabelManageMenu'
-import { enableMatchingPackages } from './labelActions'
 import { AddLabelButton } from './AddLabelButton'
 import { useLabelObjects } from './useLabelObjects'
 import { useLabelRename } from './useLabelRename'
@@ -44,8 +43,6 @@ export function LabelsRow({ appliedIds = [], onApplyToTarget, surface = 'item' }
           applicationCount={(label.packageCount || 0) + (label.contentCount || 0)}
           onStartRename={() => startRename(label)}
           onRemoveFromItem={surface === 'item' ? () => handleRemoveFromItem(label) : undefined}
-          onEnableMatching={() => enableMatchingPackages(label.id, true)}
-          onDisableMatching={() => enableMatchingPackages(label.id, false)}
         >
           <LabelChip
             label={label}

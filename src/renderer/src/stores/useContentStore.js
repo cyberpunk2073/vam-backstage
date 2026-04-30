@@ -10,6 +10,7 @@ const FILTER_DEFAULTS = {
   selectedTags: [],
   selectedLabelIds: [],
   packageFilter: 'all',
+  packageStatusFilter: 'enabled',
   visibilityFilter: 'visible',
 }
 
@@ -41,8 +42,10 @@ export const useContentStore = create((set, get) => ({
   showPackageContents: (search) =>
     set({
       ...FILTER_DEFAULTS,
-      search,
       visibilityFilter: 'all',
+      packageFilter: 'all',
+      packageStatusFilter: 'all',
+      search,
       selectedItem: null,
       selectedPackage: null,
       bulkSelectedIds: [],
@@ -76,6 +79,7 @@ export const useContentStore = create((set, get) => ({
   setSelectedTags: (selectedTags) => set({ selectedTags }),
   setSelectedLabelIds: (selectedLabelIds) => set({ selectedLabelIds }),
   setPackageFilter: (packageFilter) => set({ packageFilter }),
+  setPackageStatusFilter: (packageStatusFilter) => set({ packageStatusFilter }),
   setVisibilityFilter: (visibilityFilter) => set({ visibilityFilter }),
   setPrimarySort: (primarySort) => set({ primarySort }),
   setSecondarySort: (secondarySort) => set({ secondarySort }),

@@ -4,9 +4,8 @@ import {
   Grid2x2,
   List,
   AlertTriangle,
-  Archive,
   Eye,
-  EyeOff,
+  Power,
   Plus,
   Trash2,
   Compass,
@@ -95,6 +94,7 @@ import {
   DisablePackageDialogContent,
   ForceRemoveDialogContent,
 } from '@/components/package-action-dialogs'
+import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
 
 const SORT_OPTIONS = ['Recently installed', 'Type', 'Name', 'Size', 'Content', 'Deps', 'Morphs']
 
@@ -114,6 +114,32 @@ function packageMatchesSelectedLabels(p, selectedLabelIds) {
   if (!ids?.length) return false
   for (const id of selectedLabelIds) if (!ids.includes(id)) return false
   return true
+}
+
+function filterPackagesByStatus(items, statusFilter, updateCheckResults) {
+  if (statusFilter === 'missing') return []
+  if (statusFilter === 'direct') return items.filter((p) => p.isDirect)
+  if (statusFilter === 'dependency') return items.filter((p) => !p.isDirect)
+  if (statusFilter === 'broken') return items.filter((p) => p.missingDeps > 0 || p.isCorrupted)
+  if (statusFilter === 'orphan') return items.filter((p) => p.isOrphan)
+  if (statusFilter === 'updates') return items.filter((p) => updateCheckResults?.[p.filename])
+  if (statusFilter === 'local') return items.filter((p) => p.isLocalOnly)
+  return items
+}
+
+function filterPackagesBySelectedTypes(items, selectedTypes) {
+  if (selectedTypes.length === 0) return items
+  const typeSet = new Set(selectedTypes)
+  return items.filter((p) => {
+    const isOther = !isCoreLibraryCategory(p.type)
+    if (typeSet.has('Other') && isOther) return true
+    return p.type && typeSet.has(p.type)
+  })
+}
+
+function filterPackagesByEnabledStorage(items, enabledFilter) {
+  if (enabledFilter === 'all') return items
+  return items.filter((p) => p.storageState === enabledFilter)
 }
 
 export default function LibraryView({ onNavigate, navContext }) {
@@ -259,15 +285,8 @@ export default function LibraryView({ onNavigate, navContext }) {
   const statusCounts = useMemo(() => {
     if (!packagesLoaded) return { direct: '…', dependency: '…', broken: '…', orphan: '…', local: '…' }
     let items = baseFiltered
-    if (selectedTypes.length > 0) {
-      const typeSet = new Set(selectedTypes)
-      items = items.filter((p) => {
-        const isOther = !isCoreLibraryCategory(p.type)
-        if (typeSet.has('Other') && isOther) return true
-        return p.type && typeSet.has(p.type)
-      })
-    }
-    if (enabledFilter !== 'all') items = items.filter((p) => p.storageState === enabledFilter)
+    items = filterPackagesBySelectedTypes(items, selectedTypes)
+    items = filterPackagesByEnabledStorage(items, enabledFilter)
     items = items.filter((p) => packageMatchesSelectedTags(p, selectedTags))
     items = items.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
     let direct = 0,
@@ -288,15 +307,8 @@ export default function LibraryView({ onNavigate, navContext }) {
   const updateFacetCount = useMemo(() => {
     if (!updateCheckResults) return updateCheckLoading ? '…' : '?'
     let items = baseFiltered
-    if (selectedTypes.length > 0) {
-      const typeSet = new Set(selectedTypes)
-      items = items.filter((p) => {
-        const isOther = !isCoreLibraryCategory(p.type)
-        if (typeSet.has('Other') && isOther) return true
-        return p.type && typeSet.has(p.type)
-      })
-    }
-    if (enabledFilter !== 'all') items = items.filter((p) => p.storageState === enabledFilter)
+    items = filterPackagesBySelectedTypes(items, selectedTypes)
+    items = filterPackagesByEnabledStorage(items, enabledFilter)
     items = items.filter((p) => packageMatchesSelectedTags(p, selectedTags))
     items = items.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
     let n = 0
@@ -315,15 +327,8 @@ export default function LibraryView({ onNavigate, navContext }) {
   ])
 
   const typeCounts = useMemo(() => {
-    let items = baseFiltered
-    if (statusFilter === 'direct') items = items.filter((p) => p.isDirect)
-    else if (statusFilter === 'dependency') items = items.filter((p) => !p.isDirect)
-    else if (statusFilter === 'broken') items = items.filter((p) => p.missingDeps > 0 || p.isCorrupted)
-    else if (statusFilter === 'orphan') items = items.filter((p) => p.isOrphan)
-    else if (statusFilter === 'updates') items = items.filter((p) => updateCheckResults?.[p.filename])
-    else if (statusFilter === 'local') items = items.filter((p) => p.isLocalOnly)
-    else if (statusFilter === 'missing') items = []
-    if (enabledFilter !== 'all') items = items.filter((p) => p.storageState === enabledFilter)
+    let items = filterPackagesByStatus(baseFiltered, statusFilter, updateCheckResults)
+    items = filterPackagesByEnabledStorage(items, enabledFilter)
     items = items.filter((p) => packageMatchesSelectedTags(p, selectedTags))
     items = items.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
     const counts = { _total: items.length }
@@ -334,38 +339,29 @@ export default function LibraryView({ onNavigate, navContext }) {
     return counts
   }, [baseFiltered, statusFilter, enabledFilter, selectedTags, selectedLabelIds, updateCheckResults])
 
-  const filtered = useMemo(() => {
-    if (statusFilter === 'missing') return []
-    let result = [...baseFiltered]
-    if (statusFilter === 'direct') result = result.filter((p) => p.isDirect)
-    else if (statusFilter === 'dependency') result = result.filter((p) => !p.isDirect)
-    else if (statusFilter === 'broken') result = result.filter((p) => p.missingDeps > 0 || p.isCorrupted)
-    else if (statusFilter === 'orphan') result = result.filter((p) => p.isOrphan)
-    else if (statusFilter === 'updates') result = result.filter((p) => updateCheckResults?.[p.filename])
-    else if (statusFilter === 'local') result = result.filter((p) => p.isLocalOnly)
-    if (enabledFilter !== 'all') result = result.filter((p) => p.storageState === enabledFilter)
-    if (selectedTypes.length > 0) {
-      const typeSet = new Set(selectedTypes)
-      result = result.filter((p) => {
-        const isOther = !isCoreLibraryCategory(p.type)
-        if (typeSet.has('Other') && isOther) return true
-        return p.type && typeSet.has(p.type)
-      })
+  /** Facet counts for Enabled filter: respects status/type/tags/labels but not enabled itself */
+  const enabledFilterCounts = useMemo(() => {
+    let items = filterPackagesByStatus(baseFiltered, statusFilter, updateCheckResults)
+    items = filterPackagesBySelectedTypes(items, selectedTypes)
+    items = items.filter((p) => packageMatchesSelectedTags(p, selectedTags))
+    items = items.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
+    let enabled = 0,
+      disabled = 0,
+      offloaded = 0
+    for (const p of items) {
+      if (p.storageState === 'disabled') disabled++
+      else if (p.storageState === 'offloaded') offloaded++
+      else if (p.storageState === 'enabled') enabled++
     }
-    if (selectedTags.length > 0) {
-      result = result.filter((p) => {
-        if (!p.hubTags) return false
-        const tags = p.hubTags
-          .toLowerCase()
-          .split(',')
-          .map((t) => t.trim())
-        return selectedTags.every((st) => tags.includes(st))
-      })
-    }
-    if (selectedLabelIds.length > 0) {
-      result = result.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
-    }
+    return { all: items.length, enabled, disabled, offloaded }
+  }, [baseFiltered, statusFilter, selectedTypes, selectedTags, selectedLabelIds, updateCheckResults])
 
+  const filtered = useMemo(() => {
+    let result = filterPackagesByStatus(baseFiltered, statusFilter, updateCheckResults)
+    result = filterPackagesByEnabledStorage(result, enabledFilter)
+    result = filterPackagesBySelectedTypes(result, selectedTypes)
+    result = result.filter((p) => packageMatchesSelectedTags(p, selectedTags))
+    result = result.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
     const sortFns = {
       'Recently installed': (a, b) => (b.firstSeenAt || 0) - (a.firstSeenAt || 0),
       Name: (a, b) => displayName(a).localeCompare(displayName(b)),
@@ -465,24 +461,16 @@ export default function LibraryView({ onNavigate, navContext }) {
       {
         key: 'enabled',
         label: 'Enabled',
-        type: 'select',
+        type: 'list',
         value: enabledFilter,
         onChange: setEnabledFilter,
-        options: [
-          { value: 'all', label: 'All' },
-          { value: 'enabled', label: 'Enabled' },
-          { value: 'disabled', label: 'Disabled' },
-          { value: 'offloaded', label: 'Offloaded' },
+        listCollapsible: false,
+        items: [
+          { value: 'all', label: 'All', count: enabledFilterCounts.all },
+          { value: 'enabled', label: 'Enabled', count: enabledFilterCounts.enabled },
+          { value: 'disabled', label: 'Disabled', count: enabledFilterCounts.disabled },
+          { value: 'offloaded', label: 'Offloaded', count: enabledFilterCounts.offloaded },
         ],
-      },
-      {
-        key: 'author',
-        label: 'Author',
-        type: 'text-autocomplete',
-        value: authorSearch,
-        onChange: setAuthorSearch,
-        suggestions: authorCounts,
-        placeholder: 'Filter by author…',
       },
       ...(labels.length
         ? [
@@ -505,6 +493,15 @@ export default function LibraryView({ onNavigate, navContext }) {
         onChange: setSelectedTags,
         suggestions: tagCounts,
         placeholder: 'Filter by tags…',
+      },
+      {
+        key: 'author',
+        label: 'Author',
+        type: 'text-autocomplete',
+        value: authorSearch,
+        onChange: setAuthorSearch,
+        suggestions: authorCounts,
+        placeholder: 'Filter by author…',
       },
       {
         key: 'license',
@@ -537,6 +534,7 @@ export default function LibraryView({ onNavigate, navContext }) {
       selectedTypes,
       typeCounts,
       statusCounts,
+      enabledFilterCounts,
       backendCounts,
       updateFacetCount,
       authorSearch,
@@ -828,13 +826,17 @@ export default function LibraryView({ onNavigate, navContext }) {
               onClick={() => void runBulkToggleEnabled()}
               className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded cursor-pointer border border-border hover:bg-elevated text-[11px] text-text-primary"
             >
-              {bulkEnabledState.allEnabled && !bulkEnabledState.mixed ? (
-                <EyeOff size={16} className="text-text-secondary shrink-0" />
-              ) : bulkEnabledState.mixed ? (
-                <Eye size={16} className="text-text-tertiary shrink-0" />
-              ) : (
-                <Eye size={16} className="text-text-secondary shrink-0" />
-              )}
+              <Power
+                size={16}
+                className={cn(
+                  'shrink-0',
+                  bulkEnabledState.mixed
+                    ? 'text-text-tertiary'
+                    : bulkEnabledState.allDisabled
+                      ? 'text-error'
+                      : 'text-text-secondary',
+                )}
+              />
               {bulkEnabledState.mixed || bulkEnabledState.allDisabled ? 'Enable' : 'Disable'}
             </button>
             <button
@@ -1714,8 +1716,8 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
   })
 
   const hasDependents = pkg.dependents?.length > 0
-  const hasCascadeDeps = pkg.cascadeDisableDeps?.length > 0
-  const showDisableDialog = hasDependents || hasCascadeDeps
+  const suppressDisablePackageWarning = useLibraryStore((s) => s.suppressDisablePackageWarning)
+  const showDisableDialog = packageNeedsDisableConfirmation(pkg, suppressDisablePackageWarning)
   const contentCount = pkg.contents?.length ?? 0
   const hasContent = contentCount > 0
   const hiddenContentCount = (pkg.contents || []).filter((c) => c.hidden).length
@@ -1944,7 +1946,7 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                           variant="outline"
                           className={`shrink-0 text-[10px] px-2.5 border-text-secondary/25 text-text-primary`}
                         >
-                          <EyeOff size={11} />
+                          <Power size={11} />
                           Disable
                         </Button>
                       </AlertDialogTrigger>
@@ -1956,7 +1958,7 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                       onClick={handleToggleEnabled}
                       className={`shrink-0 text-[10px] px-2.5 ${!isPackageActive(pkg.storageState) ? 'border-warning/50 text-warning hover:bg-warning/15' : 'border-text-secondary/25 text-text-primary'}`}
                     >
-                      {isPackageActive(pkg.storageState) ? <EyeOff size={11} /> : <Eye size={11} />}
+                      <Power size={11} />
                       {isPackageActive(pkg.storageState) ? 'Disable' : 'Enable'}
                     </Button>
                   )}
@@ -2028,7 +2030,7 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                           size="sm"
                           className="shrink-0 text-[10px] px-2.5 border-text-secondary/33 text-text-primary"
                         >
-                          <EyeOff size={11} />
+                          <Power size={11} />
                           Disable
                         </Button>
                       </AlertDialogTrigger>
@@ -2041,7 +2043,7 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                       onClick={handleToggleEnabled}
                       className={`shrink-0 text-[10px] px-2.5 ${!isPackageActive(pkg.storageState) ? 'border-warning/50 text-warning hover:bg-warning/15' : 'border-text-secondary/33 text-text-primary'}`}
                     >
-                      {isPackageActive(pkg.storageState) ? <EyeOff size={11} /> : <Eye size={11} />}
+                      <Power size={11} />
                       {isPackageActive(pkg.storageState) ? 'Disable' : 'Enable'}
                     </Button>
                   )}
@@ -2126,16 +2128,6 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
               )}
             </div>
           </div>
-          {hasContent && !isPackageActive(pkg.storageState) && (
-            <p className="text-[10px] text-warning mb-2 flex items-center gap-1">
-              {pkg.storageState === 'offloaded' ? (
-                <Archive size={10} className="shrink-0" />
-              ) : (
-                <EyeOff size={10} className="shrink-0" />
-              )}
-              All content hidden in gallery while {pkg.storageState === 'offloaded' ? 'offloaded' : 'disabled'}
-            </p>
-          )}
           {hasContent && (
             <div className="space-y-2">
               {Object.entries(grouped)
@@ -2145,7 +2137,6 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                     key={type}
                     items={items}
                     label={type}
-                    disabled={!isPackageActive(pkg.storageState)}
                     suppressHiddenRowStyle={galleryVisibilityFilter === 'hidden'}
                   />
                 ))}

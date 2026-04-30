@@ -17,7 +17,6 @@ import { useLabelsStore } from '@/stores/useLabelsStore'
 import { LabelsApplyMenuItems } from '@/components/labels/LabelsApplyMenuItems'
 import { singleTargetStateMap, bulkStateMap } from '@/components/labels/labelApplyState'
 import { applyLabelToContentItems } from '@/components/labels/labelActions'
-import { isPackageActive } from '@shared/storage-state-predicates.js'
 
 const SCENE_SOURCE_TYPES = new Set(['scene', 'legacyScene'])
 const LOOK_SOURCE_TYPES = new Set(['legacyLook'])
@@ -25,7 +24,7 @@ const KIND_NOUN = { appearance: 'appearance', outfit: 'outfit' }
 
 function applyBulkVisibilityFromStore() {
   const { contents, bulkSelectedIds } = useContentStore.getState()
-  const items = contents.filter((c) => bulkSelectedIds.includes(c.id) && isPackageActive(c.storageState ?? 'enabled'))
+  const items = contents.filter((c) => bulkSelectedIds.includes(c.id))
   if (!items.length) return
   const hiddenCount = items.filter((i) => i.hidden).length
   const allHidden = hiddenCount === items.length
@@ -100,21 +99,14 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
       .filter((c) => c && LOOK_SOURCE_TYPES.has(c.type))
   }, [showBulk, bulkSelectedIds, contents])
 
-  const bulkVisibilityEligible = useMemo(
-    () => bulkSelectedIds.some((id) => isPackageActive(contents.find((c) => c.id === id)?.storageState ?? 'enabled')),
-    [bulkSelectedIds, contents],
-  )
-
   const bulkVisibilityUi = useMemo(() => {
     const items = bulkSelectedIds.map((id) => contents.find((c) => c.id === id)).filter(Boolean)
-    const eligible = items.filter((c) => isPackageActive(c.storageState ?? 'enabled'))
-    if (!eligible.length) return { label: 'Hide', allHidden: false, allVisible: false, mixed: false }
-    const hiddenCount = eligible.filter((c) => c.hidden).length
-    const allHidden = hiddenCount === eligible.length
-    const allVisible = hiddenCount === 0
-    const mixed = !allHidden && !allVisible
+    if (!items.length) return { label: 'Hide', allHidden: false, mixed: false }
+    const hiddenCount = items.filter((c) => c.hidden).length
+    const allHidden = hiddenCount === items.length
+    const mixed = hiddenCount > 0 && hiddenCount < items.length
     const label = allHidden ? 'Show' : 'Hide'
-    return { label, allHidden, allVisible, mixed }
+    return { label, allHidden, mixed }
   }, [bulkSelectedIds, contents])
 
   const labelTargetItems = useMemo(() => {
@@ -285,7 +277,7 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
               </ContextMenuSubContent>
             </ContextMenuSub>
             <ContextMenuSeparator />
-            <ContextMenuItem disabled={!bulkVisibilityEligible} onSelect={() => applyBulkVisibilityFromStore()}>
+            <ContextMenuItem onSelect={() => applyBulkVisibilityFromStore()}>
               {bulkVisibilityUi.allHidden ? (
                 <Eye size={12} className="shrink-0 text-text-secondary" />
               ) : (
@@ -365,18 +357,8 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
           </>
         ) : (
           <>
-            <ContextMenuItem
-              disabled={!isPackageActive(item.storageState ?? 'enabled')}
-              onSelect={() => {
-                if (isPackageActive(item.storageState ?? 'enabled')) onToggleHidden?.(item)
-              }}
-            >
-              {!isPackageActive(item.storageState ?? 'enabled') ? (
-                <>
-                  <EyeOff size={12} className="shrink-0" />
-                  Package is disabled
-                </>
-              ) : item.hidden ? (
+            <ContextMenuItem onSelect={() => onToggleHidden?.(item)}>
+              {item.hidden ? (
                 <>
                   <Eye size={12} className="shrink-0" />
                   Show
