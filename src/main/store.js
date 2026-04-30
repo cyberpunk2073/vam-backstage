@@ -440,6 +440,7 @@ export function getGroupIndex() {
 export function getForwardDeps() {
   return forwardDeps
 }
+/** `includeFallbacks` adds refs satisfied by a different version of the same group (resolution === 'fallback'). */
 export function getTransitiveMissingRefs(filename, { includeFallbacks = false } = {}) {
   const visited = new Set()
   const refs = new Set()

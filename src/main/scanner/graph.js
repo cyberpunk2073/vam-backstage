@@ -83,7 +83,7 @@ function collectDepKeys(node, out) {
  * @param {string} ref - dep ref like "Author.Pkg.123" or "Author.Pkg.latest"
  * @param {Map<string, object>} packageIndex - filename -> package
  * @param {Map<string, string[]>} groupIndex - packageName -> [filenames]
- * @returns {{ resolved: string|null, resolution: string }}
+ * @returns {{ resolved: string|null, resolution: 'exact'|'latest'|'fallback'|'missing'|'invalid' }}
  */
 export function resolveRef(ref, packageIndex, groupIndex) {
   const parsed = parseDepRef(ref)
