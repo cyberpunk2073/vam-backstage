@@ -36,7 +36,6 @@ import { isLocalPackage } from '@shared/local-package.js'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
-import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { TruncateWithTooltip } from './TruncateWithTooltip'
 import { useThumbnail } from '@/hooks/useThumbnail'
 import { useHubInstallState } from '@/hooks/useHubInstallState'
@@ -58,10 +57,7 @@ function useInactiveStyle(pkg) {
   return { isOffloaded, isDisabled, inactive, dim: inactive && dimInactive }
 }
 
-const inactiveTitle = (isOffloaded) =>
-  isOffloaded
-    ? 'Stored in an offload library directory (inactive in VaM)'
-    : 'Renamed to .var.disabled (inactive in VaM)'
+const inactiveTitle = (isOffloaded) => (isOffloaded ? 'Package offloaded' : 'Package disabled')
 
 /** Drop-shadow for outline/stroke glyphs sitting directly on a thumbnail (Power, Eye, EyeOff, Archive). */
 const THUMB_OUTLINE_ICON_SHADOW =
@@ -72,7 +68,7 @@ const THUMB_FILLED_ICON_SHADOW =
   '[&_svg]:filter-[drop-shadow(0_0_1.5px_rgba(0,0,0,1))_drop-shadow(0_0_3px_rgba(0,0,0,1))_drop-shadow(0_1px_8px_rgba(0,0,0,0.9))]'
 
 /** LibraryCard top-right corner glyph layout. Caller adds the color and the appropriate shadow. */
-const LIB_CARD_CORNER_ICON = 'shrink-0 size-[18px] inline-flex items-center justify-center pointer-events-none'
+const LIB_CARD_CORNER_ICON = 'shrink-0 size-[18px] inline-flex items-center justify-center'
 
 /** Non-interactive bulk-selection marker; whole card handles clicks */
 function BulkSelectChip({ checked }) {
@@ -507,18 +503,14 @@ export function LibraryCard({
           {pkg.isCorrupted && (
             <div
               className={`${THUMB_OVERLAY_CHIP} bg-error/25 text-error backdrop-blur-sm`}
-              title="Package file is unreadable or has invalid metadata"
+              title="Unreadable file or invalid metadata"
             >
               CORRUPTED
             </div>
           )}
           {pkg.favoriteContentCount > 0 && (
             <span
-              title={
-                pkg.favoriteContentCount === 1
-                  ? '1 favorited item in this package'
-                  : `${pkg.favoriteContentCount} favorited items in this package`
-              }
+              title={`${pkg.favoriteContentCount} favorited item${pkg.favoriteContentCount === 1 ? '' : 's'}`}
               className={`${LIB_CARD_CORNER_ICON} text-warning ${THUMB_FILLED_ICON_SHADOW}`}
             >
               <Star size={11} fill="currentColor" />
@@ -972,16 +964,12 @@ export function ContentCard({
         {(isDisabledPkg || !bulkMode) && (
           <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 z-2">
             {isDisabledPkg && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div
-                    className={`size-7 shrink-0 inline-flex items-center justify-center rounded text-error ${THUMB_OUTLINE_ICON_SHADOW}`}
-                  >
-                    <Power size={13} />
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>Package is disabled</TooltipContent>
-              </Tooltip>
+              <div
+                title="Package disabled"
+                className={`size-7 shrink-0 inline-flex items-center justify-center rounded text-error ${THUMB_OUTLINE_ICON_SHADOW}`}
+              >
+                <Power size={13} />
+              </div>
             )}
             {!bulkMode && (
               <>
@@ -991,9 +979,9 @@ export function ContentCard({
                     e.stopPropagation()
                     onToggleHidden?.(item)
                   }}
-                  className={`size-7 shrink-0 inline-flex items-center justify-center rounded cursor-pointer transition-opacity ${
+                  className={`size-7 shrink-0 inline-flex items-center justify-center rounded cursor-pointer transition ${
                     isHidden
-                      ? `opacity-100 text-error bg-transparent ${THUMB_OUTLINE_ICON_SHADOW} group-hover:[&_svg]:filter-none group-hover:text-error/70 group-hover:bg-black/50 group-hover:backdrop-blur-sm`
+                      ? `opacity-100 text-error bg-transparent ${THUMB_OUTLINE_ICON_SHADOW} group-hover:text-error/70 group-hover:bg-black/50 group-hover:backdrop-blur-sm`
                       : 'opacity-0 group-hover:opacity-100 text-white/70 bg-black/50 backdrop-blur-sm'
                   }`}
                 >
@@ -1005,9 +993,9 @@ export function ContentCard({
                     e.stopPropagation()
                     onToggleFavorite?.(item)
                   }}
-                  className={`size-7 shrink-0 inline-flex items-center justify-center rounded cursor-pointer transition-opacity ${
+                  className={`size-7 shrink-0 inline-flex items-center justify-center rounded cursor-pointer transition ${
                     item.favorite
-                      ? `text-warning opacity-100 bg-transparent ${THUMB_FILLED_ICON_SHADOW} group-hover:[&_svg]:filter-none group-hover:bg-black/50 group-hover:backdrop-blur-sm`
+                      ? `text-warning opacity-100 bg-transparent ${THUMB_FILLED_ICON_SHADOW} group-hover:bg-black/50 group-hover:backdrop-blur-sm`
                       : 'text-white/50 bg-black/50 backdrop-blur-sm opacity-0 group-hover:opacity-100'
                   }`}
                 >
