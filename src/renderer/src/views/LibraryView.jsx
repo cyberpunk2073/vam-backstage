@@ -822,36 +822,36 @@ export default function LibraryView({ onNavigate, navContext }) {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Toolbar */}
         {bulkActive && statusFilter !== 'missing' ? (
-          <div className="h-10 flex items-center px-4 border-b border-border shrink-0 gap-2 flex-wrap">
+          <div className="h-10 flex flex-nowrap items-center px-4 border-b border-border shrink-0 gap-3 min-w-0 overflow-x-auto [&::-webkit-scrollbar]:h-0 [&::-webkit-scrollbar]:bg-transparent">
             <button
               type="button"
               onClick={() => void runBulkToggleEnabled()}
-              className="inline-flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer border border-border hover:bg-elevated text-[11px] text-text-primary"
+              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded cursor-pointer border border-border hover:bg-elevated text-[11px] text-text-primary"
             >
               {bulkEnabledState.allEnabled && !bulkEnabledState.mixed ? (
-                <EyeOff size={16} className="text-text-secondary" />
+                <EyeOff size={16} className="text-text-secondary shrink-0" />
               ) : bulkEnabledState.mixed ? (
-                <Eye size={16} className="text-text-tertiary" />
+                <Eye size={16} className="text-text-tertiary shrink-0" />
               ) : (
-                <Eye size={16} className="text-text-secondary" />
+                <Eye size={16} className="text-text-secondary shrink-0" />
               )}
               {bulkEnabledState.mixed || bulkEnabledState.allDisabled ? 'Enable' : 'Disable'}
             </button>
             <button
               type="button"
               onClick={() => setBulkRemoveOpen(true)}
-              className="inline-flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer border border-border text-error hover:bg-error/10 text-[11px]"
+              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded cursor-pointer border border-border text-error hover:bg-error/10 text-[11px]"
             >
-              <Trash2 size={16} />
+              <Trash2 size={16} className="shrink-0" />
               Remove
             </button>
             {bulkRemoveSummary.dep.length > 0 && (
               <button
                 type="button"
                 onClick={() => void runBulkPromote()}
-                className="inline-flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer border border-border hover:bg-elevated text-accent-blue text-[11px]"
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded cursor-pointer border border-border hover:bg-elevated text-accent-blue text-[11px]"
               >
-                <Plus size={16} />
+                <Plus size={16} className="shrink-0" />
                 Promote
               </button>
             )}
@@ -859,7 +859,7 @@ export default function LibraryView({ onNavigate, navContext }) {
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1.5 h-7 pl-2.5 pr-2 rounded-md cursor-pointer border border-border/90 bg-elevated/60 hover:bg-elevated hover:border-border text-[11px] font-medium text-text-primary shadow-sm transition-colors shrink-0"
+                  className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap h-7 pl-2.5 pr-2 rounded-md cursor-pointer border border-border/90 bg-elevated/60 hover:bg-elevated hover:border-border text-[11px] font-medium text-text-primary shadow-sm transition-colors"
                 >
                   Type
                   <ChevronDown size={14} className="text-text-tertiary shrink-0 opacity-90" strokeWidth={2.25} />
@@ -897,33 +897,33 @@ export default function LibraryView({ onNavigate, navContext }) {
             >
               <button
                 type="button"
-                className="inline-flex items-center gap-1.5 h-7 pl-2.5 pr-2 rounded-md cursor-pointer border border-border/90 bg-elevated/60 hover:bg-elevated hover:border-border text-[11px] font-medium text-text-primary shadow-sm transition-colors shrink-0"
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap h-7 pl-2.5 pr-2 rounded-md cursor-pointer border border-border/90 bg-elevated/60 hover:bg-elevated hover:border-border text-[11px] font-medium text-text-primary shadow-sm transition-colors"
               >
                 <Tag size={12} className="text-text-tertiary shrink-0" />
                 Labels
                 <ChevronDown size={14} className="text-text-tertiary shrink-0 opacity-90" strokeWidth={2.25} />
               </button>
             </LabelApplyPopover>
-            <span className="text-[11px] text-text-primary font-medium tabular-nums">
+            <span className="shrink-0 whitespace-nowrap text-[11px] text-text-primary font-medium tabular-nums">
               {bulkSelectedFilenames.length} selected
             </span>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex shrink-0 flex-nowrap items-center gap-2 whitespace-nowrap">
               <button
                 type="button"
-                className="text-[10px] text-accent-blue hover:brightness-125 transition-[filter] cursor-pointer"
+                className="shrink-0 whitespace-nowrap text-[10px] text-accent-blue hover:brightness-125 transition-[filter] cursor-pointer"
                 onClick={() => selectAllBulk(orderedLibraryFilenames)}
               >
                 Select all {filtered.length}
               </button>
               <button
                 type="button"
-                className="text-[10px] text-text-tertiary hover:text-text-secondary cursor-pointer transition-colors"
+                className="shrink-0 whitespace-nowrap text-[10px] text-text-tertiary hover:text-text-secondary cursor-pointer transition-colors"
                 onClick={() => clearBulkSelection()}
               >
                 Deselect
               </button>
             </div>
-            <div className="flex-1 min-w-4" />
+            <div className="flex-1 min-w-0" />
             <button
               type="button"
               title="Clear selection"
@@ -938,7 +938,7 @@ export default function LibraryView({ onNavigate, navContext }) {
             </span>
           </div>
         ) : (
-          <div className="h-10 flex items-center px-4 border-b border-border shrink-0 gap-2">
+          <div className="h-10 flex flex-nowrap items-center px-4 border-b border-border shrink-0 gap-2 min-w-0 overflow-x-auto [&::-webkit-scrollbar]:h-0 [&::-webkit-scrollbar]:bg-transparent">
             <ToolbarActions
               statusFilter={statusFilter}
               statusCounts={statusCounts}
@@ -952,16 +952,16 @@ export default function LibraryView({ onNavigate, navContext }) {
               onRefreshMissing={fetchMissingDeps}
               onRefreshUpdates={refreshUpdateCheck}
             />
-            <span className="text-[11px] text-text-tertiary">
+            <span className="shrink-0 whitespace-nowrap text-[11px] text-text-tertiary">
               {statusFilter === 'missing'
                 ? `${missingDeps?.length ?? '…'} missing dependencies`
                 : statusFilter === 'updates' && updateCheckResults == null
                   ? `${updateCheckLoading ? '…' : '?'} packages`
                   : `${filtered.length} packages`}
             </span>
-            <div className="flex-1" />
+            <div className="flex-1 min-w-0" />
             {statusFilter !== 'missing' && (
-              <div className="flex items-center gap-2">
+              <div className="flex shrink-0 flex-nowrap items-center gap-2">
                 {viewMode !== 'table' && (
                   <ThumbnailSizeSlider
                     cardWidth={cardWidth}

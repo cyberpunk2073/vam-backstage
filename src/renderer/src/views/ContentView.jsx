@@ -795,19 +795,19 @@ export default function ContentView({ onNavigate, navContext }) {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Toolbar */}
         {bulkActive ? (
-          <div className="h-10 flex items-center px-4 border-b border-border shrink-0 gap-3">
+          <div className="h-10 flex flex-nowrap items-center px-4 border-b border-border shrink-0 gap-3 min-w-0 overflow-x-auto [&::-webkit-scrollbar]:h-0 [&::-webkit-scrollbar]:bg-transparent">
             <button
               type="button"
               disabled={bulkVisibilityState.disabled}
               onClick={handleBulkVisibilityClick}
-              className="inline-flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer border border-border hover:bg-elevated text-[11px] text-text-primary disabled:opacity-40 disabled:pointer-events-none"
+              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded cursor-pointer border border-border hover:bg-elevated text-[11px] text-text-primary disabled:opacity-40 disabled:pointer-events-none"
             >
               {bulkVisibilityState.allHidden ? (
-                <Eye size={16} className="text-text-secondary" />
+                <Eye size={16} className="text-text-secondary shrink-0" />
               ) : (
                 <EyeOff
                   size={16}
-                  className={bulkVisibilityState.mixed ? 'text-text-tertiary' : 'text-text-secondary'}
+                  className={cn('shrink-0', bulkVisibilityState.mixed ? 'text-text-tertiary' : 'text-text-secondary')}
                 />
               )}
               {bulkVisibilityState.allHidden ? 'Show' : 'Hide'}
@@ -815,13 +815,14 @@ export default function ContentView({ onNavigate, navContext }) {
             <button
               type="button"
               onClick={handleBulkFavoriteClick}
-              className="inline-flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer border border-border hover:bg-elevated text-[11px] text-text-primary"
+              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded cursor-pointer border border-border hover:bg-elevated text-[11px] text-text-primary"
             >
               <Star
                 size={16}
                 className={cn(
                   bulkFavoriteState.allFav && !bulkFavoriteState.mixed && 'text-text-secondary',
                   bulkFavoriteState.mixed && 'text-text-tertiary',
+                  'shrink-0',
                   bulkFavoriteState.allUnfav && !bulkFavoriteState.mixed && 'text-warning',
                 )}
                 fill={bulkFavoriteState.allFav && !bulkFavoriteState.mixed ? 'none' : 'currentColor'}
@@ -837,27 +838,27 @@ export default function ContentView({ onNavigate, navContext }) {
             >
               <button
                 type="button"
-                className="inline-flex items-center gap-1.5 h-7 pl-2.5 pr-2 rounded-md cursor-pointer border border-border/90 bg-elevated/60 hover:bg-elevated hover:border-border text-[11px] font-medium text-text-primary shadow-sm transition-colors shrink-0"
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap h-7 pl-2.5 pr-2 rounded-md cursor-pointer border border-border/90 bg-elevated/60 hover:bg-elevated hover:border-border text-[11px] font-medium text-text-primary shadow-sm transition-colors"
               >
                 <Tag size={12} className="text-text-tertiary shrink-0" />
                 Labels
                 <ChevronDown size={14} className="text-text-tertiary shrink-0 opacity-90" strokeWidth={2.25} />
               </button>
             </LabelApplyPopover>
-            <span className="text-[11px] text-text-primary font-medium tabular-nums">
+            <span className="shrink-0 whitespace-nowrap text-[11px] text-text-primary font-medium tabular-nums">
               {bulkSelectedIds.length} selected
             </span>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex shrink-0 flex-nowrap items-center gap-2 whitespace-nowrap">
               <button
                 type="button"
-                className="text-[10px] text-accent-blue hover:brightness-125 transition-[filter] cursor-pointer"
+                className="shrink-0 whitespace-nowrap text-[10px] text-accent-blue hover:brightness-125 transition-[filter] cursor-pointer"
                 onClick={() => selectAllBulk(orderedContentIds)}
               >
                 Select all {filtered.length}
               </button>
               <button
                 type="button"
-                className="text-[10px] text-text-tertiary hover:text-text-secondary cursor-pointer transition-colors"
+                className="shrink-0 whitespace-nowrap text-[10px] text-text-tertiary hover:text-text-secondary cursor-pointer transition-colors"
                 onClick={() => clearBulkSelection()}
               >
                 Deselect
@@ -878,10 +879,10 @@ export default function ContentView({ onNavigate, navContext }) {
             </span>
           </div>
         ) : (
-          <div className="h-10 flex items-center px-4 border-b border-border shrink-0 gap-2">
-            <span className="text-[11px] text-text-tertiary">{filtered.length} items</span>
-            <div className="flex-1" />
-            <div className="flex items-center gap-2">
+          <div className="h-10 flex flex-nowrap items-center px-4 border-b border-border shrink-0 gap-2 min-w-0 overflow-x-auto [&::-webkit-scrollbar]:h-0 [&::-webkit-scrollbar]:bg-transparent">
+            <span className="shrink-0 whitespace-nowrap text-[11px] text-text-tertiary">{filtered.length} items</span>
+            <div className="flex-1 min-w-0" />
+            <div className="flex shrink-0 flex-nowrap items-center gap-2">
               {viewMode !== 'table' && (
                 <ThumbnailSizeSlider
                   cardWidth={cardWidth}
