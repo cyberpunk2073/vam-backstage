@@ -63,6 +63,17 @@ const inactiveTitle = (isOffloaded) =>
     ? 'Stored in an offload library directory (inactive in VaM)'
     : 'Renamed to .var.disabled (inactive in VaM)'
 
+/** Drop-shadow for outline/stroke glyphs sitting directly on a thumbnail (Power, Eye, EyeOff, Archive). */
+const THUMB_OUTLINE_ICON_SHADOW =
+  '[&_svg]:filter-[drop-shadow(0_0_1px_rgba(0,0,0,1))_drop-shadow(0_0_2.5px_rgba(0,0,0,1))_drop-shadow(0_0_5px_rgba(0,0,0,1))_drop-shadow(0_1px_10px_rgba(0,0,0,0.85))]'
+
+/** Drop-shadow for filled glyphs (Star). Filled shapes cast more shadow, so it's lighter than outline. */
+const THUMB_FILLED_ICON_SHADOW =
+  '[&_svg]:filter-[drop-shadow(0_0_1.5px_rgba(0,0,0,1))_drop-shadow(0_0_3px_rgba(0,0,0,1))_drop-shadow(0_1px_8px_rgba(0,0,0,0.9))]'
+
+/** LibraryCard top-right corner glyph layout. Caller adds the color and the appropriate shadow. */
+const LIB_CARD_CORNER_ICON = 'shrink-0 size-[18px] inline-flex items-center justify-center pointer-events-none'
+
 /** Non-interactive bulk-selection marker; whole card handles clicks */
 function BulkSelectChip({ checked }) {
   return (
@@ -439,7 +450,6 @@ export function LibraryCard({
           !pkg.isDirect ||
           pkg.isLocalOnly ||
           pkg.noLookPresetTag ||
-          (inactive && !dim) ||
           (minimal && pkg.missingDeps > 0)) && (
           <div className="absolute top-2 left-2 z-2 flex max-w-[calc(100%-2.75rem)] items-center gap-1 overflow-x-auto scrollbar-hide flex-nowrap">
             {bulkMode && <BulkSelectChip checked={bulkSelected} />}
@@ -475,15 +485,6 @@ export function LibraryCard({
                 LOCAL
               </div>
             )}
-            {inactive && !dim && (
-              <div
-                className={`${THUMB_OVERLAY_CHIP} bg-warning/25 text-warning backdrop-blur-sm flex items-center gap-1`}
-                title={inactiveTitle(isOffloaded)}
-              >
-                {isOffloaded ? <Archive size={10} className="shrink-0" /> : <Power size={10} className="shrink-0" />}
-                {isOffloaded ? 'OFFLOADED' : 'DISABLED'}
-              </div>
-            )}
             {minimal && pkg.missingDeps > 0 && !bulkMode && (
               <div
                 className={`${THUMB_OVERLAY_CHIP} bg-warning/20 text-warning backdrop-blur-sm flex items-center gap-0.5`}
@@ -495,13 +496,13 @@ export function LibraryCard({
           </div>
         )}
         <div className="absolute top-2 right-2 flex items-center gap-1 z-1">
-          {dim && (
-            <div
-              className={`${THUMB_OVERLAY_CHIP} bg-warning/25 text-warning backdrop-blur-sm`}
+          {inactive && (
+            <span
+              className={`${LIB_CARD_CORNER_ICON} text-error ${THUMB_OUTLINE_ICON_SHADOW}`}
               title={inactiveTitle(isOffloaded)}
             >
-              {isOffloaded ? <Archive size={10} className="shrink-0" /> : <Power size={10} className="shrink-0" />}
-            </div>
+              {isOffloaded ? <Archive size={11} className="shrink-0" /> : <Power size={11} className="shrink-0" />}
+            </span>
           )}
           {pkg.isCorrupted && (
             <div
@@ -518,7 +519,7 @@ export function LibraryCard({
                   ? '1 favorited item in this package'
                   : `${pkg.favoriteContentCount} favorited items in this package`
               }
-              className="shrink-0 size-[18px] inline-flex items-center justify-center text-warning pointer-events-none [&_svg]:filter-[drop-shadow(0_0_1.5px_rgba(0,0,0,1))_drop-shadow(0_0_3px_rgba(0,0,0,1))_drop-shadow(0_1px_8px_rgba(0,0,0,0.9))]"
+              className={`${LIB_CARD_CORNER_ICON} text-warning ${THUMB_FILLED_ICON_SHADOW}`}
             >
               <Star size={11} fill="currentColor" />
             </span>
@@ -973,7 +974,9 @@ export function ContentCard({
             {isDisabledPkg && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="size-7 shrink-0 inline-flex items-center justify-center rounded text-error [&_svg]:filter-[drop-shadow(0_0_1px_rgba(0,0,0,1))_drop-shadow(0_0_2.5px_rgba(0,0,0,1))_drop-shadow(0_0_5px_rgba(0,0,0,1))_drop-shadow(0_1px_10px_rgba(0,0,0,0.85))]">
+                  <div
+                    className={`size-7 shrink-0 inline-flex items-center justify-center rounded text-error ${THUMB_OUTLINE_ICON_SHADOW}`}
+                  >
                     <Power size={13} />
                   </div>
                 </TooltipTrigger>
@@ -990,7 +993,7 @@ export function ContentCard({
                   }}
                   className={`size-7 shrink-0 inline-flex items-center justify-center rounded cursor-pointer transition-opacity ${
                     isHidden
-                      ? 'opacity-100 text-error bg-transparent [&_svg]:filter-[drop-shadow(0_0_1px_rgba(0,0,0,1))_drop-shadow(0_0_2.5px_rgba(0,0,0,1))_drop-shadow(0_0_5px_rgba(0,0,0,1))_drop-shadow(0_1px_10px_rgba(0,0,0,0.85))] group-hover:[&_svg]:filter-none group-hover:text-error/70 group-hover:bg-black/50 group-hover:backdrop-blur-sm'
+                      ? `opacity-100 text-error bg-transparent ${THUMB_OUTLINE_ICON_SHADOW} group-hover:[&_svg]:filter-none group-hover:text-error/70 group-hover:bg-black/50 group-hover:backdrop-blur-sm`
                       : 'opacity-0 group-hover:opacity-100 text-white/70 bg-black/50 backdrop-blur-sm'
                   }`}
                 >
@@ -1004,7 +1007,7 @@ export function ContentCard({
                   }}
                   className={`size-7 shrink-0 inline-flex items-center justify-center rounded cursor-pointer transition-opacity ${
                     item.favorite
-                      ? 'text-warning opacity-100 bg-transparent [&_svg]:filter-[drop-shadow(0_0_1.5px_rgba(0,0,0,1))_drop-shadow(0_0_3px_rgba(0,0,0,1))_drop-shadow(0_1px_8px_rgba(0,0,0,0.9))] group-hover:[&_svg]:filter-none group-hover:bg-black/50 group-hover:backdrop-blur-sm'
+                      ? `text-warning opacity-100 bg-transparent ${THUMB_FILLED_ICON_SHADOW} group-hover:[&_svg]:filter-none group-hover:bg-black/50 group-hover:backdrop-blur-sm`
                       : 'text-white/50 bg-black/50 backdrop-blur-sm opacity-0 group-hover:opacity-100'
                   }`}
                 >
