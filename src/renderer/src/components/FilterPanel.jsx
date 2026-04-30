@@ -449,7 +449,6 @@ function LabelsAutocomplete({ value = [], onChange, labels = [], placeholder = '
             <LabelManageMenu
               key={label.id}
               label={label}
-              surface="sidebar"
               applicationCount={(label.packageCount || 0) + (label.contentCount || 0)}
               onStartRename={() => startRename(label)}
               onDeleted={() => removeLabel(label.id)}
@@ -521,7 +520,6 @@ function LabelsAutocomplete({ value = [], onChange, labels = [], placeholder = '
               <LabelManageMenu
                 key={label.id}
                 label={label}
-                surface="sidebar"
                 applicationCount={total}
                 onStartRename={() => startRename(label)}
               >

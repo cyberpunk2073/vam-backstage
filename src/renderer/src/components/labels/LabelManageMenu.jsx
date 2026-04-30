@@ -1,11 +1,10 @@
 import { useState } from 'react'
-import { Check, CircleMinus, Pencil, Trash2 } from 'lucide-react'
+import { Check, Pencil, Trash2 } from 'lucide-react'
 import { toast } from '@/components/Toast'
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
-  ContextMenuLabel,
   ContextMenuSeparator,
   ContextMenuSub,
   ContextMenuSubContent,
@@ -28,26 +27,12 @@ const SHARP_PALETTE_INDICES = LABEL_PALETTE.map((_, i) => i).filter((i) => !LABE
 const SOFT_PALETTE_INDICES = LABEL_PALETTE.map((_, i) => i).filter((i) => LABEL_PALETTE[i].soft)
 
 /**
- * Right-click menu wrapping a label chip / row. Surface variants:
- *   - 'item'    — chip in detail panel; includes "Remove from this item"
- *   - 'card'    — chip / dot in a card or apply-widget row; standard set
- *   - 'sidebar' — filter sidebar row; same core actions as card
- *
- * All callbacks are optional. `onRemoveFromItem` only matters in 'item' surface.
+ * Right-click menu wrapping a label chip / row (rename, color, delete).
  * `onStartRename` flips the chip into inline-edit mode in the parent. `onDeleted`
  * runs after a successful delete. The delete confirmation `AlertDialog` lives
  * inside this component so the consumer doesn't need to wire it.
  */
-export function LabelManageMenu({
-  label,
-  surface = 'card',
-  applicationCount = 0,
-  asChild = true,
-  children,
-  onStartRename,
-  onRemoveFromItem,
-  onDeleted,
-}) {
+export function LabelManageMenu({ label, applicationCount = 0, asChild = true, children, onStartRename, onDeleted }) {
   const [confirmOpen, setConfirmOpen] = useState(false)
 
   if (!label) return children ?? null
@@ -74,16 +59,6 @@ export function LabelManageMenu({
       <ContextMenu>
         <ContextMenuTrigger asChild={asChild}>{children}</ContextMenuTrigger>
         <ContextMenuContent className="min-w-44">
-          <ContextMenuLabel>{label.name}</ContextMenuLabel>
-          {surface === 'item' && onRemoveFromItem && (
-            <>
-              <ContextMenuItem onSelect={() => onRemoveFromItem()}>
-                <CircleMinus size={12} className="shrink-0" />
-                Remove from this item
-              </ContextMenuItem>
-              <ContextMenuSeparator />
-            </>
-          )}
           {onStartRename && (
             <ContextMenuItem onSelect={() => onStartRename()}>
               <Pencil size={12} className="shrink-0" />

@@ -39,10 +39,8 @@ export function LabelsRow({ appliedIds = [], onApplyToTarget, surface = 'item' }
         <LabelManageMenu
           key={label.id}
           label={label}
-          surface={surface}
           applicationCount={(label.packageCount || 0) + (label.contentCount || 0)}
           onStartRename={() => startRename(label)}
-          onRemoveFromItem={surface === 'item' ? () => handleRemoveFromItem(label) : undefined}
         >
           <LabelChip
             label={label}
