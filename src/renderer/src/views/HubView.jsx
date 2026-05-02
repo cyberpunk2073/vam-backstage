@@ -9,6 +9,7 @@ import {
   Heart,
   Star,
   ExternalLink,
+  Bug,
   Copy,
   Check,
   Library as LibraryIcon,
@@ -43,6 +44,7 @@ import { HubCard, AuthorAvatar, DepRow } from '@/components/PackageCard'
 import FilterPanel from '@/components/FilterPanel'
 import ResizeHandle from '@/components/ResizeHandle'
 import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
+import { useIsDev } from '@/hooks/useIsDev'
 import { LICENSE_FILTER_OPTIONS, getHubResourceLicense } from '@/lib/licenses'
 import { LicenseTag } from '@/components/LicenseTag'
 import { Tag } from '@/components/ui/tag'
@@ -551,38 +553,62 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
       if (e.errorCode === -3 || e.errorCode === -2) e.preventDefault()
     }
 
-    // Inject a click-interceptor into the guest page so that target="_blank" / target="_top"
-    // links and window.open() calls navigate in-place instead of spawning a popup.
-    // Hub-origin URLs navigate inside the webview; everything else opens externally via window.open
-    // (which the main-process setWindowOpenHandler catches → shell.openExternal).
+    // Inject a click-interceptor into the guest page so that:
+    //  • External links (non-hub origin) open in the user's default browser via shell.openExternal.
+    //    Caught in capture phase + stopImmediatePropagation, otherwise XenForo's own external-link
+    //    confirmation handler claims them first and our handler never runs.
+    //  • Same-origin links with target="_blank" / target="_top" navigate the webview itself instead
+    //    of spawning a popup. Caught in bubble phase + bails on defaultPrevented so XenForo's
+    //    lightbox controllers (also bubble-phase) can claim image-gallery clicks first.
+    //
+    // The guest signals the host using console.warn with a magic prefix; window.open is
+    // unreliable inside XenForo's wrapped popup machinery.
     const injectLinkHandler = () => {
       wv.executeJavaScript(
         `(function() {
         if (window.__hubNavPatched) return
         window.__hubNavPatched = true
         var hubOrigin = location.origin
+        var EXT_TAG = '__VAM_OPEN_EXT__:'
+        var openExternal = function(url) { console.warn(EXT_TAG + url) }
 
+        // Capture phase — external links: claim the click before XenForo's link-confirm handler.
         document.addEventListener('click', function(e) {
+          if (e.button !== 0) return
+          if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
           var a = e.target.closest('a[href]')
           if (!a) return
           var href = a.getAttribute('href')
           if (!href || href.charAt(0) === '#' || href.startsWith('javascript:')) return
           try {
             var url = new URL(href, location.href)
-            if (url.origin === hubOrigin) {
-              if (a.target && a.target !== '_self') {
-                e.preventDefault()
-                e.stopPropagation()
-                location.href = url.href
-              }
-            } else {
+            if (url.origin !== hubOrigin) {
               e.preventDefault()
-              e.stopPropagation()
-              window.open(url.href)
+              e.stopImmediatePropagation()
+              openExternal(url.href)
             }
           } catch(err) {}
         }, true)
 
+        // Bubble phase — same-origin target=_blank: route to webview after page JS (lightbox, etc.) had a chance.
+        document.addEventListener('click', function(e) {
+          if (e.defaultPrevented) return
+          if (e.button !== 0) return
+          if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+          var a = e.target.closest('a[href]')
+          if (!a) return
+          var href = a.getAttribute('href')
+          if (!href || href.charAt(0) === '#' || href.startsWith('javascript:')) return
+          try {
+            var url = new URL(href, location.href)
+            if (url.origin === hubOrigin && a.target && a.target !== '_self') {
+              e.preventDefault()
+              location.href = url.href
+            }
+          } catch(err) {}
+        }, false)
+
+        // Programmatic window.open — route hub URLs into webview, external URLs to default browser.
         var _open = window.open.bind(window)
         window.open = function(url) {
           if (!url) return null
@@ -592,6 +618,8 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
               location.href = resolved.href
               return null
             }
+            openExternal(resolved.href)
+            return null
           } catch(err) {}
           return _open(url)
         }
@@ -599,21 +627,39 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
       ).catch(() => {})
     }
 
+    const EXT_TAG = '__VAM_OPEN_EXT__:'
+    const onConsoleMessage = (e) => {
+      if (typeof e.message !== 'string') return
+      const i = e.message.indexOf(EXT_TAG)
+      if (i < 0) return
+      const url = e.message.slice(i + EXT_TAG.length).trim()
+      if (url) void window.api.shell.openExternal(url)
+    }
+
     wv.addEventListener('did-navigate', syncNav)
     wv.addEventListener('did-navigate-in-page', syncNav)
     wv.addEventListener('did-fail-load', ignoreAbort)
     wv.addEventListener('dom-ready', injectLinkHandler)
+    wv.addEventListener('console-message', onConsoleMessage)
     return () => {
       wv.removeEventListener('did-navigate', syncNav)
       wv.removeEventListener('did-navigate-in-page', syncNav)
       wv.removeEventListener('did-fail-load', ignoreAbort)
       wv.removeEventListener('dom-ready', injectLinkHandler)
+      wv.removeEventListener('console-message', onConsoleMessage)
     }
   }, [resourceId, tabUrls, tabs])
 
   const goBack = useCallback(() => webviewRef.current?.goBack(), [])
   const goForward = useCallback(() => webviewRef.current?.goForward(), [])
   const reload = useCallback(() => webviewRef.current?.reload(), [])
+  const isDev = useIsDev()
+  const openWebviewDevTools = useCallback(() => {
+    const wv = webviewRef.current
+    if (!wv) return
+    if (wv.isDevToolsOpened?.()) wv.closeDevTools()
+    else wv.openDevTools()
+  }, [])
 
   const hubLicense = getHubResourceLicense(pkg)
   const title = pkg.title || resource.title
@@ -1050,6 +1096,11 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
                 className={`absolute transition-all duration-200 text-success ${urlCopied ? 'opacity-100 scale-100' : 'opacity-0 scale-50'}`}
               />
             </Button>
+            {isDev && (
+              <Button variant="ghost" size="icon-sm" title="Open webview DevTools" onClick={openWebviewDevTools}>
+                <Bug size={14} />
+              </Button>
+            )}
             <Button variant="ghost" size="icon-sm" className="ml-1" asChild>
               <a
                 href={hubUrl}
