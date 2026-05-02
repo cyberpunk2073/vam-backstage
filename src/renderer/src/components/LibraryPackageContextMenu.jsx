@@ -42,6 +42,7 @@ import { useLibraryStore } from '@/stores/useLibraryStore'
 import { useLabelsStore } from '@/stores/useLabelsStore'
 
 async function runLibraryBulkToggleEnabledFromStore() {
+  if (useLibraryStore.getState().bulkToggleIntent) return
   const { packages, bulkSelectedFilenames } = useLibraryStore.getState()
   const items = packages.filter((p) => bulkSelectedFilenames.includes(p.filename))
   if (!items.length) return
@@ -52,6 +53,7 @@ async function runLibraryBulkToggleEnabledFromStore() {
   const targets = mixed ? items.filter((p) => !isPackageActive(p.storageState)) : items
   if (!targets.length) return
   const enabled = allDisabled || mixed
+  useLibraryStore.setState({ bulkToggleIntent: enabled ? 'enable' : 'disable' })
   try {
     const res = await window.api.packages.setEnabled(
       targets.map((p) => p.filename),
@@ -61,6 +63,8 @@ async function runLibraryBulkToggleEnabledFromStore() {
     await useLibraryStore.getState().fetchPackages()
   } catch (err) {
     toast(`Failed: ${err.message}`)
+  } finally {
+    useLibraryStore.setState({ bulkToggleIntent: null })
   }
 }
 

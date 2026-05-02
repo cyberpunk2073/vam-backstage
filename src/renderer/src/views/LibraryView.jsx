@@ -564,6 +564,7 @@ export default function LibraryView({ onNavigate, navContext }) {
 
   const orderedLibraryFilenames = useMemo(() => filtered.map((p) => p.filename), [filtered])
   const bulkActive = bulkSelectedFilenames.length > 0
+  const bulkToggleIntent = useLibraryStore((s) => s.bulkToggleIntent)
   const selectedBulkSet = useMemo(() => new Set(bulkSelectedFilenames), [bulkSelectedFilenames])
 
   const scrollResetKey = `${search}\0${authorSearch}\0${statusFilter}\0${enabledFilter}\0${selectedTypes.join(',')}\0${selectedTags.join(',')}\0${selectedLabelIds.join(',')}\0${primarySort}\0${secondarySort}\0${license}`
@@ -661,11 +662,13 @@ export default function LibraryView({ onNavigate, navContext }) {
   }, [filtered, bulkSelectedFilenames])
 
   const runBulkToggleEnabled = useCallback(async () => {
+    if (useLibraryStore.getState().bulkToggleIntent) return
     const items = filtered.filter((p) => bulkSelectedFilenames.includes(p.filename))
     if (!items.length) return
     const targets = bulkEnabledState.mixed ? items.filter((p) => !isPackageActive(p.storageState)) : items
     if (!targets.length) return
     const enabled = bulkEnabledState.allDisabled || bulkEnabledState.mixed
+    useLibraryStore.setState({ bulkToggleIntent: enabled ? 'enable' : 'disable' })
     try {
       const res = await window.api.packages.setEnabled(
         targets.map((p) => p.filename),
@@ -675,6 +678,8 @@ export default function LibraryView({ onNavigate, navContext }) {
       await fetchPackages()
     } catch (err) {
       toast(`Failed: ${err.message}`)
+    } finally {
+      useLibraryStore.setState({ bulkToggleIntent: null })
     }
   }, [filtered, bulkSelectedFilenames, bulkEnabledState.mixed, bulkEnabledState.allDisabled, fetchPackages])
 
@@ -829,20 +834,31 @@ export default function LibraryView({ onNavigate, navContext }) {
             <button
               type="button"
               onClick={() => void runBulkToggleEnabled()}
-              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded cursor-pointer border border-border hover:bg-elevated text-[11px] text-text-primary"
+              disabled={!!bulkToggleIntent}
+              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded cursor-pointer border border-border hover:bg-elevated text-[11px] text-text-primary disabled:cursor-progress disabled:opacity-70 disabled:hover:bg-transparent"
             >
-              <Power
-                size={16}
-                className={cn(
-                  'shrink-0',
-                  bulkEnabledState.mixed
-                    ? 'text-text-tertiary'
-                    : bulkEnabledState.allDisabled
-                      ? 'text-error'
-                      : 'text-text-secondary',
-                )}
-              />
-              {bulkEnabledState.mixed || bulkEnabledState.allDisabled ? 'Enable' : 'Disable'}
+              {bulkToggleIntent ? (
+                <Loader2 size={16} className="shrink-0 animate-spin text-text-tertiary" />
+              ) : (
+                <Power
+                  size={16}
+                  className={cn(
+                    'shrink-0',
+                    bulkEnabledState.mixed
+                      ? 'text-text-tertiary'
+                      : bulkEnabledState.allDisabled
+                        ? 'text-error'
+                        : 'text-text-secondary',
+                  )}
+                />
+              )}
+              {bulkToggleIntent === 'enable'
+                ? 'Enabling…'
+                : bulkToggleIntent === 'disable'
+                  ? 'Disabling…'
+                  : bulkEnabledState.mixed || bulkEnabledState.allDisabled
+                    ? 'Enable'
+                    : 'Disable'}
             </button>
             <button
               type="button"

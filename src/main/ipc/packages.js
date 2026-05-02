@@ -55,6 +55,9 @@ import { VISIBLE_CATEGORIES } from '@shared/content-types.js'
 /** Matches libuv FS worker pool default (`UV_THREADPOOL_SIZE`); renames are pure fs ops. */
 const RENAME_CONCURRENCY = 4
 
+/** Throttle for mid-batch `packages:updated` progress notifies during multi-root toggle/set-enabled. */
+const TOGGLE_PROGRESS_NOTIFY_MS = 500
+
 const ALLOWED_PACKAGE_TYPE_OVERRIDES = new Set([...VISIBLE_CATEGORIES, 'Other'])
 
 function normalizeFilenameArgs(arg) {
@@ -105,6 +108,11 @@ async function unlinkPackagePhysicalAndAliases(pkg, filename) {
  * `storageState` on content rows via `patchStorageState`; every subscriber also listens
  * to `packages:updated`, which triggers `fetchContents` where needed — firing both caused
  * redundant full `contents:list` IPC storms during bulk toggle.
+ *
+ * For multi-root batches a `packages:updated` notify is emitted after each root completes,
+ * throttled to `TOGGLE_PROGRESS_NOTIFY_MS`. The renderer's `packagesFetchInFlight` gate
+ * coalesces bursts, so the throttle is a soft floor on refetch frequency rather than a
+ * hard cap. A final notify always fires on completion.
  */
 async function applyStorageStateChange(filenames, intentFn) {
   if (!getSetting('vam_dir')) throw new Error('VaM directory not configured')
@@ -115,6 +123,14 @@ async function applyStorageStateChange(filenames, intentFn) {
       : { storageState: 'disabled', libraryDirId: null }
 
   const out = []
+  let lastProgressEmit = 0
+  const emitProgressIfDue = () => {
+    if (filenames.length <= 1) return
+    const now = Date.now()
+    if (now - lastProgressEmit < TOGGLE_PROGRESS_NOTIFY_MS) return
+    lastProgressEmit = now
+    notify('packages:updated')
+  }
   for (const filename of filenames) {
     const pkg = getPackageIndex().get(filename)
     if (!pkg) {
@@ -170,6 +186,7 @@ async function applyStorageStateChange(filenames, intentFn) {
       storageState: target.storageState,
       cascadeCount: cascadeSet.size,
     })
+    emitProgressIfDue()
   }
 
   notify('packages:updated')

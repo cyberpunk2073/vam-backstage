@@ -91,6 +91,10 @@ export const useLibraryStore = create((set, get) => ({
   // True after first fetchPackages resolves (distinguishes "no packages" from "still loading")
   packagesLoaded: false,
 
+  /** Active intent of an in-flight bulk `packages.setEnabled` IPC, or null when idle.
+   *  Captured at the start so the toolbar label/icon don't flip as packages flip mid-batch. */
+  bulkToggleIntent: null,
+
   setSearch: (search) => set({ search }),
   setAuthorSearch: (authorSearch) => set({ authorSearch }),
   setStatusFilter: (statusFilter) => set({ statusFilter }),
