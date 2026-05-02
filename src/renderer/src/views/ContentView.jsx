@@ -33,6 +33,7 @@ import {
   THUMB_OVERLAY_CHIP,
   cn,
 } from '@/lib/utils'
+import { toastIfBulkToggleFailures, toastIfSingleToggleFailed } from '@/lib/packageStorageToggleResults'
 import { useThumbnail } from '@/hooks/useThumbnail'
 import { useContentStore } from '@/stores/useContentStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
@@ -871,7 +872,8 @@ export default function ContentView({ onNavigate, navContext }) {
     if (st.disabled) return
     const enabled = !st.allEnabled
     try {
-      await window.api.packages.setEnabled(st.filenames, enabled)
+      const res = await window.api.packages.setEnabled(st.filenames, enabled)
+      toastIfBulkToggleFailures(res)
       await useLibraryStore.getState().fetchPackages()
     } catch (err) {
       toast(`Failed: ${err.message}`)
@@ -1557,7 +1559,8 @@ function PackageEnableButton({ pkg, pkgTitle }) {
 
   const onToggle = async () => {
     try {
-      await window.api.packages.toggleEnabled(pkg.filename)
+      const res = await window.api.packages.toggleEnabled(pkg.filename)
+      toastIfSingleToggleFailed(res)
     } catch (err) {
       toast(`Failed to toggle package: ${err.message}`)
     }

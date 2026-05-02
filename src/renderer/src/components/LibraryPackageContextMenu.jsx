@@ -34,6 +34,7 @@ import {
 } from '@/components/package-action-dialogs'
 import FileTreeDialog from '@/components/FileTreeDialog'
 import { displayName } from '@/lib/utils'
+import { toastIfBulkToggleFailures, toastIfSingleToggleFailed } from '@/lib/packageStorageToggleResults'
 import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { useDownloadStore } from '@/stores/useDownloadStore'
@@ -49,10 +50,14 @@ async function runLibraryBulkToggleEnabledFromStore() {
   const allDisabled = nEnabled === 0
   const mixed = !allEnabled && !allDisabled
   const targets = mixed ? items.filter((p) => !isPackageActive(p.storageState)) : items
+  if (!targets.length) return
+  const enabled = allDisabled || mixed
   try {
-    for (const p of targets) {
-      await window.api.packages.toggleEnabled(p.filename)
-    }
+    const res = await window.api.packages.setEnabled(
+      targets.map((p) => p.filename),
+      enabled,
+    )
+    toastIfBulkToggleFailures(res)
     await useLibraryStore.getState().fetchPackages()
   } catch (err) {
     toast(`Failed: ${err.message}`)
@@ -196,7 +201,8 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
 
   const handleToggleEnabled = async () => {
     try {
-      await window.api.packages.toggleEnabled(p.filename)
+      const res = await window.api.packages.toggleEnabled(p.filename)
+      toastIfSingleToggleFailed(res)
     } catch (err) {
       toast(`Failed to toggle package: ${err.message}`)
     }

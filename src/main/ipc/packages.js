@@ -47,9 +47,13 @@ import {
 } from '../hub/packages-json.js'
 import { notify } from '../notify.js'
 import { suppressPath } from '../watcher.js'
+import { pLimit } from '../p-limit.js'
 import { getResourceDetail, findPackages } from '../hub/client.js'
 import { cacheAvatarsFromResources } from '../avatar-cache.js'
 import { VISIBLE_CATEGORIES } from '@shared/content-types.js'
+
+/** Matches libuv FS worker pool default (`UV_THREADPOOL_SIZE`); renames are pure fs ops. */
+const RENAME_CONCURRENCY = 4
 
 const ALLOWED_PACKAGE_TYPE_OVERRIDES = new Set([...VISIBLE_CATEGORIES, 'Other'])
 
@@ -89,8 +93,18 @@ async function unlinkPackagePhysicalAndAliases(pkg, filename) {
  * means `.var.disabled` in main or move-to-aux.
  *
  * Returns the same shape on toggle and set-enabled so the renderer doesn't
- * branch: `{ ok, storageState, cascadeCount, unchanged? }` per
+ * branch: `{ ok, filename?, storageState?, cascadeCount?, unchanged?, error? }` per
  * filename, wrapped in the standard single/array envelope.
+ *
+ * Root rename failures yield `{ ok: false, filename, error }` and do not abort
+ * remaining filenames in the batch. Cascade renames run in parallel (bounded by
+ * `RENAME_CONCURRENCY`) only after the root rename succeeds. Cascade-member
+ * failures still log + continue.
+ *
+ * Does not emit `contents:updated`: storage-state toggles already patch denormalized
+ * `storageState` on content rows via `patchStorageState`; every subscriber also listens
+ * to `packages:updated`, which triggers `fetchContents` where needed — firing both caused
+ * redundant full `contents:list` IPC storms during bulk toggle.
  */
 async function applyStorageStateChange(filenames, intentFn) {
   if (!getSetting('vam_dir')) throw new Error('VaM directory not configured')
@@ -103,13 +117,17 @@ async function applyStorageStateChange(filenames, intentFn) {
   const out = []
   for (const filename of filenames) {
     const pkg = getPackageIndex().get(filename)
-    if (!pkg) throw new Error(`Package not found: ${filename}`)
+    if (!pkg) {
+      out.push({ ok: false, filename, error: `Package not found: ${filename}` })
+      continue
+    }
 
     const intent = intentFn(pkg)
     const target = nextStorageStateForIntent({ current: pkg.storage_state, intent, disableTarget })
     if (!target) {
       out.push({
         ok: true,
+        filename,
         storageState: pkg.storage_state,
         cascadeCount: 0,
         unchanged: true,
@@ -125,30 +143,36 @@ async function applyStorageStateChange(filenames, intentFn) {
     try {
       await applyStorageState(filename, target)
     } catch (err) {
-      throw new Error(`Failed to ${intent} package: ${err.message}`)
+      out.push({ ok: false, filename, error: err.message })
+      continue
     }
 
-    for (const depFilename of cascadeSet) {
-      const depPkg = getPackageIndex().get(depFilename)
-      if (!depPkg) continue
-      const depTarget = nextStorageStateForIntent({ current: depPkg.storage_state, intent, disableTarget })
-      if (!depTarget) continue
-      try {
-        await applyStorageState(depFilename, depTarget)
-      } catch (err) {
-        console.warn(`Cascade ${intent} failed for ${depFilename}:`, err.message)
-      }
-    }
+    const limit = pLimit(RENAME_CONCURRENCY)
+    await Promise.all(
+      [...cascadeSet].map((depFilename) =>
+        limit(async () => {
+          const depPkg = getPackageIndex().get(depFilename)
+          if (!depPkg) return
+          const depTarget = nextStorageStateForIntent({ current: depPkg.storage_state, intent, disableTarget })
+          if (!depTarget) return
+          try {
+            await applyStorageState(depFilename, depTarget)
+          } catch (err) {
+            console.warn(`Cascade ${intent} failed for ${depFilename}:`, err.message)
+          }
+        }),
+      ),
+    )
 
     out.push({
       ok: true,
+      filename,
       storageState: target.storageState,
       cascadeCount: cascadeSet.size,
     })
   }
 
   notify('packages:updated')
-  notify('contents:updated')
   return filenames.length === 1 ? out[0] : { ok: true, results: out }
 }
 

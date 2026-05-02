@@ -48,6 +48,7 @@ import {
   THUMB_CHIP_BOX,
   THUMB_OVERLAY_CHIP,
 } from '@/lib/utils'
+import { toastIfBulkToggleFailures, toastIfSingleToggleFailed } from '@/lib/packageStorageToggleResults'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -663,15 +664,19 @@ export default function LibraryView({ onNavigate, navContext }) {
     const items = filtered.filter((p) => bulkSelectedFilenames.includes(p.filename))
     if (!items.length) return
     const targets = bulkEnabledState.mixed ? items.filter((p) => !isPackageActive(p.storageState)) : items
+    if (!targets.length) return
+    const enabled = bulkEnabledState.allDisabled || bulkEnabledState.mixed
     try {
-      for (const p of targets) {
-        await window.api.packages.toggleEnabled(p.filename)
-      }
+      const res = await window.api.packages.setEnabled(
+        targets.map((p) => p.filename),
+        enabled,
+      )
+      toastIfBulkToggleFailures(res)
       await fetchPackages()
     } catch (err) {
       toast(`Failed: ${err.message}`)
     }
-  }, [filtered, bulkSelectedFilenames, bulkEnabledState.mixed, fetchPackages])
+  }, [filtered, bulkSelectedFilenames, bulkEnabledState.mixed, bulkEnabledState.allDisabled, fetchPackages])
 
   const runBulkPromote = useCallback(async () => {
     const fnames = filtered
@@ -1753,7 +1758,8 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
 
   const handleToggleEnabled = async () => {
     try {
-      await window.api.packages.toggleEnabled(pkg.filename)
+      const res = await window.api.packages.toggleEnabled(pkg.filename)
+      toastIfSingleToggleFailed(res)
     } catch (err) {
       toast(`Failed to toggle package: ${err.message}`)
     }
