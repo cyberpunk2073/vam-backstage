@@ -698,6 +698,18 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
     const seen = new Set()
 
     const hasDownloadUrl = (f) => (f.downloadUrl && f.downloadUrl !== 'null') || (f.urlHosted && f.urlHosted !== 'null')
+    // Dep entries in `dependencies[*]` have `filename` set to the verbatim ref (e.g.
+    // "Creator.Package.latest", no .var). The downloads table stores `package_ref`
+    // as the concrete `packageName + "." + latest_version + ".var"`. Without a
+    // concrete lookup key, flexible refs never match the download store and flexible
+    // deps jump from "On Hub" straight to "Installed" without showing Queued/progress.
+    const concreteDownloadRef = (f) => {
+      if (f._resolved) return /\.var$/i.test(f._resolved) ? f._resolved : f._resolved + '.var'
+      const ver = f.latest_version
+      if (f.packageName && ver != null && /^\d+$/.test(String(ver))) return `${f.packageName}.${ver}.var`
+      if (f.filename) return /\.var$/i.test(f.filename) ? f.filename : f.filename + '.var'
+      return null
+    }
     const toDepRow = (f, group) => {
       const r = f._resolution
       const dl = hasDownloadUrl(f)
@@ -719,6 +731,7 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
                   : 'missing'
       return {
         ref: f.filename || group,
+        downloadRef: concreteDownloadRef(f),
         resolved: f._resolved || (f._installed ? f.filename : null),
         sizeBytes: parseInt(f.file_size || '0', 10),
         resolution,

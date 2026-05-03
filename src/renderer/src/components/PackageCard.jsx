@@ -1061,8 +1061,12 @@ function depStatusTag(dep, dlStatus, dlProgress) {
 }
 
 export function DepRow({ dep, depth = 0, renderChildren = true, onNavigate }) {
+  // `dep.ref` is the verbatim dep ref for display (may be flexible like ".latest").
+  // `dep.downloadRef` is the concrete `packageName.N.var` the downloads table keys on;
+  // fall back to `ref` for roots whose filename is already a concrete `.var`.
+  const lookupKey = dep.downloadRef || dep.ref
   const dl = useDownloadStore((s) => {
-    const d = s.byPackageRef.get(dep.ref)
+    const d = s.byPackageRef.get(lookupKey)
     if (!d || d.status === 'completed' || d.status === 'cancelled') return null
     if (d.status === 'active') return `active|${s.liveProgress[d.id]?.progress ?? 0}`
     return d.status
