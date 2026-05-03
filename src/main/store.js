@@ -827,7 +827,10 @@ export function getMissingDeps(hubPackagesIndex, hubFilenameIndex) {
     const exactFilename = ref + '.var'
     const exactResId = hubFilenameIndex.get(exactFilename)
     if (exactResId != null) {
-      row.hub = { filename: exactFilename, resourceId: String(exactResId), isExact: true }
+      // downloadUrl starts null; client fills it in via packages:enrich-from-hub.
+      // Leaving it undefined would cause the UI to treat unresolved entries as
+      // "Install" and subsequently fail with "No download URL available".
+      row.hub = { filename: exactFilename, resourceId: String(exactResId), isExact: true, downloadUrl: null }
       return row
     }
 
@@ -848,6 +851,7 @@ export function getMissingDeps(hubPackagesIndex, hubFilenameIndex) {
         isExact: false,
         installedLocally: true,
         hubVersion: hubEntry.version,
+        downloadUrl: null,
       }
     } else {
       // Hub has a version we don't have — offer it as a fallback install
@@ -857,6 +861,7 @@ export function getMissingDeps(hubPackagesIndex, hubFilenameIndex) {
         isExact: false,
         installedLocally: false,
         hubVersion: hubEntry.version,
+        downloadUrl: null,
       }
     }
 

@@ -380,6 +380,12 @@ export function registerPackageHandlers() {
     const results = await findPackages(packageStems)
     const enriched = {}
     const isReal = (v) => v && v !== 'null'
+    // Seed a null placeholder for every requested stem so callers can distinguish
+    // "not on Hub / no URL" (null) from "enrichment hasn't returned yet" (undefined).
+    // Without this, a stem missing from `results` would leave downloadUrl undefined
+    // on the caller side, causing the UI to offer Install for something the Hub
+    // can't actually serve, and the install IPC then fails with "No download URL".
+    for (const stem of packageStems) enriched[stem] = { fileSize: null, downloadUrl: null }
     for (const [stem, hubFile] of Object.entries(results)) {
       const url = isReal(hubFile.downloadUrl)
         ? hubFile.downloadUrl
