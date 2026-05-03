@@ -246,7 +246,13 @@ function TagsAutocomplete({ value = [], onChange, suggestions = {}, placeholder 
   }, [matches])
 
   const addTag = (tag) => {
-    onChange([...value, tag])
+    const trimmed = tag.trim()
+    if (!trimmed || value.includes(trimmed)) {
+      setQuery('')
+      inputRef.current?.focus()
+      return
+    }
+    onChange([...value, trimmed])
     setQuery('')
     inputRef.current?.focus()
   }
@@ -255,24 +261,33 @@ function TagsAutocomplete({ value = [], onChange, suggestions = {}, placeholder 
   }
 
   const onKeyDown = (e) => {
-    if (!open || matches.length === 0) return
-    if (e.key === 'ArrowDown') {
+    if (e.key === 'ArrowDown' && open && matches.length > 0) {
       e.preventDefault()
       setHlIndex((i) => {
         const next = i < matches.length - 1 ? i + 1 : 0
         listRef.current?.children[next]?.scrollIntoView({ block: 'nearest' })
         return next
       })
-    } else if (e.key === 'ArrowUp') {
+    } else if (e.key === 'ArrowUp' && open && matches.length > 0) {
       e.preventDefault()
       setHlIndex((i) => {
         const next = i > 0 ? i - 1 : matches.length - 1
         listRef.current?.children[next]?.scrollIntoView({ block: 'nearest' })
         return next
       })
-    } else if (e.key === 'Enter' && hlIndex >= 0 && hlIndex < matches.length) {
-      e.preventDefault()
-      addTag(matches[hlIndex][0])
+    } else if (e.key === 'Enter') {
+      if (open && hlIndex >= 0 && hlIndex < matches.length) {
+        e.preventDefault()
+        addTag(matches[hlIndex][0])
+      } else if (query.trim()) {
+        e.preventDefault()
+        addTag(query)
+      }
+    } else if (e.key === ',') {
+      if (query.trim()) {
+        e.preventDefault()
+        addTag(query)
+      }
     } else if (e.key === 'Escape') {
       e.preventDefault()
       setOpen(false)
