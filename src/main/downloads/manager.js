@@ -147,8 +147,18 @@ export async function enqueueInstall(
   packageName,
   asDependency = false,
 ) {
+  // Prefer resourceId. A package can be split across Hub resource pages — e.g.
+  // LO.[Hair]PonyTail v1 → res 566, v2 → res 1726 — and getResourceDetailByName
+  // (`.latest` lookup) returns whichever single resource the Hub mapped that
+  // package_name to, not necessarily the newest version. packages.json keys by
+  // concrete filename and so does checkUpdatesFromIndex, so callers that came
+  // through the update path already have the correct id. Falling back to
+  // .latest-by-name is only used when the caller has no resourceId at all
+  // (rare); in that case picking up an older resource is acceptable — the
+  // next update check will surface the newer version and the update path
+  // will route through the correct resource id.
   const detail =
-    hubDetailData || (packageName ? await getResourceDetailByName(packageName) : await getResourceDetail(resourceId))
+    hubDetailData || (resourceId ? await getResourceDetail(resourceId) : await getResourceDetailByName(packageName))
   if (!detail) throw new Error('Resource not found on Hub')
 
   // hub_json auto-persisted by getResourceDetail/getResourceDetailByName
