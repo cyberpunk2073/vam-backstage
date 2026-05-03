@@ -19,6 +19,7 @@ import {
   Loader2,
   ArrowUpCircle,
   FolderTree,
+  Search,
   X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -2089,28 +2090,13 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
         {/* Dependencies */}
         {pkg.deps?.length > 0 && (
           <div className="p-4 border-b border-border">
-            <div className="flex items-center justify-between gap-2 mb-2 min-w-0 flex-nowrap">
-              <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:thin]">
-                <span className="shrink-0 whitespace-nowrap text-[11px] font-medium text-text-primary">
-                  Dependencies <span className="text-text-tertiary font-normal">({pkg.depCount})</span>
-                </span>
-                {pkg.missingDeps > 0 && (
-                  <span className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[10px] text-warning">
-                    <AlertTriangle size={10} className="shrink-0" /> {pkg.missingDeps} missing
-                  </span>
-                )}
-              </div>
-              {pkg.missingDeps > 0 && (
-                <button
-                  type="button"
-                  onClick={() => useDownloadStore.getState().installMissing(pkg.filename)}
-                  className="shrink-0 cursor-pointer text-[10px] text-accent-blue transition-[filter] hover:brightness-125"
-                >
-                  Install missing
-                </button>
-              )}
-            </div>
-            <DepList items={pkg.deps} onSelectPackage={handleSelectPackage} />
+            <DepList
+              items={pkg.deps}
+              depCount={pkg.depCount}
+              missingDeps={pkg.missingDeps}
+              onInstallMissing={() => useDownloadStore.getState().installMissing(pkg.filename)}
+              onSelectPackage={handleSelectPackage}
+            />
           </div>
         )}
 
@@ -2223,44 +2209,138 @@ function flattenDepRows(items, depth = 0) {
   return out
 }
 
-function DepList({ items, onSelectPackage }) {
+function DepList({ items, depCount, missingDeps, onInstallMissing, onSelectPackage }) {
   const [expanded, setExpanded] = useState(false)
+  const [query, setQuery] = useState('')
   const byPackageRef = useDownloadStore((s) => s.byPackageRef)
   const sorted = useMemo(() => sortDepTree(items, byPackageRef), [items, byPackageRef])
   const flat = useMemo(() => flattenDepRows(sorted), [sorted])
   const total = flat.length
   const collapsible = total > 4
-  const visible = expanded || !collapsible ? flat : flat.slice(0, 3)
+  const isExpanded = expanded || !collapsible
+  const showSearch = isExpanded && total >= 10
+
+  const filteredFlat = useMemo(() => {
+    if (!query.trim()) return flat
+    const terms = searchAndTerms(query)
+    return flat.filter(({ dep }) => haystacksMatchAllTerms([dep.ref], terms)).map(({ dep }) => ({ dep, depth: 0 }))
+  }, [flat, query])
+
+  const visible = isExpanded ? filteredFlat : flat.slice(0, 3)
   const remaining = expanded ? 0 : collapsible ? Math.max(0, total - 3) : 0
 
+  const handleCollapse = () => {
+    setExpanded(false)
+    setQuery('')
+  }
+
+  const handleSearchKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      setQuery('')
+      e.currentTarget.blur()
+    }
+  }
+
   return (
-    <div className="border border-border rounded overflow-hidden divide-y divide-border">
-      {visible.map(({ dep, depth }, i) => (
-        <DepRow
-          key={`${dep.ref}-${depth}-${i}`}
-          dep={dep}
-          depth={depth}
-          renderChildren={false}
-          onNavigate={onSelectPackage}
-        />
-      ))}
-      {!expanded && remaining >= 2 && (
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className="w-full px-2 py-1.5 text-[10px] text-text-tertiary hover:bg-elevated hover:text-text-secondary cursor-pointer text-center transition-colors"
-        >
-          + {remaining} more
-        </button>
-      )}
+    <div>
+      <div className="sticky top-0 z-10 bg-surface -mx-4 px-4 -mt-4 pt-4 pb-2 flex items-center justify-between gap-2 min-w-0 flex-nowrap">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          {showSearch ? (
+            <div className="relative flex-1 min-w-0 h-6">
+              <Search
+                size={11}
+                className="absolute left-2 top-1/2 -translate-y-1/2 text-text-tertiary pointer-events-none"
+              />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
+                placeholder={`Filter ${total} dependencies…`}
+                className="w-full h-6 pl-7 pr-7 text-[11px] bg-elevated rounded border border-border text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent-blue/40"
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery('')}
+                  title="Clear filter"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary cursor-pointer"
+                >
+                  <X size={11} />
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="flex h-6 min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:thin]">
+              <span className="shrink-0 whitespace-nowrap text-[11px] font-medium text-text-primary">
+                Dependencies <span className="text-text-tertiary font-normal">({depCount})</span>
+              </span>
+              {missingDeps > 0 && (
+                <span className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[10px] text-warning">
+                  <AlertTriangle size={10} className="shrink-0" /> {missingDeps} missing
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {!showSearch && missingDeps > 0 && (
+            <button
+              type="button"
+              onClick={onInstallMissing}
+              className="shrink-0 cursor-pointer text-[10px] text-accent-blue transition-[filter] hover:brightness-125"
+            >
+              Install missing
+            </button>
+          )}
+          {expanded && collapsible && (
+            <button
+              type="button"
+              onClick={handleCollapse}
+              title="Collapse"
+              className="shrink-0 cursor-pointer p-0.5 text-text-tertiary hover:text-text-secondary transition-colors"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="border border-border rounded overflow-hidden divide-y divide-border">
+        {visible.length === 0 ? (
+          <div className="px-2 py-2 text-[10px] text-text-tertiary text-center">No matches</div>
+        ) : (
+          visible.map(({ dep, depth }, i) => (
+            <DepRow
+              key={`${dep.ref}-${depth}-${i}`}
+              dep={dep}
+              depth={depth}
+              renderChildren={false}
+              onNavigate={onSelectPackage}
+            />
+          ))
+        )}
+        {!expanded && remaining >= 2 && (
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="w-full px-2 py-1.5 text-[10px] text-text-tertiary hover:bg-elevated hover:text-text-secondary cursor-pointer text-center transition-colors"
+          >
+            + {remaining} more
+          </button>
+        )}
+      </div>
       {expanded && collapsible && (
-        <button
-          type="button"
-          onClick={() => setExpanded(false)}
-          className="w-full py-1 flex items-center justify-center text-text-tertiary hover:bg-elevated hover:text-text-secondary cursor-pointer transition-colors"
-        >
-          <ChevronUp size={14} />
-        </button>
+        <div className="sticky bottom-0 z-10 -mx-4 -mb-4 px-4 pb-4 bg-surface">
+          <button
+            type="button"
+            onClick={handleCollapse}
+            title="Collapse"
+            className="w-full px-2 py-1.5 text-[10px] text-text-tertiary hover:bg-elevated hover:text-text-secondary cursor-pointer text-center transition-colors flex items-center justify-center"
+          >
+            <ChevronUp size={12} />
+          </button>
+        </div>
       )}
     </div>
   )
