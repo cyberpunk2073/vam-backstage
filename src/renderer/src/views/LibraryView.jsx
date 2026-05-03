@@ -597,6 +597,8 @@ export default function LibraryView({ onNavigate, navContext }) {
     }
     const scrollReset = prevScrollResetKeyRef.current !== scrollResetKey
     prevScrollResetKeyRef.current = scrollResetKey
+    // Keep detail-targeted selections that are outside the current sidebar filters (deps / dependents).
+    if (selectedDetail && !scrollReset) return
     const idx = scrollReset ? 0 : Math.min(lastSelectedIdxRef.current, filtered.length - 1)
     const target = filtered[idx]
     if (!target) return
