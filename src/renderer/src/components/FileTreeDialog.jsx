@@ -78,26 +78,32 @@ function TreeFolder({ name, node, depth, expanded, onToggle, pathPrefix }) {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => onToggle(path)}
-        className="flex items-center gap-1 w-full hover:bg-elevated rounded px-1 py-0.5 cursor-pointer text-left transition-colors"
+      <div
+        className="flex items-center gap-1 w-full hover:bg-elevated rounded px-1 py-0.5 transition-colors"
         style={{ paddingLeft: depth * 16 + 4 }}
       >
-        <ChevronRight
-          size={12}
-          className={`shrink-0 text-text-tertiary transition-transform duration-100 ${isOpen ? 'rotate-90' : ''}`}
-        />
-        {isOpen ? (
-          <FolderOpen size={14} className="shrink-0 text-accent-blue" />
-        ) : (
-          <Folder size={14} className="shrink-0 text-accent-blue" />
-        )}
-        <span className="text-[11px] text-text-primary truncate">{name}</span>
+        <button
+          type="button"
+          onClick={() => onToggle(path)}
+          aria-expanded={isOpen}
+          title={isOpen ? 'Collapse' : 'Expand'}
+          className="flex items-center gap-1 shrink-0 rounded p-0.5 -m-0.5 cursor-pointer border-0 bg-transparent font-inherit text-left"
+        >
+          <ChevronRight
+            size={12}
+            className={`shrink-0 text-text-tertiary transition-transform duration-100 ${isOpen ? 'rotate-90' : ''}`}
+          />
+          {isOpen ? (
+            <FolderOpen size={14} className="shrink-0 text-accent-blue" />
+          ) : (
+            <Folder size={14} className="shrink-0 text-accent-blue" />
+          )}
+        </button>
+        <span className="text-[11px] text-text-primary truncate min-w-0 flex-1 select-text cursor-text">{name}</span>
         <span className="text-[10px] text-text-tertiary ml-auto shrink-0 pl-2 tabular-nums">
           {count} &middot; {formatBytes(size)}
         </span>
-      </button>
+      </div>
       {isOpen && (
         <>
           {sortedDirs.map(([childName, childNode]) => (
