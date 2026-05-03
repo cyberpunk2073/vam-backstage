@@ -11,6 +11,10 @@ files:
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
 asarUnpack:
   - resources/**
+  # @parcel/watcher loads its native .node binary at runtime via
+  # `require('@parcel/watcher-<platform>-<arch>/watcher.node')`. asar packs
+  # the .js wrapper but the .node has to be unpacked to be dlopen-able.
+  - node_modules/@parcel/watcher-*/**
 win:
   executableName: vam-backstage
 nsis:

@@ -73,7 +73,7 @@ The application is built with Electron 39, React 19, SQLite (better-sqlite3), Zu
 │  ├── hub/ ── Hub API client + CDN index                   │
 │  ├── downloads/ ── concurrent download engine             │
 │  ├── vam-prefs.js ── .hide/.fav sidecar management        │
-│  ├── watcher.js ── FS monitoring (chokidar + fs.watch)    │
+│  ├── watcher.js ── FS monitoring (@parcel/watcher)        │
 │  ├── thumb-resolver.js ── Hub thumbnail fetching          │
 │  ├── avatar-cache.js ── Hub author avatar caching         │
 │  ├── updater.js ── electron-updater wiring (§21)          │
@@ -795,7 +795,7 @@ The loose scan is incremental in the same shape as the var scan, just at item gr
 
 The classification fields are part of the gate (not just stat) so that sibling-thumbnail additions still update the row when a content file's own mtime didn't move — `classifyContents` is sibling-aware, so a scene's `thumbnail_path` can shift purely from a `.jpg` being added next to it.
 
-`chokidar` watches `Saves/` and `Custom/` at runtime; content-file events trigger a debounced `runLocalScan`, while sibling `.hide` / `.fav` events update the in-memory `prefsMap` directly without a rescan. The watcher is also how extractor output (`Custom/Atom/Person/.../extracted/*.vap` files written by `scenes/extract.js`) gets indexed — the file event causes a debounced `runLocalScan` like any other loose-file write.
+`@parcel/watcher` watches `Saves/` and `Custom/` at runtime; content-file events trigger a debounced `runLocalScan`, while sibling `.hide` / `.fav` events update the in-memory `prefsMap` directly without a rescan. The watcher is also how extractor output (`Custom/Atom/Person/.../extracted/*.vap` files written by `scenes/extract.js`) gets indexed — the file event causes a debounced `runLocalScan` like any other loose-file write.
 
 ---
 
@@ -860,13 +860,15 @@ When search results return from the Hub, the client enriches each resource with 
 
 ## 14. File System Watcher
 
-### Two-Layer Watching
+### Subscriptions
 
-The watcher (`src/main/watcher.js`) uses two different mechanisms:
+The watcher (`src/main/watcher.js`) runs three sets of `@parcel/watcher` subscriptions, one per concern:
 
-1. **chokidar** (the `packageWatcher`) watches every registered library directory — main `AddonPackages/` plus any registered aux/offload dirs — for `.var` and (in main only) `.var.disabled` files. Restarts whenever the `library_dirs` registry changes. Configured with `followSymlinks: false`, `awaitWriteFinish` (2000ms stability threshold) to handle large file copies, and depth limit 10. Cross-dir moves are reconciled as a single `setStorageState` UPDATE so package rows and their label FKs are preserved.
-2. **chokidar** (the `localWatcher`) watches loose-content roots (`Saves/`, `Custom/`) for content changes (debounced `runLocalScan`) and sibling `.hide`/`.fav` sidecars.
-3. **Native `fs.watch`** monitors `AddonPackagesFilePrefs/` for `.hide`/`.fav` sidecar changes. Lighter-weight than chokidar for the high-frequency, small-file changes typical of sidecar operations.
+1. **packageWatcher** — one subscription per registered library directory (main `AddonPackages/` plus any registered aux/offload dirs). Watches for `.var` and (in main only) `.var.disabled` files. Restarts whenever the `library_dirs` registry changes. Cross-dir moves are reconciled as a single `setStorageState` UPDATE so package rows and their label FKs are preserved.
+2. **localWatcher** — one subscription per loose-content root (`Saves/`, `Custom/`) for content changes (debounced `runLocalScan`) and sibling `.hide`/`.fav` sidecars.
+3. **prefsWatcher** — single subscription on `AddonPackagesFilePrefs/` for `.hide`/`.fav` sidecar changes.
+
+`@parcel/watcher` is recursive natively (one kernel handle per root, regardless of file count) — no per-file `fs.watch` handle, no userspace catalog walk on resume. Symlinks are not followed by default, so the BrowserAssist symlink-farm problem doesn't apply.
 
 ### Event Processing
 
@@ -874,6 +876,7 @@ Events are debounced for 500ms and processed as a batch:
 
 **Package events** (add/change/unlink):
 
+- For non-unlink events, run through `awaitStable` (`var-stability.js`) — calls `verifyZipFile` (yauzl-based EOCD + CD parse) for an immediate-pass on atomic-rename writers, falls back to stat-stability polling (300ms tick, 2000ms quiet window, 60s cap) for streaming downloads.
 - Detect `.var` ↔ `.var.disabled` renames and cross-dir moves → call `setStorageState()` instead of add/remove
 - New/changed files: `scanAndUpsert()` reads the ZIP and updates the database
 - Removed files: Delete from database (CASCADE removes content rows)
@@ -884,12 +887,17 @@ Events are debounced for 500ms and processed as a batch:
 
 - Update `prefsMap` in memory
 
-### Suppression
+### Bulk Window
 
-When the app itself writes files (sidecars, downloads), it suppresses the resulting FS events to avoid circular processing:
+When the app itself does a coordinated bulk of writes (toggle-enabled across hundreds of packages, postDownloadIntegrate writing many sidecars, etc.), it wraps the operation in `withBulkWindow(async (ourPaths) => …)`. While the window is open:
 
-- `suppressPath(path)`: Ignores events for a window long enough to outlast chokidar's `awaitWriteFinish` plus OS-level FS event latency
-- `suppressPrefsStem(stem)` / `unsuppressPrefsStem(stem)`: Suppresses an entire package's prefs during bulk operations
+- All FS events from every subscription are buffered instead of dispatched.
+- Each app-initiated path is registered via `recordOwnedPath(p)` (which `applyStorageState`, `setHidden`, `unlinkPackagePhysicalAndAliases`, etc. call internally).
+- When the window closes, buffered events whose path is in `ourPaths` are dropped; all other events flow into the normal pending-event maps.
+
+Outside a bulk window, `recordOwnedPath` is a no-op. Single non-bulk writes (e.g. one sidecar toggle) accept the resulting watcher event, which is harmless because `scanSingleVar` short-circuits on unchanged (mtime, size) and prefs handling is idempotent.
+
+This replaces the previous TTL-based `suppressPath`/`suppressPrefsStem` mechanism — which had to coordinate against chokidar's per-file `fs.watch` rebuild on resume and its `awaitWriteFinish` stat-polling. With parcel there's no per-file polling and no catalog walk, so the watcher can stay live during the bulk and the entire suppression surface collapses to "buffer + filter" with no race or TTL.
 
 ---
 
@@ -1160,7 +1168,7 @@ The library scales from a few hundred packages on a fresh install to 50k+ on hea
 Three resource pools that don't compete with each other:
 
 - **CPU / event loop** — manifest parsing, JSON, SQLite ops
-- **libuv FS pool** (default 4 workers, `UV_THREADPOOL_SIZE`) — every walker, every `readdir` / `stat`, plus all of chokidar
+- **libuv FS pool** (default 4 workers, `UV_THREADPOOL_SIZE`) — every walker, every `readdir` / `stat`, plus the stat-stability fallback in `awaitStable`. (`@parcel/watcher` itself runs on its own native thread pool, not libuv.)
 - **Network** — Hub API, CDN
 
 The architectural goal is "**one consumer per pool at a time, branches across pools concurrent**" — _not_ "parallelize everything". Two FS walkers fighting over the libuv pool drag startup from sub-second into the tens of seconds because per-stat latency collapses under queue contention.
@@ -1199,11 +1207,9 @@ The default libuv pool has 4 workers (`UV_THREADPOOL_SIZE`). All walks use a sha
 
 Concurrent walkers across phases remain forbidden — two phases each running their own `pLimit(8)` against a 4-worker pool is effectively `pLimit(16)` against 4 workers, which is back to fighting.
 
-### `followSymlinks: false` everywhere chokidar runs
+### Symlinks: never followed
 
-`packageWatcher` and `localWatcher` hardcode `followSymlinks: false`. There is no plausible VaM use case for following symlinks during library indexing, and some user-installed plugins drop directory symlinks under `Saves/` pointing back at `AddonPackages`, `AddonPackagesFilePrefs`, `Custom`, etc. — with `followSymlinks: true`, chokidar enumerates the entire 60k+ FilePrefs tree.
-
-Our own walks (`walkForVars`, `runLocalScan`'s walk, `readAllPrefs.walkSidecarDir`) explicitly skip `entry.isSymbolicLink()` for the same reason. The `prefsWatcher` is unaffected — it uses native `fs.watch(..., { recursive: true })`, which hooks into the kernel's directory-change notification rather than traversing.
+`@parcel/watcher` does not follow symlinks recursively (kernel-side watching via `ReadDirectoryChangesW` on Windows / FSEvents on macOS sees the link itself, not its target). Our own walks (`walkForVars`, `runLocalScan`'s walk, `readAllPrefs.walkSidecarDir`) explicitly skip `entry.isSymbolicLink()` for the same reason — some user-installed plugins (JayJayWon's BrowserAssist) drop directory symlinks under `Saves/` pointing back at `AddonPackages`, `AddonPackagesFilePrefs`, etc., and following them would have us enumerate the entire 60k+ FilePrefs tree from the local-content path.
 
 ---
 
@@ -1434,7 +1440,7 @@ When developer options are unlocked, **F12** (and Ctrl+Shift+I / Cmd+Alt+I) togg
 | State          | Zustand                    | 5.0.12        |
 | Virtual scroll | @tanstack/react-virtual    | 3.13.23       |
 | Database       | better-sqlite3             | 12.8.0        |
-| File watching  | chokidar                   | 5.0.0         |
+| File watching  | @parcel/watcher            | 2.5.6         |
 | ZIP reading    | yauzl                      | 3.3.0         |
 | Language       | JavaScript (no TypeScript) | —             |
 

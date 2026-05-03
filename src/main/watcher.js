@@ -1,5 +1,4 @@
-import { watch } from 'fs'
-import chokidar from 'chokidar'
+import parcelWatcher from '@parcel/watcher'
 import { join, extname, basename, relative, sep, dirname } from 'path'
 import { stat, mkdir, rename, unlink } from 'fs/promises'
 import { ADDON_PACKAGES_FILE_PREFS } from '@shared/paths.js'
@@ -14,12 +13,16 @@ import { notify } from './notify.js'
 import { enrichNewPackages } from './hub/scanner.js'
 import { getAllLibraryDirs, refreshLibraryDirs } from './library-dirs.js'
 import { applyStorageState } from './storage-state.js'
+import { awaitStable } from './var-stability.js'
 
 const DEBOUNCE_MS = 500
 
-let packageWatcher = null
-let prefsWatcher = null
-let localWatcher = null
+/** @type {Array<{ sub: import('@parcel/watcher').AsyncSubscription, dirId: number|null, path: string }>} */
+let packageSubs = []
+/** @type {import('@parcel/watcher').AsyncSubscription | null} */
+let prefsSub = null
+/** @type {Array<import('@parcel/watcher').AsyncSubscription>} */
+let localSubs = []
 let prefsDirPath = null
 let vamDirPath = null
 /** Map<fullPath, { type, libraryDirId }> */
@@ -30,30 +33,73 @@ let pendingLocalPrefs = new Map() // fullPath -> 'check'
 let debounceTimer = null
 let processing = false
 
-// Paths the app itself is about to write — watcher should ignore these
-const suppressedPaths = new Set()
-const SUPPRESS_TTL_MS = 5000
+/**
+ * Bulk-window machinery: while a window is active, raw events are buffered
+ * instead of dispatched, and any path the app touches (via `recordOwnedPath`)
+ * is added to `ourPaths`. When the window closes, buffered events are drained
+ * — those whose path is in `ourPaths` are dropped, the rest go through normal
+ * routing.
+ *
+ * Rationale: chokidar required us to stop the watcher entirely during bulk
+ * renames (its `awaitWriteFinish` poll on the libuv pool serialized our
+ * renames to ~10x slowdown). With parcel there's no per-file polling, the
+ * subscription stays live cheaply, so the bulk window can be a pure
+ * userspace buffer-and-filter — no TTL, no restart race.
+ *
+ * @typedef {{ events: Array<import('@parcel/watcher').Event & { __source: 'package'|'prefs'|'local', __dirId?: number|null }>, ourPaths: Set<string> }} BulkWindow
+ */
+/** @type {BulkWindow | null} */
+let bulkWindow = null
+/** Refcount so concurrent (non-nested) callers keep the window alive until
+ *  the *last* one exits. Without this, a short-lived caller's `finally` would
+ *  drain mid-flight and a longer-lived peer's subsequent `recordOwnedPath`
+ *  calls would silently no-op. We don't expect sustained overlap in practice
+ *  (bulk ops are sub-second), so unbounded buffer growth isn't a real risk. */
+let bulkDepth = 0
 
-// Package stems whose prefs sidecar events should be temporarily ignored
-// (used during bulk writes where the caller rebuilds prefs from disk after)
-const suppressedStems = new Set()
-
-export function suppressPath(path) {
-  suppressedPaths.add(path)
-  setTimeout(() => suppressedPaths.delete(path), SUPPRESS_TTL_MS)
+/**
+ * Run `fn` inside a bulk window. While inside, any FS event observed by the
+ * watchers is buffered; after the *last* concurrent caller's `fn` resolves,
+ * buffered events whose path was registered via `recordOwnedPath` are
+ * silently dropped, and the rest flow into the normal pending-event maps.
+ *
+ * Concurrent and nested callers share one window — `ourPaths` and the event
+ * buffer are pooled. Returns the value of `fn`.
+ */
+export async function withBulkWindow(fn) {
+  if (!bulkWindow) bulkWindow = { events: [], ourPaths: new Set() }
+  const win = bulkWindow
+  bulkDepth++
+  try {
+    return await fn(win.ourPaths)
+  } finally {
+    bulkDepth--
+    if (bulkDepth === 0) {
+      bulkWindow = null
+      // Drain: external events route normally, app-owned events drop. Each
+      // route* helper schedules its own batch (or, for package events, schedules
+      // after its async stability check), so we don't have to here.
+      for (const ev of win.events) {
+        if (win.ourPaths.has(ev.path)) continue
+        routeEvent(ev)
+      }
+    }
+  }
 }
 
-export function suppressPrefsStem(stem) {
-  suppressedStems.add(stem)
-}
-
-export function unsuppressPrefsStem(stem) {
-  suppressedStems.delete(stem)
+/**
+ * Mark a path as app-owned for the duration of the current bulk window. If
+ * called outside a bulk window, this is a no-op — single non-bulk writes
+ * accept the resulting watcher event because it's idempotent (scanSingleVar's
+ * mtime+size cache check makes re-scans of unchanged files free).
+ */
+export function recordOwnedPath(p) {
+  if (bulkWindow) bulkWindow.ourPaths.add(p)
 }
 
 /** Restart the package watcher with the current library_dirs registry. Idempotent.
  * Aux dirs that aren't currently reachable (unmounted drive, etc.) are skipped so
- * chokidar doesn't spam errors; they'll be picked up on the next restart after the
+ * parcel doesn't fail; they'll be picked up on the next restart after the
  * dir comes back online (any successful scan or library-dirs change retriggers this). */
 export async function restartPackageWatcher() {
   refreshLibraryDirs()
@@ -67,54 +113,37 @@ export async function restartPackageWatcher() {
       console.warn(`[watcher] Skipping unreachable library dir: ${d.path}`)
     }
   }
-  if (packageWatcher) {
-    await packageWatcher.close().catch(() => {})
-    packageWatcher = null
-  }
+  await Promise.all(packageSubs.map((s) => s.sub.unsubscribe().catch(() => {})))
+  packageSubs = []
   if (dirs.length === 0) return
 
-  const packageWatcherT0 = Date.now()
-  packageWatcher = chokidar.watch(
-    dirs.map((d) => d.path),
-    {
-      ignoreInitial: true,
-      depth: 10,
-      // Some VaM plugins (e.g. JayJayWon's BrowserAssist) drop directory symlinks under
-      // Saves/PluginData/.../SymLinks pointing back at AddonPackages, AddonPackagesFilePrefs,
-      // Custom, etc. Following them would have chokidar enumerate the 60k+ FilePrefs tree
-      // (the very thing prefsWatcher uses native fs.watch for), pinning libuv for ~100s.
-      // Equally critical for aux dirs on remote/network shares where symlinks are common.
-      followSymlinks: false,
-      awaitWriteFinish: { stabilityThreshold: 2000, pollInterval: 300 },
-    },
-  )
-
-  // Build prefix → id map for path-to-libraryDirId classification
-  const prefixes = dirs
-    .map((d) => ({ id: d.id, prefix: d.path.replace(/[\\/]+$/, '') + sep }))
-    .sort((a, b) => b.prefix.length - a.prefix.length) // longest match first
-  const classify = (p) => {
-    for (const { id, prefix } of prefixes) {
-      if (p === prefix.slice(0, -1) || p.startsWith(prefix)) return id
-    }
-    return null
-  }
-
-  packageWatcher
-    .on('add', (p) => onPackageEvent(p, 'add', classify(p)))
-    .on('change', (p) => onPackageEvent(p, 'change', classify(p)))
-    .on('unlink', (p) => onPackageEvent(p, 'unlink', classify(p)))
-    .on('error', (err) => console.warn('Package watcher error:', err.message))
-    .on('ready', () => {
-      const watched = packageWatcher.getWatched()
-      let files = 0
-      for (const arr of Object.values(watched)) files += arr.length
-      const watchedDirs = Object.keys(watched).length
-      console.info(
-        `FS watcher 'packageWatcher' ready in ${Date.now() - packageWatcherT0} ms ` +
-          `(${files} files / ${watchedDirs} dirs across ${dirs.length} library root(s))`,
+  const t0 = Date.now()
+  const newSubs = []
+  for (const d of dirs) {
+    try {
+      const sub = await parcelWatcher.subscribe(
+        d.path,
+        (err, events) => {
+          if (err) {
+            console.warn('Package watcher error:', err.message)
+            return
+          }
+          for (const ev of events) onPackageRawEvent(ev, d.id)
+        },
+        // ignore: nothing — but parcel does NOT follow symlinks recursively, so the
+        // BrowserAssist symlink-farm problem chokidar had with `followSymlinks: true`
+        // doesn't apply here.
+        {},
       )
-    })
+      newSubs.push({ sub, dirId: d.id, path: d.path })
+    } catch (err) {
+      console.warn(`[watcher] Failed to subscribe to ${d.path}: ${err.message}`)
+    }
+  }
+  packageSubs = newSubs
+  console.info(
+    `FS watcher 'packageWatcher' ready in ${Date.now() - t0} ms (${newSubs.length}/${dirs.length} library root(s))`,
+  )
 }
 
 export async function startWatcher(vamDir) {
@@ -125,8 +154,8 @@ export async function startWatcher(vamDir) {
   const prefsDir = join(vamDir, ADDON_PACKAGES_FILE_PREFS)
   // Ensure prefs dir exists before the prefs watcher attaches
   await mkdir(prefsDir, { recursive: true }).catch(() => {})
-  initPrefsWatcher(prefsDir)
-  initLocalWatcher(vamDir)
+  await initPrefsWatcher(prefsDir)
+  await initLocalWatcher(vamDir)
 }
 
 /**
@@ -135,40 +164,46 @@ export async function startWatcher(vamDir) {
  * `runLocalScan()` to reconcile the `__local__`-owned `contents` rows; sidecar
  * files update the in-memory prefs map directly so the UI flips without a
  * full rescan.
+ *
+ * Implementation note: parcel's `subscribe` watches one root, so we wrap each
+ * `LOCAL_CONTENT_ROOT` (Saves/, Custom/) in its own subscription tracked in
+ * `localSubs` (declared at the top of the module with the other state).
  */
-function initLocalWatcher(vamDir) {
-  if (localWatcher) {
-    localWatcher.close()
-    localWatcher = null
-  }
+async function initLocalWatcher(vamDir) {
+  await Promise.all(localSubs.map((s) => s.unsubscribe().catch(() => {})))
+  localSubs = []
+  const t0 = Date.now()
   const roots = LOCAL_CONTENT_ROOTS.map((r) => join(vamDir, r))
-  const localWatcherT0 = Date.now()
-  localWatcher = chokidar.watch(roots, {
-    ignoreInitial: true,
-    depth: 20,
-    // See packageWatcher comment — same reasoning, more critical here because Saves/
-    // is exactly where BrowserAssist drops the symlink farm.
-    followSymlinks: false,
-    awaitWriteFinish: { stabilityThreshold: 1000, pollInterval: 200 },
-  })
-  localWatcher
-    .on('add', (p) => onLocalEvent(p))
-    .on('change', (p) => onLocalEvent(p))
-    .on('unlink', (p) => onLocalEvent(p))
-    .on('error', (err) => console.warn('Local watcher error:', err.message))
-    .on('ready', () => {
-      const watched = localWatcher.getWatched()
-      let files = 0
-      for (const arr of Object.values(watched)) files += arr.length
-      const dirs = Object.keys(watched).length
-      console.info(
-        `FS watcher 'localWatcher' ready in ${Date.now() - localWatcherT0} ms (${files} files / ${dirs} dirs)`,
+  for (const root of roots) {
+    try {
+      const sub = await parcelWatcher.subscribe(
+        root,
+        (err, events) => {
+          if (err) {
+            console.warn('Local watcher error:', err.message)
+            return
+          }
+          for (const ev of events) onLocalRawEvent(ev)
+        },
+        {},
       )
-    })
+      localSubs.push(sub)
+    } catch (err) {
+      console.warn(`[watcher] Failed to subscribe to local root ${root}: ${err.message}`)
+    }
+  }
+  console.info(`FS watcher 'localWatcher' ready in ${Date.now() - t0} ms (${localSubs.length}/${roots.length} root(s))`)
 }
 
-function onLocalEvent(fullPath) {
-  if (suppressedPaths.delete(fullPath)) return
+function onLocalRawEvent(ev) {
+  if (bulkWindow) {
+    bulkWindow.events.push({ ...ev, __source: 'local' })
+    return
+  }
+  routeLocal(ev.path)
+}
+
+function routeLocal(fullPath) {
   const ext = extname(fullPath).toLowerCase()
   if (ext === '.hide' || ext === '.fav') {
     pendingLocalPrefs.set(fullPath, 'check')
@@ -179,40 +214,57 @@ function onLocalEvent(fullPath) {
   scheduleBatch()
 }
 
-function initPrefsWatcher(prefsDir) {
-  if (prefsWatcher) {
-    prefsWatcher.close()
-    prefsWatcher = null
+async function initPrefsWatcher(prefsDir) {
+  if (prefsSub) {
+    await prefsSub.unsubscribe().catch(() => {})
+    prefsSub = null
   }
   prefsDirPath = prefsDir
   try {
-    prefsWatcher = watch(prefsDir, { recursive: true }, (_eventType, filename) => {
-      if (filename) onPrefsEvent(filename)
-    })
-    prefsWatcher.on('error', (err) => {
-      console.warn('Prefs watcher error:', err.message)
-      if (err.code === 'EMFILE' || err.code === 'ENFILE') {
-        setTimeout(() => initPrefsWatcher(prefsDir), 3000)
-      }
-    })
+    prefsSub = await parcelWatcher.subscribe(
+      prefsDir,
+      (err, events) => {
+        if (err) {
+          console.warn('Prefs watcher error:', err.message)
+          return
+        }
+        for (const ev of events) onPrefsRawEvent(ev)
+      },
+      {},
+    )
   } catch (err) {
     console.warn('Failed to start prefs watcher:', err.message)
   }
 }
 
-export function stopWatcher() {
-  if (packageWatcher) {
-    packageWatcher.close()
-    packageWatcher = null
+function onPrefsRawEvent(ev) {
+  if (bulkWindow) {
+    bulkWindow.events.push({ ...ev, __source: 'prefs' })
+    return
   }
-  if (prefsWatcher) {
-    prefsWatcher.close()
-    prefsWatcher = null
+  routePrefs(ev.path)
+}
+
+function routePrefs(fullPath) {
+  const ext = extname(fullPath).toLowerCase()
+  if (ext !== '.hide' && ext !== '.fav') return
+  if (!prefsDirPath) return
+  const rel = relative(prefsDirPath, fullPath)
+  const segments = rel.split(sep)
+  if (segments.length < 2) return
+  pendingPrefsEvents.set(fullPath, 'check')
+  scheduleBatch()
+}
+
+export async function stopWatcher() {
+  await Promise.all(packageSubs.map((s) => s.sub.unsubscribe().catch(() => {})))
+  packageSubs = []
+  if (prefsSub) {
+    await prefsSub.unsubscribe().catch(() => {})
+    prefsSub = null
   }
-  if (localWatcher) {
-    localWatcher.close()
-    localWatcher = null
-  }
+  await Promise.all(localSubs.map((s) => s.unsubscribe().catch(() => {})))
+  localSubs = []
   if (debounceTimer) {
     clearTimeout(debounceTimer)
     debounceTimer = null
@@ -224,27 +276,40 @@ export function stopWatcher() {
   vamDirPath = null
 }
 
-function onPackageEvent(path, type, libraryDirId) {
-  if (!isVarFilename(basename(path))) return
-  if (suppressedPaths.delete(path)) return
-  pendingPackageEvents.set(path, { type, libraryDirId })
+function onPackageRawEvent(ev, libraryDirId) {
+  if (bulkWindow) {
+    bulkWindow.events.push({ ...ev, __source: 'package', __dirId: libraryDirId })
+    return
+  }
+  // Fire-and-forget: stability check + push happens async.
+  void routePackage(ev, libraryDirId)
+}
+
+async function routePackage(ev, libraryDirId) {
+  if (!isVarFilename(basename(ev.path))) return
+  const type = parcelTypeToLegacy(ev.type)
+  if (type !== 'unlink') {
+    const ok = await awaitStable(ev.path)
+    if (!ok) return // file vanished or never settled into a valid zip
+  }
+  pendingPackageEvents.set(ev.path, { type, libraryDirId })
   scheduleBatch()
 }
 
-function onPrefsEvent(relativePath) {
-  const normalized = relativePath.replace(/\\/g, '/')
-  const ext = extname(normalized).toLowerCase()
-  if (ext !== '.hide' && ext !== '.fav') return
+function parcelTypeToLegacy(t) {
+  if (t === 'delete') return 'unlink'
+  return t === 'create' ? 'add' : 'change'
+}
 
-  const segments = normalized.split('/')
-  if (segments.length < 2) return
-  if (suppressedStems.has(segments[0])) return
-
-  const fullPath = join(prefsDirPath, relativePath)
-  if (suppressedPaths.delete(fullPath)) return
-
-  pendingPrefsEvents.set(fullPath, 'check')
-  scheduleBatch()
+/** Drain a single buffered event into the appropriate pending-events map. */
+function routeEvent(ev) {
+  if (ev.__source === 'package') {
+    if (!isVarFilename(basename(ev.path))) return
+    void routePackage(ev, ev.__dirId)
+    return
+  }
+  if (ev.__source === 'prefs') return routePrefs(ev.path)
+  if (ev.__source === 'local') return routeLocal(ev.path)
 }
 
 function scheduleBatch() {
@@ -265,7 +330,9 @@ function inferStorageState({ libraryDirId, isDisabled }) {
 /**
  * Normalize a stray `.var.disabled` in an aux dir to bare `.var`. Aux dirs only ever
  * hold suffix-less files in our model — anything `.disabled` there came from external
- * tooling. Suppresses both source and dest paths so the rename/unlink is silent.
+ * tooling. Records both source and dest paths via `recordOwnedPath`; effective when
+ * called from inside a bulk window (i.e. `processBatch`, which always wraps), no-op
+ * from the standalone scanner pass (during which the watcher isn't yet running).
  *
  * Returns the bare path on successful rename, or `null` if:
  *   - a bare sibling already exists (we drop or refuse the duplicate),
@@ -279,8 +346,8 @@ export async function normalizeAuxDisabled(fullPath) {
   const name = basename(fullPath)
   const canonical = canonicalVarFilename(name)
   const bare = join(dir, canonical)
-  suppressPath(fullPath)
-  suppressPath(bare)
+  recordOwnedPath(fullPath)
+  recordOwnedPath(bare)
   let bareStat = null
   try {
     bareStat = await stat(bare)
@@ -312,9 +379,9 @@ export async function normalizeAuxDisabled(fullPath) {
 
 /**
  * Test-only seam. Lets unit tests populate the module-level pending-event
- * maps (and `vamDirPath`) without driving real chokidar timing, then call
+ * maps (and `vamDirPath`) without driving real parcel timing, then call
  * `processBatch` directly. Production callers never touch this — events
- * arrive through the chokidar listeners, which are wired up by
+ * arrive through the parcel callbacks, which are wired up by
  * `restartPackageWatcher` / `initPrefsWatcher` / `initLocalWatcher`.
  *
  * `state.packageEvents` / `prefsEvents` / `localPrefs`: arrays of
@@ -339,193 +406,200 @@ async function processBatch() {
   }
   processing = true
 
-  const pkgEvents = new Map(pendingPackageEvents)
-  const prefsEvents = new Map(pendingPrefsEvents)
-  const localPrefsEvents = new Map(pendingLocalPrefs)
-  const localContentChanged = pendingLocalContent
-  pendingPackageEvents.clear()
-  pendingPrefsEvents.clear()
-  pendingLocalPrefs.clear()
-  pendingLocalContent = false
+  // Wrap the whole pass in a bulk window so internal renames (normalizeAuxDisabled,
+  // cascade-enable through applyStorageState) get filtered: each operation calls
+  // recordOwnedPath for its source/dest paths, then the watcher's resulting events
+  // buffer here and drop on close. Without this, every internal rename triggers a
+  // redundant follow-up batch that mtime+size cache-hits but still costs a stat.
+  await withBulkWindow(async () => {
+    const pkgEvents = new Map(pendingPackageEvents)
+    const prefsEvents = new Map(pendingPrefsEvents)
+    const localPrefsEvents = new Map(pendingLocalPrefs)
+    const localContentChanged = pendingLocalContent
+    pendingPackageEvents.clear()
+    pendingPrefsEvents.clear()
+    pendingLocalPrefs.clear()
+    pendingLocalContent = false
 
-  let packagesChanged = false
-  let contentsChanged = false
-  const newlyScannedEnabled = [] // enabled filenames that were freshly added/changed
+    let packagesChanged = false
+    let contentsChanged = false
+    const newlyScannedEnabled = [] // enabled filenames that were freshly added/changed
 
-  // --- Package events ---
-  if (pkgEvents.size > 0) {
-    // Normalize any aux-dir `.var.disabled` adds/changes to bare `.var` before grouping.
-    // We mutate event paths in-place; the rename suppresses its own follow-up events.
-    const normalized = []
-    for (const [fullPath, ev] of pkgEvents) {
-      const name = basename(fullPath)
-      const isDisabled = /\.disabled$/i.test(name)
-      if (ev.libraryDirId != null && isDisabled && ev.type !== 'unlink') {
-        const newPath = await normalizeAuxDisabled(fullPath)
-        if (!newPath) continue // unlinked redundant copy or rename failed
-        normalized.push([newPath, ev])
-      } else {
-        normalized.push([fullPath, ev])
-      }
-    }
-
-    const byCanonical = new Map()
-    for (const [fullPath, { type, libraryDirId }] of normalized) {
-      const name = basename(fullPath)
-      const isDisabled = /\.disabled$/i.test(name)
-      const canonical = isDisabled ? canonicalVarFilename(name) : name
-      if (!byCanonical.has(canonical)) byCanonical.set(canonical, [])
-      byCanonical.get(canonical).push({ fullPath, type, isDisabled, libraryDirId })
-    }
-
-    const allDirs = getAllLibraryDirs()
-
-    for (const [canonical, events] of byCanonical) {
-      const adds = events.filter((e) => e.type !== 'unlink')
-      const unlinks = events.filter((e) => e.type === 'unlink')
-
-      // Unlinks: probe every registered dir for a sibling before deleting. When the
-      // batch also has an add (cross-dir move within one batch), findElsewhere finds
-      // the new location and updates state; the add is then a no-op because
-      // scanSingleVar's cache check matches mtime+size against the now-current row.
-      // No in-mem patch needed here — the trailing buildFromDb() reloads packageIndex
-      // from DB whenever packagesChanged is set.
-      if (unlinks.length > 0) {
-        const altLocation = await findElsewhere(canonical, allDirs)
-        if (altLocation) {
-          setStorageState(canonical, altLocation.storageState, altLocation.libraryDirId)
-          packagesChanged = true
+    // --- Package events ---
+    if (pkgEvents.size > 0) {
+      // Normalize any aux-dir `.var.disabled` adds/changes to bare `.var` before grouping.
+      // The rename inside normalizeAuxDisabled records its own paths in the bulk window
+      // above so the resulting watcher events get dropped on drain.
+      const normalized = []
+      for (const [fullPath, ev] of pkgEvents) {
+        const name = basename(fullPath)
+        const isDisabled = /\.disabled$/i.test(name)
+        if (ev.libraryDirId != null && isDisabled && ev.type !== 'unlink') {
+          const newPath = await normalizeAuxDisabled(fullPath)
+          if (!newPath) continue // unlinked redundant copy or rename failed
+          normalized.push([newPath, ev])
         } else {
-          deletePackage(canonical)
-          packagesChanged = true
-          contentsChanged = true
+          normalized.push([fullPath, ev])
         }
       }
 
-      // Adds/changes: install or in-place state flip via scanSingleVar.
-      for (const { fullPath, type, isDisabled, libraryDirId } of adds) {
-        const newState = inferStorageState({ libraryDirId, isDisabled })
-        try {
-          const changed = await scanSingleVar(fullPath, newState, libraryDirId)
-          if (changed) {
+      const byCanonical = new Map()
+      for (const [fullPath, { type, libraryDirId }] of normalized) {
+        const name = basename(fullPath)
+        const isDisabled = /\.disabled$/i.test(name)
+        const canonical = isDisabled ? canonicalVarFilename(name) : name
+        if (!byCanonical.has(canonical)) byCanonical.set(canonical, [])
+        byCanonical.get(canonical).push({ fullPath, type, isDisabled, libraryDirId })
+      }
+
+      const allDirs = getAllLibraryDirs()
+
+      for (const [canonical, events] of byCanonical) {
+        const adds = events.filter((e) => e.type !== 'unlink')
+        const unlinks = events.filter((e) => e.type === 'unlink')
+
+        // Unlinks: probe every registered dir for a sibling before deleting. When the
+        // batch also has an add (cross-dir move within one batch), findElsewhere finds
+        // the new location and updates state; the add is then a no-op because
+        // scanSingleVar's cache check matches mtime+size against the now-current row.
+        // No in-mem patch needed here — the trailing buildFromDb() reloads packageIndex
+        // from DB whenever packagesChanged is set.
+        if (unlinks.length > 0) {
+          const altLocation = await findElsewhere(canonical, allDirs)
+          if (altLocation) {
+            setStorageState(canonical, altLocation.storageState, altLocation.libraryDirId)
+            packagesChanged = true
+          } else {
+            deletePackage(canonical)
             packagesChanged = true
             contentsChanged = true
-            if (newState === 'enabled') newlyScannedEnabled.push(canonical)
           }
-        } catch (err) {
-          console.warn(`Watcher: ${type} failed for`, canonical, err.message)
-          notify('scan:unreadable', { filename: canonical })
         }
-      }
-    }
 
-    if (packagesChanged) buildFromDb()
-
-    // Cascade-enable disabled/offloaded deps needed by newly enabled packages
-    if (newlyScannedEnabled.length > 0) {
-      const pkgIndex = getPackageIndex()
-      const fwd = getForwardDeps()
-      const allToEnable = new Set()
-      for (const fn of newlyScannedEnabled) {
-        for (const dep of computeCascadeEnable(fn, pkgIndex, fwd)) allToEnable.add(dep)
-      }
-      if (allToEnable.size > 0) {
-        for (const depFn of allToEnable) {
+        // Adds/changes: install or in-place state flip via scanSingleVar.
+        for (const { fullPath, type, isDisabled, libraryDirId } of adds) {
+          const newState = inferStorageState({ libraryDirId, isDisabled })
           try {
-            await applyStorageState(depFn, { storageState: 'enabled', libraryDirId: null })
+            const changed = await scanSingleVar(fullPath, newState, libraryDirId)
+            if (changed) {
+              packagesChanged = true
+              contentsChanged = true
+              if (newState === 'enabled') newlyScannedEnabled.push(canonical)
+            }
           } catch (err) {
-            console.warn(`Cascade-enable failed for ${depFn}:`, err.message)
+            console.warn(`Watcher: ${type} failed for`, canonical, err.message)
+            notify('scan:unreadable', { filename: canonical })
           }
         }
       }
-    }
 
-    if (newlyScannedEnabled.length > 0) {
-      enrichNewPackages(newlyScannedEnabled)
-    }
-  }
+      if (packagesChanged) buildFromDb()
 
-  // --- Prefs/sidecar events ---
-  if (prefsEvents.size > 0) {
-    const prefsDir = join(vamDirPath, ADDON_PACKAGES_FILE_PREFS)
-    const prefsMap = getPrefsMap()
+      // Cascade-enable disabled/offloaded deps needed by newly enabled packages
+      if (newlyScannedEnabled.length > 0) {
+        const pkgIndex = getPackageIndex()
+        const fwd = getForwardDeps()
+        const allToEnable = new Set()
+        for (const fn of newlyScannedEnabled) {
+          for (const dep of computeCascadeEnable(fn, pkgIndex, fwd)) allToEnable.add(dep)
+        }
+        if (allToEnable.size > 0) {
+          for (const depFn of allToEnable) {
+            try {
+              await applyStorageState(depFn, { storageState: 'enabled', libraryDirId: null })
+            } catch (err) {
+              console.warn(`Cascade-enable failed for ${depFn}:`, err.message)
+            }
+          }
+        }
+      }
 
-    for (const [fullPath] of prefsEvents) {
-      try {
-        const rel = relative(prefsDir, fullPath)
-        const segments = rel.split(sep)
-        if (segments.length < 2) continue
-
-        const pkgStem = segments[0]
-        const pkgFilename = pkgStem + '.var'
-        const sidecarExt = extname(fullPath).toLowerCase()
-        const contentRelPath = segments.slice(1).join('/')
-        const internalPath = contentRelPath.slice(0, -sidecarExt.length)
-        const key = pkgFilename + '/' + internalPath
-
-        // fs.watch gives rename for both create and delete — stat to get current state
-        let exists = false
-        try {
-          await stat(fullPath)
-          exists = true
-        } catch {}
-
-        if (!prefsMap.has(key)) prefsMap.set(key, { hidden: false, favorite: false })
-        const prefs = prefsMap.get(key)
-
-        if (sidecarExt === '.hide') prefs.hidden = exists
-        else if (sidecarExt === '.fav') prefs.favorite = exists
-      } catch (err) {
-        console.warn('Watcher: prefs event failed:', err.message)
+      if (newlyScannedEnabled.length > 0) {
+        enrichNewPackages(newlyScannedEnabled)
       }
     }
 
-    setPrefsMap(prefsMap)
-    contentsChanged = true
-  }
+    // --- Prefs/sidecar events ---
+    if (prefsEvents.size > 0) {
+      const prefsDir = join(vamDirPath, ADDON_PACKAGES_FILE_PREFS)
+      const prefsMap = getPrefsMap()
 
-  // --- Local content events ---
-  if (localContentChanged && vamDirPath) {
-    try {
-      const result = await runLocalScan(vamDirPath)
-      if (result.added > 0 || result.removed > 0) contentsChanged = true
-    } catch (err) {
-      console.warn('Watcher: local scan failed:', err.message)
-    }
-  }
-
-  // --- Local sibling sidecars ---
-  if (localPrefsEvents.size > 0 && vamDirPath) {
-    const prefsMap = getPrefsMap()
-    for (const [fullPath] of localPrefsEvents) {
-      try {
-        const rel = relative(vamDirPath, fullPath).split(sep).join('/')
-        const sidecarExt = extname(rel).toLowerCase()
-        const internalPath = rel.slice(0, -sidecarExt.length)
-        const key = LOCAL_PACKAGE_FILENAME + '/' + internalPath
-        let exists = false
+      for (const [fullPath] of prefsEvents) {
         try {
-          await stat(fullPath)
-          exists = true
-        } catch {}
-        if (!prefsMap.has(key)) prefsMap.set(key, { hidden: false, favorite: false })
-        const prefs = prefsMap.get(key)
-        if (sidecarExt === '.hide') prefs.hidden = exists
-        else if (sidecarExt === '.fav') prefs.favorite = exists
+          const rel = relative(prefsDir, fullPath)
+          const segments = rel.split(sep)
+          if (segments.length < 2) continue
+
+          const pkgStem = segments[0]
+          const pkgFilename = pkgStem + '.var'
+          const sidecarExt = extname(fullPath).toLowerCase()
+          const contentRelPath = segments.slice(1).join('/')
+          const internalPath = contentRelPath.slice(0, -sidecarExt.length)
+          const key = pkgFilename + '/' + internalPath
+
+          // parcel emits create/update/delete; stat to get current state
+          let exists = false
+          try {
+            await stat(fullPath)
+            exists = true
+          } catch {}
+
+          if (!prefsMap.has(key)) prefsMap.set(key, { hidden: false, favorite: false })
+          const prefs = prefsMap.get(key)
+
+          if (sidecarExt === '.hide') prefs.hidden = exists
+          else if (sidecarExt === '.fav') prefs.favorite = exists
+        } catch (err) {
+          console.warn('Watcher: prefs event failed:', err.message)
+        }
+      }
+
+      setPrefsMap(prefsMap)
+      contentsChanged = true
+    }
+
+    // --- Local content events ---
+    if (localContentChanged && vamDirPath) {
+      try {
+        const result = await runLocalScan(vamDirPath)
+        if (result.added > 0 || result.removed > 0) contentsChanged = true
       } catch (err) {
-        console.warn('Watcher: local prefs event failed:', err.message)
+        console.warn('Watcher: local scan failed:', err.message)
       }
     }
-    setPrefsMap(prefsMap)
-    contentsChanged = true
-  }
 
-  if (localContentChanged) buildFromDb()
+    // --- Local sibling sidecars ---
+    if (localPrefsEvents.size > 0 && vamDirPath) {
+      const prefsMap = getPrefsMap()
+      for (const [fullPath] of localPrefsEvents) {
+        try {
+          const rel = relative(vamDirPath, fullPath).split(sep).join('/')
+          const sidecarExt = extname(rel).toLowerCase()
+          const internalPath = rel.slice(0, -sidecarExt.length)
+          const key = LOCAL_PACKAGE_FILENAME + '/' + internalPath
+          let exists = false
+          try {
+            await stat(fullPath)
+            exists = true
+          } catch {}
+          if (!prefsMap.has(key)) prefsMap.set(key, { hidden: false, favorite: false })
+          const prefs = prefsMap.get(key)
+          if (sidecarExt === '.hide') prefs.hidden = exists
+          else if (sidecarExt === '.fav') prefs.favorite = exists
+        } catch (err) {
+          console.warn('Watcher: local prefs event failed:', err.message)
+        }
+      }
+      setPrefsMap(prefsMap)
+      contentsChanged = true
+    }
 
-  // --- Notify renderer ---
-  if (packagesChanged) notify('packages:updated')
-  if (contentsChanged) notify('contents:updated')
+    if (localContentChanged) buildFromDb()
 
+    // --- Notify renderer ---
+    if (packagesChanged) notify('packages:updated')
+    if (contentsChanged) notify('contents:updated')
+  })
   processing = false
 }
 
@@ -540,15 +614,12 @@ export async function __prefsEventSyncForTests(relativePath) {
   if (ext !== '.hide' && ext !== '.fav') return
   const segments = normalized.split('/')
   if (segments.length < 2) return
-  if (suppressedStems.has(segments[0])) return
   const fullPath = join(prefsDirPath, relativePath)
-  if (suppressedPaths.delete(fullPath)) return
   pendingPrefsEvents.set(fullPath, 'check')
   await processBatch()
 }
 
 export async function __localPrefsEventSyncForTests(fullPath) {
-  if (suppressedPaths.delete(fullPath)) return
   const ext = extname(fullPath).toLowerCase()
   if (ext !== '.hide' && ext !== '.fav') return
   pendingLocalPrefs.set(fullPath, 'check')

@@ -6,7 +6,10 @@
  * here. It performs an `fs.rename` (aux dirs are guaranteed same-FS as main
  * by the registration probe in `ipc/library-dirs.js`), updates the DB row
  * (`storage_state` + `library_dir_id`), patches the in-memory store, and
- * suppresses the watcher for both source and dest paths.
+ * registers both paths as app-owned with the watcher (effective only when
+ * the caller wraps the bulk in `withBulkWindow`; outside a bulk window,
+ * the watcher event is harmless because the cache check in `scanSingleVar`
+ * sees matching mtime+size and skips re-ingest).
  *
  * External (watcher-observed) state changes are reconciled separately by
  * `watcher.js` and never go through this function.
@@ -16,7 +19,7 @@ import { rename } from 'fs/promises'
 import { join } from 'path'
 import { getPackageIndex, patchStorageState } from './store.js'
 import { setStorageState } from './db.js'
-import { suppressPath } from './watcher.js'
+import { recordOwnedPath } from './watcher.js'
 import { getLibraryDirPath, pkgVarPath } from './library-dirs.js'
 import { isLocalPackage } from '@shared/local-package.js'
 import { STORAGE_STATES } from '@shared/storage-state-predicates.js'
@@ -70,8 +73,8 @@ export async function applyStorageState(filename, target) {
   // disagrees with disk here it's a watcher-reconciliation responsibility, not ours.)
   if (fromPath === toPath) return { ok: true, fromPath, toPath, changed: false }
 
-  suppressPath(fromPath)
-  suppressPath(toPath)
+  recordOwnedPath(fromPath)
+  recordOwnedPath(toPath)
 
   try {
     await rename(fromPath, toPath)

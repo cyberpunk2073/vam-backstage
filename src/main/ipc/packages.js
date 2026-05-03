@@ -46,7 +46,7 @@ import {
   getPackagesIndexAge,
 } from '../hub/packages-json.js'
 import { notify } from '../notify.js'
-import { suppressPath } from '../watcher.js'
+import { recordOwnedPath, withBulkWindow } from '../watcher.js'
 import { pLimit } from '../p-limit.js'
 import { getResourceDetail, findPackages } from '../hub/client.js'
 import { cacheAvatarsFromResources } from '../avatar-cache.js'
@@ -65,9 +65,11 @@ function normalizeFilenameArgs(arg) {
 }
 
 /**
- * Suppress + unlink the indexed physical file plus any stray main-dir aliases
- * (`<fn>` and `<fn>.disabled` in main) external tools may have left around.
- * Each path is unlinked at most once. Caller is responsible for `deletePackage`.
+ * Record-as-owned + unlink the indexed physical file plus any stray main-dir
+ * aliases (`<fn>` and `<fn>.disabled` in main) external tools may have left
+ * around. Each path is unlinked at most once. Caller is responsible for
+ * `deletePackage`. Effective only when caller wraps in `withBulkWindow`;
+ * single non-bulk uninstalls accept the watcher event (idempotent).
  */
 async function unlinkPackagePhysicalAndAliases(pkg, filename) {
   const physical = pkg ? pkgVarPath(pkg) : null
@@ -78,7 +80,7 @@ async function unlinkPackagePhysicalAndAliases(pkg, filename) {
   for (const p of targets) {
     if (!p || seen.has(p)) continue
     seen.add(p)
-    suppressPath(p)
+    recordOwnedPath(p)
     try {
       await unlink(p)
     } catch {}
@@ -122,75 +124,81 @@ async function applyStorageStateChange(filenames, intentFn) {
       ? { storageState: 'offloaded', libraryDirId: parsedBehavior.auxDirId }
       : { storageState: 'disabled', libraryDirId: null }
 
-  const out = []
-  let lastProgressEmit = 0
-  const emitProgressIfDue = () => {
-    if (filenames.length <= 1) return
-    const now = Date.now()
-    if (now - lastProgressEmit < TOGGLE_PROGRESS_NOTIFY_MS) return
-    lastProgressEmit = now
-    notify('packages:updated')
-  }
-  for (const filename of filenames) {
-    const pkg = getPackageIndex().get(filename)
-    if (!pkg) {
-      out.push({ ok: false, filename, error: `Package not found: ${filename}` })
-      continue
+  // Wrap the whole bulk in a watcher window so the ~hundreds of fs.rename's
+  // we're about to fire don't get interpreted as external changes (each rename
+  // is recorded via recordOwnedPath inside applyStorageState). Single-toggle
+  // case still works — the window is cheap when there's only one rename in it.
+  return withBulkWindow(async () => {
+    const out = []
+    let lastProgressEmit = 0
+    const emitProgressIfDue = () => {
+      if (filenames.length <= 1) return
+      const now = Date.now()
+      if (now - lastProgressEmit < TOGGLE_PROGRESS_NOTIFY_MS) return
+      lastProgressEmit = now
+      notify('packages:updated')
     }
+    for (const filename of filenames) {
+      const pkg = getPackageIndex().get(filename)
+      if (!pkg) {
+        out.push({ ok: false, filename, error: `Package not found: ${filename}` })
+        continue
+      }
 
-    const intent = intentFn(pkg)
-    const target = nextStorageStateForIntent({ current: pkg.storage_state, intent, disableTarget })
-    if (!target) {
+      const intent = intentFn(pkg)
+      const target = nextStorageStateForIntent({ current: pkg.storage_state, intent, disableTarget })
+      if (!target) {
+        out.push({
+          ok: true,
+          filename,
+          storageState: pkg.storage_state,
+          cascadeCount: 0,
+          unchanged: true,
+        })
+        continue
+      }
+
+      const cascadeSet =
+        intent === 'enable'
+          ? computeCascadeEnable(filename, getPackageIndex(), getForwardDeps())
+          : computeCascadeDisable(filename, getPackageIndex(), getForwardDeps(), getReverseDeps())
+
+      try {
+        await applyStorageState(filename, target)
+      } catch (err) {
+        out.push({ ok: false, filename, error: err.message })
+        continue
+      }
+
+      const limit = pLimit(RENAME_CONCURRENCY)
+      await Promise.all(
+        [...cascadeSet].map((depFilename) =>
+          limit(async () => {
+            const depPkg = getPackageIndex().get(depFilename)
+            if (!depPkg) return
+            const depTarget = nextStorageStateForIntent({ current: depPkg.storage_state, intent, disableTarget })
+            if (!depTarget) return
+            try {
+              await applyStorageState(depFilename, depTarget)
+            } catch (err) {
+              console.warn(`Cascade ${intent} failed for ${depFilename}:`, err.message)
+            }
+          }),
+        ),
+      )
+
       out.push({
         ok: true,
         filename,
-        storageState: pkg.storage_state,
-        cascadeCount: 0,
-        unchanged: true,
+        storageState: target.storageState,
+        cascadeCount: cascadeSet.size,
       })
-      continue
+      emitProgressIfDue()
     }
 
-    const cascadeSet =
-      intent === 'enable'
-        ? computeCascadeEnable(filename, getPackageIndex(), getForwardDeps())
-        : computeCascadeDisable(filename, getPackageIndex(), getForwardDeps(), getReverseDeps())
-
-    try {
-      await applyStorageState(filename, target)
-    } catch (err) {
-      out.push({ ok: false, filename, error: err.message })
-      continue
-    }
-
-    const limit = pLimit(RENAME_CONCURRENCY)
-    await Promise.all(
-      [...cascadeSet].map((depFilename) =>
-        limit(async () => {
-          const depPkg = getPackageIndex().get(depFilename)
-          if (!depPkg) return
-          const depTarget = nextStorageStateForIntent({ current: depPkg.storage_state, intent, disableTarget })
-          if (!depTarget) return
-          try {
-            await applyStorageState(depFilename, depTarget)
-          } catch (err) {
-            console.warn(`Cascade ${intent} failed for ${depFilename}:`, err.message)
-          }
-        }),
-      ),
-    )
-
-    out.push({
-      ok: true,
-      filename,
-      storageState: target.storageState,
-      cascadeCount: cascadeSet.size,
-    })
-    emitProgressIfDue()
-  }
-
-  notify('packages:updated')
-  return filenames.length === 1 ? out[0] : { ok: true, results: out }
+    notify('packages:updated')
+    return filenames.length === 1 ? out[0] : { ok: true, results: out }
+  })
 }
 
 export function registerPackageHandlers() {
@@ -262,48 +270,50 @@ export function registerPackageHandlers() {
     const vamDir = getSetting('vam_dir')
     if (!vamDir) throw new Error('VaM directory not configured')
     const filenames = normalizeFilenameArgs(filenameOrFilenames)
-    const results = []
-    for (const filename of filenames) {
-      const pkg = getPackageIndex().get(filename)
-      if (!pkg) throw new Error(`Package not found: ${filename}`)
+    return withBulkWindow(async () => {
+      const results = []
+      for (const filename of filenames) {
+        const pkg = getPackageIndex().get(filename)
+        if (!pkg) throw new Error(`Package not found: ${filename}`)
 
-      const dependents = getReverseDeps().get(filename)
-      if (dependents && dependents.size > 0) {
-        setPackageDirect(filename, false)
-        const contents = getFilteredContents({ packageFilename: filename })
-        const paths = contents.map((c) => c.internalPath)
-        await hidePackageContent(vamDir, filename, paths)
-        const prefs = await readAllPrefs(vamDir)
-        setPrefsMap(prefs)
-        buildFromDb({ skipGraph: true })
-        results.push({ ok: true, demoted: true })
-        continue
+        const dependents = getReverseDeps().get(filename)
+        if (dependents && dependents.size > 0) {
+          setPackageDirect(filename, false)
+          const contents = getFilteredContents({ packageFilename: filename })
+          const paths = contents.map((c) => c.internalPath)
+          await hidePackageContent(vamDir, filename, paths)
+          const prefs = await readAllPrefs(vamDir)
+          setPrefsMap(prefs)
+          buildFromDb({ skipGraph: true })
+          results.push({ ok: true, demoted: true })
+          continue
+        }
+
+        const { removableFilenames } = computeRemovableDeps(
+          filename,
+          getPackageIndex(),
+          getForwardDeps(),
+          getReverseDeps(),
+        )
+        // Keep local-only deps (not available on Hub) as orphans instead of auto-deleting
+        const filteredRemovable = [...removableFilenames].filter((fn) => {
+          const depPkg = getPackageIndex().get(fn)
+          return !depPkg || !isNotDownloadable(depPkg)
+        })
+        const toDelete = [filename, ...filteredRemovable]
+        for (const fn of toDelete) {
+          await unlinkPackagePhysicalAndAliases(getPackageIndex().get(fn), fn)
+          deletePackage(fn)
+        }
+        buildFromDb()
+        results.push({ ok: true, deleted: toDelete.length })
       }
 
-      const { removableFilenames } = computeRemovableDeps(
-        filename,
-        getPackageIndex(),
-        getForwardDeps(),
-        getReverseDeps(),
-      )
-      // Keep local-only deps (not available on Hub) as orphans instead of auto-deleting
-      const filteredRemovable = [...removableFilenames].filter((fn) => {
-        const depPkg = getPackageIndex().get(fn)
-        return !depPkg || !isNotDownloadable(depPkg)
-      })
-      const toDelete = [filename, ...filteredRemovable]
-      for (const fn of toDelete) {
-        await unlinkPackagePhysicalAndAliases(getPackageIndex().get(fn), fn)
-        deletePackage(fn)
-      }
-      buildFromDb()
-      results.push({ ok: true, deleted: toDelete.length })
-    }
-
-    notify('packages:updated')
-    notify('contents:updated')
-    if (filenames.length === 1) return results[0]
-    return { ok: true, results }
+      notify('packages:updated')
+      notify('contents:updated')
+      if (filenames.length === 1) return results[0]
+      return { ok: true, results }
+    })
   })
 
   ipcMain.handle('packages:set-type-override', (_, payload) => {
@@ -340,14 +350,16 @@ export function registerPackageHandlers() {
 
   ipcMain.handle('packages:force-remove', async (_, filenameOrFilenames) => {
     const filenames = normalizeFilenameArgs(filenameOrFilenames)
-    for (const filename of filenames) {
-      await unlinkPackagePhysicalAndAliases(getPackageIndex().get(filename), filename)
-      deletePackage(filename)
-    }
-    buildFromDb()
-    notify('packages:updated')
-    notify('contents:updated')
-    return filenames.length === 1 ? { ok: true } : { ok: true, count: filenames.length }
+    return withBulkWindow(async () => {
+      for (const filename of filenames) {
+        await unlinkPackagePhysicalAndAliases(getPackageIndex().get(filename), filename)
+        deletePackage(filename)
+      }
+      buildFromDb()
+      notify('packages:updated')
+      notify('contents:updated')
+      return filenames.length === 1 ? { ok: true } : { ok: true, count: filenames.length }
+    })
   })
 
   ipcMain.handle('packages:missing-deps', async () => {
@@ -386,18 +398,20 @@ export function registerPackageHandlers() {
     const orphans = getOrphanSet()
     if (orphans.size === 0) return { ok: true, count: 0, freedBytes: 0 }
 
-    let freedBytes = 0
-    for (const fn of orphans) {
-      const pkg = getPackageIndex().get(fn)
-      if (pkg) freedBytes += pkg.size_bytes
-      await unlinkPackagePhysicalAndAliases(pkg, fn)
-      deletePackage(fn)
-    }
+    return withBulkWindow(async () => {
+      let freedBytes = 0
+      for (const fn of orphans) {
+        const pkg = getPackageIndex().get(fn)
+        if (pkg) freedBytes += pkg.size_bytes
+        await unlinkPackagePhysicalAndAliases(pkg, fn)
+        deletePackage(fn)
+      }
 
-    buildFromDb()
-    notify('packages:updated')
-    notify('contents:updated')
-    return { ok: true, count: orphans.size, freedBytes }
+      buildFromDb()
+      notify('packages:updated')
+      notify('contents:updated')
+      return { ok: true, count: orphans.size, freedBytes }
+    })
   })
 
   ipcMain.handle('packages:install-all-missing', async () => {
@@ -505,9 +519,13 @@ export function registerPackageHandlers() {
       // Verify the newly downloaded file
       await verifyPackageFull(tempPath)
 
-      // Replace the old file (unlink indexed path and any stray main-dir aliases, then write temp → final)
-      await unlinkPackagePhysicalAndAliases(pkg, filename)
-      await rename(tempPath, finalPath)
+      // Replace the old file (unlink indexed path and any stray main-dir aliases, then write temp → final).
+      // Wrap in a watcher window so the unlink-then-rename pair is treated as one app-coordinated change.
+      await withBulkWindow(async () => {
+        await unlinkPackagePhysicalAndAliases(pkg, filename)
+        recordOwnedPath(finalPath)
+        await rename(tempPath, finalPath)
+      })
 
       // Clear corrupted flag and re-scan the package
       setPackageCorrupted(filename, false)

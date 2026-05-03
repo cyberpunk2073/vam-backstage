@@ -15,9 +15,17 @@ export const PERSON_ATOM_ID_CONTENT_TYPES = new Set(['scene', 'legacyScene', 'le
  * If `packageFilename` is provided the buffer is treated as .var-sourced and
  * `SELF:/` references are rewritten to the package's stem; for loose files
  * (no package), the buffer is parsed as-is.
+ *
+ * Returns `null` when the buffer is missing/empty or fails to parse — this
+ * distinguishes "we couldn't read this scene" from `'[]'` ("scene parsed,
+ * no Person atoms"). The local scanner's stat-gate doesn't re-read on
+ * unchanged files, so a permanently-broken scene won't be re-parsed; but a
+ * partially-written scene that finishes later will trigger another read
+ * (statMoved) and convert null → real ids. Probe consumers fall back to
+ * reading the source on null (see scenes/extract.js).
  */
 export function personAtomIdsJsonFromBuffer(buf, packageFilename = null) {
-  if (!buf || buf.length === 0) return '[]'
+  if (!buf || buf.length === 0) return null
   try {
     let raw = buf.toString('utf-8')
     if (packageFilename) {
@@ -28,7 +36,7 @@ export function personAtomIdsJsonFromBuffer(buf, packageFilename = null) {
     const atoms = getPersonAtoms(sceneJson)
     return JSON.stringify(atoms.map((a) => a.id))
   } catch {
-    return '[]'
+    return null
   }
 }
 

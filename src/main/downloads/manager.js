@@ -3,7 +3,7 @@ import { stat as fsStat, rename, unlink, mkdir } from 'fs/promises'
 import { join, dirname } from 'path'
 import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
 import { session } from 'electron'
-import yauzl from 'yauzl'
+import { verifyZipFile } from '../var-stability.js'
 import {
   insertDownload,
   getDownload,
@@ -40,7 +40,7 @@ import {
   findLocalByFilename,
 } from '../store.js'
 import { readAllPrefs, hidePackageContent } from '../vam-prefs.js'
-import { suppressPrefsStem, unsuppressPrefsStem, suppressPath } from '../watcher.js'
+import { recordOwnedPath } from '../watcher.js'
 import { resolvePackageThumbnails } from '../thumb-resolver.js'
 import { applyStorageState, computeInstallTarget, parseDisableBehavior } from '../storage-state.js'
 import { getMainLibraryDirPath } from '../library-dirs.js'
@@ -63,19 +63,6 @@ function isTransientNetworkError(err) {
   if (/network|socket hang up|fetch failed/i.test(err.message)) return true
   if (/Resume range rejected/i.test(err.message)) return true
   return false
-}
-
-/** Quick structural integrity check — opens the ZIP central directory and iterates all entries. */
-function verifyZip(filePath) {
-  return new Promise((resolve, reject) => {
-    yauzl.open(filePath, { lazyEntries: true, autoClose: true }, (err, zipfile) => {
-      if (err) return reject(err)
-      zipfile.readEntry()
-      zipfile.on('entry', () => zipfile.readEntry())
-      zipfile.on('end', () => resolve())
-      zipfile.on('error', reject)
-    })
-  })
 }
 
 let activeTransfers = new Map()
@@ -815,7 +802,7 @@ async function startDownload(entry) {
     // Validate: if byte count diverges from expected, verify ZIP integrity
     if (file_size && file_size > 0 && Math.abs(transferState.bytesLoaded - file_size) > 1024) {
       try {
-        await verifyZip(tempPath)
+        await verifyZipFile(tempPath)
         console.warn(
           `Size mismatch for ${package_ref} (expected ${file_size}, got ${transferState.bytesLoaded}) but ZIP is valid — accepting`,
         )
@@ -826,8 +813,12 @@ async function startDownload(entry) {
       }
     }
 
-    // Move temp to final
-    suppressPath(finalPath)
+    // Move temp to final. Record-as-owned only takes effect inside a bulk
+    // window — this individual download isn't wrapped, so the watcher will
+    // observe the create event. That's fine: the post-download integrate
+    // path runs scanAndUpsert immediately after, and the watcher's later
+    // re-scan hits the (mtime, size) cache and short-circuits.
+    recordOwnedPath(finalPath)
     await rename(tempPath, finalPath)
 
     cleanupTransfer(id)
@@ -954,13 +945,11 @@ async function postDownloadIntegrate(filename, fullPath, isDirect, hubResourceId
     if (!isDirect && autoHide === '1' && vamDir) {
       const paths = contentItems.map((c) => c.internalPath)
       if (paths.length > 0) {
-        const stem = filename.replace(/\.var$/i, '')
-        suppressPrefsStem(stem)
-        try {
-          await hidePackageContent(vamDir, filename, paths)
-        } finally {
-          unsuppressPrefsStem(stem)
-        }
+        // hidePackageContent already wraps itself in withBulkWindow — every
+        // sidecar create is recordOwnedPath'd via setHidden, so the watcher
+        // sees no flood. We rebuild the entire prefs map from disk after as
+        // the source of truth.
+        await hidePackageContent(vamDir, filename, paths)
       }
       const prefs = await readAllPrefs(vamDir)
       setPrefsMap(prefs)

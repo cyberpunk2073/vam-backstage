@@ -9,8 +9,8 @@ import {
   __setProcessBatchStateForTests,
   __prefsEventSyncForTests,
   __localPrefsEventSyncForTests,
-  suppressPrefsStem,
-  unsuppressPrefsStem,
+  withBulkWindow,
+  recordOwnedPath,
 } from './watcher.js'
 import { refreshLibraryDirs } from './library-dirs.js'
 import { buildFromDb, getPrefsMap } from './store.js'
@@ -398,26 +398,6 @@ describe('watcher.processBatch — cascade enable', () => {
 })
 
 describe('watcher.processBatch — prefs / sidecar handling', () => {
-  it('suppressPrefsStem drops prefs events for that package stem', async () => {
-    const stem = 'Author.Pref.1'
-    suppressPrefsStem(stem)
-    try {
-      const prefsRoot = join(tmp.vamDir, ADDON_PACKAGES_FILE_PREFS)
-      await mkdir(join(prefsRoot, stem, 'Saves', 'scene'), { recursive: true })
-      const sidecar = join(prefsRoot, stem, 'Saves', 'scene', 'HideMe.json.hide')
-      await writeFile(sidecar, '')
-      __setProcessBatchStateForTests({
-        vamDir: tmp.vamDir,
-        prefsDir: prefsRoot,
-      })
-      await __prefsEventSyncForTests(`${stem}/Saves/scene/HideMe.json.hide`)
-      const prefs = getPrefsMap()
-      expect(prefs.has(`Author.Pref.1.var/Saves/scene/HideMe.json`)).toBe(false)
-    } finally {
-      unsuppressPrefsStem(stem)
-    }
-  })
-
   it('.hide sidecar toggles hidden in prefsMap', async () => {
     await runScan(tmp.vamDir)
     buildFromDb()
@@ -482,5 +462,73 @@ describe('watcher.processBatch — prefs / sidecar handling', () => {
     await __localPrefsEventSyncForTests(favPath)
     const key = '__local__/Custom/Atom/Person/Appearance/L.vap'
     expect(getPrefsMap().get(key)?.favorite).toBe(true)
+  })
+})
+
+describe('watcher.withBulkWindow', () => {
+  it('runs the function and returns its value when no nesting', async () => {
+    const result = await withBulkWindow(async () => 42)
+    expect(result).toBe(42)
+  })
+
+  it('recordOwnedPath outside a window is a no-op (no error)', () => {
+    expect(() => recordOwnedPath('/tmp/anything')).not.toThrow()
+  })
+
+  it('nested calls share the same ourPaths set', async () => {
+    let outerOwned, innerOwned
+    await withBulkWindow(async (outer) => {
+      outerOwned = outer
+      outer.add('/a/b')
+      await withBulkWindow(async (inner) => {
+        innerOwned = inner
+        inner.add('/c/d')
+      })
+    })
+    expect(outerOwned).toBe(innerOwned)
+    expect(outerOwned.has('/a/b')).toBe(true)
+    expect(outerOwned.has('/c/d')).toBe(true)
+  })
+
+  it('rethrows fn errors but still drains the buffer (no leaked window state)', async () => {
+    await expect(
+      withBulkWindow(async () => {
+        throw new Error('boom')
+      }),
+    ).rejects.toThrow('boom')
+    // After failure, a fresh window should still work — no stale bulkWindow.
+    const result = await withBulkWindow(async () => 'fresh')
+    expect(result).toBe('fresh')
+  })
+
+  it('keeps the window alive while a peer caller is still running (refcount)', async () => {
+    // Two concurrent callers, B starts after A and finishes before A. B's
+    // recordOwnedPath calls must keep working until A also exits, otherwise
+    // any call that joins someone else's window would silently lose its
+    // event filter the moment the originator returns.
+    let releaseA
+    const aDone = new Promise((r) => (releaseA = r))
+    let observedDuringA
+    const a = withBulkWindow(async (owned) => {
+      owned.add('/from-a')
+      await aDone
+      observedDuringA = new Set(owned)
+    })
+    // Yield so A has set the window before B enters.
+    await Promise.resolve()
+    await withBulkWindow(async (owned) => {
+      owned.add('/from-b')
+      // Window must still be open here — recordOwnedPath should be a real op.
+      recordOwnedPath('/from-b-2')
+      expect(owned.has('/from-b-2')).toBe(true)
+    })
+    // B has exited. Window must still be alive because A holds it.
+    recordOwnedPath('/from-after-b')
+    releaseA()
+    await a
+    expect(observedDuringA.has('/from-b')).toBe(true)
+    expect(observedDuringA.has('/from-after-b')).toBe(true)
+    // Now nothing holds the window — recordOwnedPath should no-op cleanly.
+    expect(() => recordOwnedPath('/post')).not.toThrow()
   })
 })

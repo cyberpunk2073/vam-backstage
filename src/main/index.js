@@ -220,9 +220,9 @@ function initBackend() {
     try {
       buildFromDb()
     } catch {}
-    // startWatcher runs after startupScan (see startupScan finally) — starting chokidar
-    // before the full library scan contends on the same volume and can make walkForVars
-    // take minutes instead of sub-second.
+    // startWatcher runs after startupScan (see startupScan finally) — starting the
+    // FS watcher before the full library scan contends on the same volume and can
+    // make walkForVars take minutes instead of sub-second.
   }
 }
 
@@ -261,9 +261,9 @@ async function startupScan() {
     // the hub_resource_ids scanHubDetails just wrote.
     //
     // The whole chain is detached from this try block: it uses the network
-    // pool, while startWatcher's chokidar setup uses the libuv FS pool. Pools
-    // are disjoint, so we run the two chains concurrently and await both in
-    // the finally below.
+    // pool, while startWatcher's parcel subscriptions touch the libuv FS pool
+    // (one-shot stat per dir). Pools are disjoint, so we run the two chains
+    // concurrently and await both in the finally below.
     hubBackfill = (async () => {
       try {
         await fetchPackagesJson()
@@ -318,7 +318,24 @@ app.on('window-all-closed', () => {
   }
 })
 
-app.on('will-quit', () => {
-  stopWatcher()
-  closeDatabase()
+// One-shot async shutdown: stopWatcher awaits parcel's native unsubscribe,
+// which detaches the watcher thread's N-API threadsafe-function refs. If we
+// don't await it before the env tears down, parcel's worker dispatches back
+// into a freed env and triggers `napi_fatal_error` (visible as the harmless-
+// looking native stack trace on close). We intercept the first will-quit,
+// drain cleanup, then re-quit — second pass falls through.
+let cleanedUp = false
+app.on('will-quit', (event) => {
+  if (cleanedUp) return
+  event.preventDefault()
+  ;(async () => {
+    try {
+      await stopWatcher()
+    } catch {}
+    try {
+      closeDatabase()
+    } catch {}
+    cleanedUp = true
+    app.quit()
+  })()
 })

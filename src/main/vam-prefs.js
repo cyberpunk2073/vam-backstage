@@ -3,7 +3,7 @@ import { join, dirname, extname } from 'path'
 import { existsSync } from 'fs'
 import { ADDON_PACKAGES_FILE_PREFS } from '@shared/paths.js'
 import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_ROOTS, isLocalPackage } from '@shared/local-package.js'
-import { suppressPath } from './watcher.js'
+import { recordOwnedPath, withBulkWindow } from './watcher.js'
 import { pLimit } from './p-limit.js'
 
 // Bounded concurrency for the per-package-stem sidecar walk. Each stem owns a
@@ -124,7 +124,7 @@ async function walkSidecarDir(dirPath, relativePath, keyPrefix, prefs, { require
  */
 export async function setHidden(vamDir, packageFilename, internalPath, hidden) {
   const p = sidecarPath(vamDir, packageFilename, internalPath, '.hide')
-  suppressPath(p)
+  recordOwnedPath(p)
   if (hidden) {
     await mkdir(dirname(p), { recursive: true })
     await writeFile(p, '')
@@ -140,7 +140,7 @@ export async function setHidden(vamDir, packageFilename, internalPath, hidden) {
  */
 export async function setFavorite(vamDir, packageFilename, internalPath, favorite) {
   const p = sidecarPath(vamDir, packageFilename, internalPath, '.fav')
-  suppressPath(p)
+  recordOwnedPath(p)
   if (favorite) {
     await mkdir(dirname(p), { recursive: true })
     await writeFile(p, '')
@@ -155,26 +155,33 @@ const BATCH_CONCURRENCY = 20
 
 /**
  * Bulk-create .hide sidecars for all managed content items in a package.
- * Used when demoting a package to dependency.
+ * Used when demoting a package to dependency. Wraps the bulk in a watcher
+ * window so the resulting flood of sidecar create events is suppressed
+ * (caller rebuilds prefs from disk after).
  */
 export async function hidePackageContent(vamDir, packageFilename, contentPaths) {
-  for (let i = 0; i < contentPaths.length; i += BATCH_CONCURRENCY) {
-    await Promise.all(
-      contentPaths.slice(i, i + BATCH_CONCURRENCY).map((p) => setHidden(vamDir, packageFilename, p, true)),
-    )
-  }
+  return withBulkWindow(async () => {
+    for (let i = 0; i < contentPaths.length; i += BATCH_CONCURRENCY) {
+      await Promise.all(
+        contentPaths.slice(i, i + BATCH_CONCURRENCY).map((p) => setHidden(vamDir, packageFilename, p, true)),
+      )
+    }
+  })
 }
 
 /**
  * Bulk-delete .hide sidecars for all managed content items in a package.
- * Used when promoting a dependency to direct.
+ * Used when promoting a dependency to direct. Wraps the bulk in a watcher
+ * window — same reasoning as `hidePackageContent`.
  */
 export async function unhidePackageContent(vamDir, packageFilename, contentPaths) {
-  for (let i = 0; i < contentPaths.length; i += BATCH_CONCURRENCY) {
-    await Promise.all(
-      contentPaths.slice(i, i + BATCH_CONCURRENCY).map((p) => setHidden(vamDir, packageFilename, p, false)),
-    )
-  }
+  return withBulkWindow(async () => {
+    for (let i = 0; i < contentPaths.length; i += BATCH_CONCURRENCY) {
+      await Promise.all(
+        contentPaths.slice(i, i + BATCH_CONCURRENCY).map((p) => setHidden(vamDir, packageFilename, p, false)),
+      )
+    }
+  })
 }
 
 const OLD_EXTS = new Set(['.vab', '.vaj'])
