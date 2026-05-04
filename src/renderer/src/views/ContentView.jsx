@@ -210,16 +210,16 @@ export default function ContentView({ onNavigate, navContext }) {
       .authorCounts()
       .then(setAuthorCounts)
       .catch(() => {})
+    // Selection refresh (selectedItem / selectedPackage) is handled at App
+    // level so it fires regardless of which view is mounted; here we only
+    // re-fetch the contents list and view-scoped sidebar facet counts.
     const cleanup1 = window.api.onContentsUpdated(() => {
       load()
-      useContentStore.getState().refreshSelection()
     })
     // Note: package field changes (storageState, isDirect, type, labels) reach
     // content rows via App-level `onPackagesUpdated` → `fetchPackages` →
-    // `useContentStore.relink()`. We only refresh facet counts and the
-    // selected-package detail here; no `fetchContents` IPC needed.
+    // `useContentStore.relink()`. No `fetchContents` IPC needed.
     const cleanup2 = window.api.onPackagesUpdated(() => {
-      useContentStore.getState().refreshSelectedPackageDetail()
       window.api.packages
         .tagCounts()
         .then(setTagCounts)

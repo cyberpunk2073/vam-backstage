@@ -208,12 +208,12 @@ export default function HubView({ onNavigate }) {
     return () => io.disconnect()
   }, [fetchNextPage, resources.length])
 
-  // When packages change (promote, download completes, uninstall), resync install status + detail from DB
+  // When packages change (promote, download completes, uninstall), resync install status from DB.
+  // The hub detail panel is refreshed at App level; here we only patch the
+  // gallery's resource objects + the global installed-state store.
   useEffect(() => {
     return window.api.onPackagesUpdated(async () => {
-      const state = useHubStore.getState()
-      if (state.detailResource) void state.refreshDetail()
-      const { resources } = state
+      const { resources } = useHubStore.getState()
       if (resources.length === 0) return
 
       const ids = resources.map((r) => r.resource_id)

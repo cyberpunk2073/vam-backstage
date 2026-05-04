@@ -65,9 +65,23 @@ export default function App() {
     // refetch via `useContentStore.relink()`), so we need the package map
     // populated even when LibraryView isn't mounted. Load + listen here so
     // every view sees fresh package data after any `packages:updated` event.
+    //
+    // Selection-refresh (`refreshDetail` etc.) also lives here, not per-view,
+    // because selection state has store-scope lifetime but views have mount
+    // lifetime: if a mutation fires while the owning view is unmounted, its
+    // listener can't catch it and the stored selection silently goes stale
+    // until the user triggers another mutation *with the view mounted*.
+    // App-level subscriptions catch every event regardless of active view.
     void useLibraryStore.getState().fetchPackages()
     const cleanupPackagesUpdated = window.api.onPackagesUpdated(() => {
       useLibraryStore.getState().fetchPackages()
+      void useLibraryStore.getState().refreshDetail()
+      void useContentStore.getState().refreshSelectedPackageDetail()
+      void useHubStore.getState().refreshDetail()
+    })
+    const cleanupContentsUpdated = window.api.onContentsUpdated(() => {
+      void useLibraryStore.getState().refreshDetail()
+      void useContentStore.getState().refreshSelection()
     })
     const cleanupUnreadable = window.api.onScanUnreadable(({ filename }) => {
       toast(`Corrupted package skipped: ${filename}`)
@@ -83,6 +97,7 @@ export default function App() {
     return () => {
       cleanupLabels()
       cleanupPackagesUpdated()
+      cleanupContentsUpdated()
       cleanupUnreadable()
     }
   }, [])

@@ -224,12 +224,13 @@ export default function LibraryView({ onNavigate, navContext }) {
       .then(setAuthorCounts)
       .catch(() => {})
     getLibraryStore().checkForUpdates()
+    // Note: selectedDetail refresh + fetchPackages happen at App level so they
+    // fire even when LibraryView is unmounted. We only refresh view-scoped
+    // sidebar/toolbar data here.
     const cleanup1 = window.api.onPackagesUpdated(() => {
       const store = getLibraryStore()
-      store.fetchPackages()
       store.fetchBackendCounts()
       store.checkForUpdates({ enrich: false })
-      store.refreshDetail()
       if (store.statusFilter === 'missing') {
         store.fetchMissingDeps({ enrich: false })
       } else {
@@ -244,13 +245,8 @@ export default function LibraryView({ onNavigate, navContext }) {
         .then(setAuthorCounts)
         .catch(() => {})
     })
-    const cleanup2 = window.api.onContentsUpdated(() => {
-      getLibraryStore().fetchPackages()
-      getLibraryStore().refreshDetail()
-    })
     return () => {
       cleanup1()
-      cleanup2()
     }
   }, [])
 
