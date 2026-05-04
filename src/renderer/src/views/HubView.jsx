@@ -54,6 +54,8 @@ import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
 const HUB_SEARCH_DEBOUNCE_MS = 320
 /** Must match `gap-3` on the hub gallery grid (`0.75rem` = 12px) */
 const HUB_GALLERY_GRID_GAP_PX = 12
+/** IntersectionObserver rootMargin (bottom): load next page before user reaches the list end */
+const HUB_LOAD_MORE_MARGIN_BOTTOM_PX = 1600
 
 export default function HubView({ onNavigate }) {
   const {
@@ -191,18 +193,20 @@ export default function HubView({ onNavigate }) {
     useHubStore.getState().fetchResources()
   }, [page])
 
-  // Intersection observer sentinel for infinite scroll
+  // Intersection observer sentinel for infinite scroll (root = gallery scroller so rootMargin
+  // prefetches below the fold; viewport root + overflow-y ancestor clips the target until late).
   // Depends on resources.length so the observer is (re)created after each page load —
   // handles both the initial null-ref case and the sentinel-still-visible edge case.
   const sentinelRef = useRef(null)
   useEffect(() => {
+    const root = galleryRef.current
     const el = sentinelRef.current
-    if (!el) return
+    if (!root || !el) return
     const io = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) fetchNextPage()
       },
-      { rootMargin: '900px' },
+      { root, rootMargin: `0px 0px ${HUB_LOAD_MORE_MARGIN_BOTTOM_PX}px 0px` },
     )
     io.observe(el)
     return () => io.disconnect()
