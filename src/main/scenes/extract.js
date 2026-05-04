@@ -10,7 +10,7 @@ import { existsSync } from 'fs'
 import { mkdir, writeFile } from 'fs/promises'
 import { basename, extname, dirname, join } from 'path'
 import { getSetting, getPersonAtomIds } from '../db.js'
-import { getContentByPackage, getPackageIndex } from '../store.js'
+import { getContentByPackage, getPackageIndex, getExtractedAppearanceBasenames } from '../store.js'
 import { pLimit } from '../p-limit.js'
 import { readScene } from './scene-source.js'
 import { getPersonAtoms, filterAppearanceStorables, filterOutfitStorables, buildPreset } from './extractor.js'
@@ -66,6 +66,52 @@ function creatorFor(packageFilename) {
   if (!packageFilename) return '!local'
   const pkg = getPackageIndex().get(packageFilename)
   return pkg?.creator || '!local'
+}
+
+/**
+ * Cheap "do we already have an extracted appearance preset for this package?"
+ * predicate, used to render the checkmark on the library card "no preset" chip.
+ *
+ * Reads `person_atom_ids` straight off the cached content rows in store, runs
+ * the same `computeTargets` formula the writer/probe paths use, and tests
+ * basename membership against the Set populated during `buildFromDb`. No DB
+ * queries, no fs calls.
+ *
+ * Caveat: scene-source rows whose `person_atom_ids` is unpopulated (never
+ * probed) are skipped. They get filled in lazily by `probeScene` on the first
+ * context-menu open, after which a subsequent rebuild flips the chip.
+ */
+export function packageHasExtractedAppearance(filename) {
+  const set = getExtractedAppearanceBasenames()
+  if (set.size === 0) return false
+  const vamDir = getSetting('vam_dir')
+  if (!vamDir) return false
+  const pkg = getPackageIndex().get(filename)
+  if (!pkg) return false
+  const items = getContentByPackage().get(filename)
+  if (!items) return false
+  for (const c of items) {
+    if (!APPEARANCE_SOURCE_TYPES.has(c.type)) continue
+    let atomIds = []
+    try {
+      atomIds = c.person_atom_ids ? JSON.parse(c.person_atom_ids) : []
+    } catch {
+      continue
+    }
+    if (!Array.isArray(atomIds) || atomIds.length === 0) continue
+    const singleAtom = atomIds.length === 1
+    for (const atomId of atomIds) {
+      const t = computeTargets({
+        vamDir,
+        creator: pkg.creator,
+        internalPath: c.internal_path,
+        atomId,
+        singleAtom,
+      })
+      if (set.has(basename(t.appearance.absPath))) return true
+    }
+  }
+  return false
 }
 
 /**

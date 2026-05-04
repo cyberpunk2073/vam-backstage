@@ -21,6 +21,7 @@ import {
 import { categoryOf, isGalleryVisible, isVisible, LOOK_ITEM_EXACT_TYPES, tagOf } from '@shared/content-types.js'
 import { getPackagesIndex, loadPackagesJsonFromCache } from './hub/packages-json.js'
 import { isLocalPackage } from '@shared/local-package.js'
+import { packageHasExtractedAppearance } from './scenes/extract.js'
 
 /**
  * Iterate packages excluding the synthetic `__local__` sentinel that owns loose
@@ -78,6 +79,7 @@ let prefsMap = new Map() // "filename/internalPath" -> { hidden, favorite }
 let removableSizeMap = new Map() // filename -> removableSize (orphaned dep bytes)
 let morphCountByPackage = new Map() // filename -> number of morphBinary items in that package
 let lookItemCountByPackage = new Map() // filename -> count of look / legacyLook / skinPreset items
+let extractedAppearanceBasenames = new Set() // basenames of local 'look' rows under Custom/Atom/Person/Appearance/extracted/
 let aggregateMorphCountMap = new Map() // filename -> morph count (own + all resolved deps)
 let transitiveDepsCountMap = new Map() // filename -> total unique deps (resolved + missing) in subtree
 let transitiveMissingMap = new Map() // filename -> count of unique missing dep refs in subtree
@@ -202,12 +204,20 @@ export function buildFromDb({ skipGraph = false } = {}) {
 
   morphCountByPackage = new Map()
   lookItemCountByPackage = new Map()
+  extractedAppearanceBasenames = new Set()
   for (const item of allContentItems) {
     if (item.type === 'morphBinary') {
       morphCountByPackage.set(item.package_filename, (morphCountByPackage.get(item.package_filename) || 0) + 1)
     }
     if (LOOK_ITEM_EXACT_TYPES.has(item.type)) {
       lookItemCountByPackage.set(item.package_filename, (lookItemCountByPackage.get(item.package_filename) || 0) + 1)
+    }
+    if (
+      item.type === 'look' &&
+      isLocalPackage(item.package_filename) &&
+      item.internal_path.startsWith('Custom/Atom/Person/Appearance/extracted/')
+    ) {
+      extractedAppearanceBasenames.add(item.internal_path.slice(item.internal_path.lastIndexOf('/') + 1))
     }
   }
 
@@ -500,6 +510,9 @@ export function getLabelNameById(id) {
 export function getContentByPackage() {
   return contentByPackage
 }
+export function getExtractedAppearanceBasenames() {
+  return extractedAppearanceBasenames
+}
 export function getPrefsMap() {
   return prefsMap
 }
@@ -565,6 +578,7 @@ function enrichPackageSummary(pkg) {
   const effectiveType = effectivePackageType(pkg)
   const lookItemCount = lookItemCountByPackage.get(pkg.filename) || 0
   const noLookPresetTag = effectiveType === 'Looks' && lookItemCount === 0
+  const hasExtractedAppearancePreset = noLookPresetTag && packageHasExtractedAppearance(pkg.filename)
   return {
     filename: pkg.filename,
     creator: pkg.creator,
@@ -597,6 +611,7 @@ function enrichPackageSummary(pkg) {
     isCascadeOrphan: orphanSet.has(pkg.filename) && !directOrphanSet.has(pkg.filename),
     isLocalOnly: isNotDownloadable(pkg),
     noLookPresetTag,
+    hasExtractedAppearancePreset,
     labelIds: packageLabelIds(pkg.filename),
   }
 }

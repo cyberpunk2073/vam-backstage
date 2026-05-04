@@ -463,10 +463,15 @@ export function LibraryCard({
             )}
             {pkg.noLookPresetTag && (
               <div
-                className={`${THUMB_OVERLAY_CHIP} bg-white/15 text-white/80 backdrop-blur-sm`}
-                title="No Custom/Atom appearance, Saves/Person/Appearance, or Custom/Atom/Person/Skin items in this package"
+                className={`${THUMB_OVERLAY_CHIP} bg-white/15 text-white/80 backdrop-blur-sm flex items-center gap-1`}
+                title={
+                  pkg.hasExtractedAppearancePreset
+                    ? 'No preset items in this package, but a matching appearance preset has been extracted to your library'
+                    : 'No Custom/Atom appearance, Saves/Person/Appearance, or Custom/Atom/Person/Skin items in this package'
+                }
               >
                 no preset
+                {pkg.hasExtractedAppearancePreset && <Check size={10} className="shrink-0 text-success" />}
               </div>
             )}
             {!pkg.isDirect && (

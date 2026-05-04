@@ -1,5 +1,28 @@
 import { ipcMain } from 'electron'
 import { probeScene, probePackage, runExtract, runExtractBatch } from '../scenes/extract.js'
+import { runLocalScan } from '../scanner/local.js'
+import { buildFromDb } from '../store.js'
+import { getSetting } from '../db.js'
+import { notify } from '../notify.js'
+
+/**
+ * After a user-initiated extract writes at least one preset, eagerly reconcile
+ * the local content rows + rebuild in-memory state + fire `packages:updated` so
+ * the library view's "no preset" checkmark flips immediately. The watcher
+ * pipeline would eventually catch up via `contents:updated`, but it's debounced
+ * 500ms and library cards listen to `packages:updated` only.
+ */
+async function refreshAfterExtract() {
+  const vamDir = getSetting('vam_dir')
+  if (!vamDir) return
+  try {
+    await runLocalScan(vamDir)
+    buildFromDb()
+    notify('packages:updated')
+  } catch (err) {
+    console.warn('Post-extract refresh failed:', err.message)
+  }
+}
 
 export function registerExtractHandlers() {
   ipcMain.handle('extract:probe-scene', async (_, { packageFilename, internalPath }) => {
@@ -14,14 +37,15 @@ export function registerExtractHandlers() {
     if (!payload || typeof payload !== 'object') throw new Error('invalid payload')
     const { kind } = payload
     if (kind !== 'appearance' && kind !== 'outfit') throw new Error('kind must be appearance|outfit')
-    if (Array.isArray(payload.items)) {
-      return await runExtractBatch({ items: payload.items, kind })
-    }
-    return await runExtract({
-      packageFilename: payload.packageFilename,
-      internalPath: payload.internalPath,
-      atomIds: payload.atomIds,
-      kind,
-    })
+    const result = Array.isArray(payload.items)
+      ? await runExtractBatch({ items: payload.items, kind })
+      : await runExtract({
+          packageFilename: payload.packageFilename,
+          internalPath: payload.internalPath,
+          atomIds: payload.atomIds,
+          kind,
+        })
+    if (result.written.length > 0) await refreshAfterExtract()
+    return result
   })
 }
