@@ -952,51 +952,47 @@ export function ContentCard({
             )}
           </div>
         )}
-        {/* Corner slot: disabled indicator and/or hover actions (hidden in bulk mode except disabled badge) */}
-        {(isDisabledPkg || !bulkMode) && (
-          <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 z-2">
-            {isDisabledPkg && (
-              <div
-                title="Package disabled"
-                className={`size-7 shrink-0 inline-flex items-center justify-center rounded text-error ${THUMB_OUTLINE_ICON_SHADOW}`}
-              >
-                <Power size={13} />
-              </div>
-            )}
-            {!bulkMode && (
-              <>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onToggleHidden?.(item)
-                  }}
-                  className={`size-7 shrink-0 inline-flex items-center justify-center rounded cursor-pointer transition ${
-                    isHidden
-                      ? `opacity-100 text-error bg-transparent ${THUMB_OUTLINE_ICON_SHADOW} group-hover:text-error/70 group-hover:bg-black/50 group-hover:backdrop-blur-sm`
-                      : 'opacity-0 group-hover:opacity-100 text-white/70 bg-black/50 backdrop-blur-sm'
-                  }`}
-                >
-                  {isHidden ? <EyeOff size={13} /> : <Eye size={13} />}
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onToggleFavorite?.(item)
-                  }}
-                  className={`size-7 shrink-0 inline-flex items-center justify-center rounded cursor-pointer transition ${
-                    item.favorite
-                      ? `text-warning opacity-100 bg-transparent ${THUMB_FILLED_ICON_SHADOW} group-hover:bg-black/50 group-hover:backdrop-blur-sm`
-                      : 'text-white/50 bg-black/50 backdrop-blur-sm opacity-0 group-hover:opacity-100'
-                  }`}
-                >
-                  <Star size={13} fill={item.favorite ? 'currentColor' : 'none'} />
-                </button>
-              </>
-            )}
-          </div>
-        )}
+        {/* Corner slot: disabled indicator; visibility/favorite are interactive except in bulk (static badges, like disabled) */}
+        <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 z-2">
+          {isDisabledPkg && (
+            <div
+              title="Package disabled"
+              className={`size-7 shrink-0 inline-flex items-center justify-center rounded text-error ${THUMB_OUTLINE_ICON_SHADOW}`}
+            >
+              <Power size={13} />
+            </div>
+          )}
+          <button
+            type="button"
+            disabled={bulkMode}
+            onClick={(e) => {
+              e.stopPropagation()
+              onToggleHidden?.(item)
+            }}
+            className={`size-7 shrink-0 inline-flex items-center justify-center rounded transition ${bulkMode ? 'pointer-events-none' : 'cursor-pointer'} ${
+              isHidden
+                ? `opacity-100 text-error bg-transparent ${THUMB_OUTLINE_ICON_SHADOW} ${bulkMode ? '' : 'group-hover:text-error/70 group-hover:bg-black/50 group-hover:backdrop-blur-sm'}`
+                : `opacity-0 text-white/70 bg-black/50 backdrop-blur-sm ${bulkMode ? '' : 'group-hover:opacity-100'}`
+            }`}
+          >
+            {isHidden ? <EyeOff size={13} /> : <Eye size={13} />}
+          </button>
+          <button
+            type="button"
+            disabled={bulkMode}
+            onClick={(e) => {
+              e.stopPropagation()
+              onToggleFavorite?.(item)
+            }}
+            className={`size-7 shrink-0 inline-flex items-center justify-center rounded transition ${bulkMode ? 'pointer-events-none' : 'cursor-pointer'} ${
+              item.favorite
+                ? `text-warning opacity-100 bg-transparent ${THUMB_FILLED_ICON_SHADOW} ${bulkMode ? '' : 'group-hover:bg-black/50 group-hover:backdrop-blur-sm'}`
+                : `text-white/50 bg-black/50 backdrop-blur-sm opacity-0 ${bulkMode ? '' : 'group-hover:opacity-100'}`
+            }`}
+          >
+            <Star size={13} fill={item.favorite ? 'currentColor' : 'none'} />
+          </button>
+        </div>
         <div className="absolute bottom-0 inset-x-0 px-2.5 pb-2 pt-8 bg-linear-to-t from-black/80 to-transparent">
           <div className="text-[11px] font-medium text-white truncate leading-tight">{item.displayName}</div>
           <div className="text-[9px] text-white/50 truncate">{pkgLabel}</div>
