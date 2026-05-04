@@ -416,9 +416,12 @@ export function LibraryCard({
   hideType,
   bulkMode = false,
   bulkSelected = false,
+  dimmed = false,
 }) {
   const minimal = mode === 'minimal'
-  const { isOffloaded, inactive, dim } = useInactiveStyle(pkg)
+  const inactiveStyle = useInactiveStyle(pkg)
+  const { isOffloaded, inactive } = inactiveStyle
+  const dim = inactiveStyle.dim || dimmed
   const name = displayName(pkg)
   const thumbUrl = useThumbnail(`pkg:${pkg.filename}`)
   const versionStr = pkg.version != null && pkg.version !== '' ? String(pkg.version) : null
@@ -605,9 +608,12 @@ export function LibraryTableRow({
   bulkMode = false,
   bulkSelected = false,
   onBulkToggle,
+  dimmed = false,
 }) {
   const typeColor = libraryTypeBadgeColor(pkg.type)
-  const { isOffloaded, inactive, dim } = useInactiveStyle(pkg)
+  const inactiveStyle = useInactiveStyle(pkg)
+  const { isOffloaded, inactive } = inactiveStyle
+  const dim = inactiveStyle.dim || dimmed
   const name = displayName(pkg)
   const versionStr = pkg.version != null && pkg.version !== '' ? String(pkg.version) : null
   const thumbUrl = useThumbnail(`pkg:${pkg.filename}`)

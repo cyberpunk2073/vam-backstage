@@ -118,6 +118,15 @@ function packageMatchesSelectedLabels(p, selectedLabelIds) {
   return true
 }
 
+/** True when an update entry is on the hub but not directly downloadable (paid/external),
+ *  i.e. enrichment finished and reported no `downloadUrl`. While enrichment is still in
+ *  flight, callers should treat this as `false` (still checking) by passing `detailsLoading`. */
+function isUpdateUnavailable(updateInfo, detailsLoading) {
+  if (!updateInfo || updateInfo.localNewerFilename) return false
+  if (detailsLoading) return false
+  return updateInfo.downloadUrl === null
+}
+
 function filterPackagesByStatus(items, statusFilter, updateCheckResults) {
   if (statusFilter === 'missing') return []
   if (statusFilter === 'direct') return items.filter((p) => p.isDirect)
@@ -167,6 +176,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     updateCheckResults,
     updateCheckLoading,
     updateCheckLastChecked,
+    updateDetailsLoading,
     backendCounts,
     packagesLoaded,
     setSearch,
@@ -972,6 +982,7 @@ export default function LibraryView({ onNavigate, navContext }) {
               updateCheckResults={updateCheckResults}
               updateCheckLoading={updateCheckLoading}
               updateCheckLastChecked={updateCheckLastChecked}
+              updateDetailsLoading={updateDetailsLoading}
               missingDeps={missingDeps}
               missingDepsLoading={missingDepsLoading}
               hubDetailsLoading={hubDetailsLoading}
@@ -1050,25 +1061,26 @@ export default function LibraryView({ onNavigate, navContext }) {
             scrollResetKey={scrollResetKey}
             onLayout={setGridLayout}
             onEmptyAreaPointerDown={bulkActive ? () => clearBulkSelection() : undefined}
-            renderItem={(pkg) => (
-              <LibraryPackageContextMenu
-                key={pkg.filename}
-                pkg={pkg}
-                updateInfo={updateCheckResults?.[pkg.filename]}
-                onNavigate={onNavigate}
-              >
-                <LibraryCard
-                  pkg={pkg}
-                  onClick={handleLibraryClick}
-                  selected={!bulkActive && selectedDetail?.filename === pkg.filename}
-                  bulkMode={bulkActive}
-                  bulkSelected={selectedBulkSet.has(pkg.filename)}
-                  onFilterAuthor={handleFilterAuthor}
-                  mode={compactCards ? 'minimal' : 'medium'}
-                  hideType={selectedTypes.length === 1}
-                />
-              </LibraryPackageContextMenu>
-            )}
+            renderItem={(pkg) => {
+              const updateInfo = updateCheckResults?.[pkg.filename]
+              const dimUpdateUnavailable =
+                statusFilter === 'updates' && isUpdateUnavailable(updateInfo, updateDetailsLoading)
+              return (
+                <LibraryPackageContextMenu key={pkg.filename} pkg={pkg} updateInfo={updateInfo} onNavigate={onNavigate}>
+                  <LibraryCard
+                    pkg={pkg}
+                    onClick={handleLibraryClick}
+                    selected={!bulkActive && selectedDetail?.filename === pkg.filename}
+                    bulkMode={bulkActive}
+                    bulkSelected={selectedBulkSet.has(pkg.filename)}
+                    onFilterAuthor={handleFilterAuthor}
+                    mode={compactCards ? 'minimal' : 'medium'}
+                    hideType={selectedTypes.length === 1}
+                    dimmed={dimUpdateUnavailable}
+                  />
+                </LibraryPackageContextMenu>
+              )
+            }}
           />
         ) : (
           <div className="flex-1 flex flex-col overflow-hidden p-4">
@@ -1102,25 +1114,31 @@ export default function LibraryView({ onNavigate, navContext }) {
                 rowHeight={37}
                 className="flex-1"
                 scrollResetKey={scrollResetKey}
-                renderRow={(pkg) => (
-                  <LibraryPackageContextMenu
-                    key={pkg.filename}
-                    pkg={pkg}
-                    updateInfo={updateCheckResults?.[pkg.filename]}
-                    onNavigate={onNavigate}
-                  >
-                    <LibraryTableRow
+                renderRow={(pkg) => {
+                  const updateInfo = updateCheckResults?.[pkg.filename]
+                  const dimUpdateUnavailable =
+                    statusFilter === 'updates' && isUpdateUnavailable(updateInfo, updateDetailsLoading)
+                  return (
+                    <LibraryPackageContextMenu
+                      key={pkg.filename}
                       pkg={pkg}
-                      onClick={handleLibraryTableRowClick}
-                      selected={!bulkActive && selectedDetail?.filename === pkg.filename}
-                      bulkMode={bulkActive}
-                      bulkSelected={selectedBulkSet.has(pkg.filename)}
-                      onBulkToggle={handleLibraryBulkToggle}
-                      onFilterAuthor={handleFilterAuthor}
-                      hideType={selectedTypes.length === 1}
-                    />
-                  </LibraryPackageContextMenu>
-                )}
+                      updateInfo={updateInfo}
+                      onNavigate={onNavigate}
+                    >
+                      <LibraryTableRow
+                        pkg={pkg}
+                        onClick={handleLibraryTableRowClick}
+                        selected={!bulkActive && selectedDetail?.filename === pkg.filename}
+                        bulkMode={bulkActive}
+                        bulkSelected={selectedBulkSet.has(pkg.filename)}
+                        onBulkToggle={handleLibraryBulkToggle}
+                        onFilterAuthor={handleFilterAuthor}
+                        hideType={selectedTypes.length === 1}
+                        dimmed={dimUpdateUnavailable}
+                      />
+                    </LibraryPackageContextMenu>
+                  )
+                }}
               />
             </div>
             {filtered.length === 0 && (
@@ -1190,6 +1208,7 @@ function ToolbarActions({
   updateCheckResults,
   updateCheckLoading,
   updateCheckLastChecked,
+  updateDetailsLoading,
   missingDeps,
   missingDepsLoading,
   hubDetailsLoading,
@@ -1231,6 +1250,7 @@ function ToolbarActions({
     let pausedFlag = false
     for (const update of Object.values(updateCheckResults)) {
       if (update.localNewerFilename) continue
+      if (isUpdateUnavailable(update, updateDetailsLoading)) continue
       if (!update.hubResourceId && !update.packageName) continue
       try {
         const r = await store.install(update.hubResourceId, null, true, update.packageName, !!update.isDepUpdate)
@@ -1328,7 +1348,11 @@ function ToolbarActions({
 
   if (statusFilter === 'updates') {
     const downloadableCount =
-      updateCheckResults != null ? Object.values(updateCheckResults).filter((u) => !u.localNewerFilename).length : null
+      updateCheckResults != null
+        ? Object.values(updateCheckResults).filter(
+            (u) => !u.localNewerFilename && !isUpdateUnavailable(u, updateDetailsLoading),
+          ).length
+        : null
     return (
       <>
         <Button
@@ -1635,6 +1659,7 @@ function LibraryPackageTypeBadgeMenu({ pkg, kindLabel, kindIsCore }) {
 function UpdateActions({ pkg, updateInfo }) {
   const [promoting, setPromoting] = useState(false)
   const updateState = useLibraryUpdateState(pkg, updateInfo)
+  const updateDetailsLoading = useLibraryStore((s) => s.updateDetailsLoading)
 
   const handlePromote = async () => {
     if (promoting) return
@@ -1681,6 +1706,20 @@ function UpdateActions({ pkg, updateInfo }) {
         >
           <Eye size={11} /> Go to
         </Button>
+      </div>
+    )
+  }
+
+  if (isUpdateUnavailable(updateInfo, updateDetailsLoading)) {
+    return (
+      <div className="rounded border border-border bg-elevated/40 px-2.5 py-2">
+        <div className="flex items-center gap-1.5 text-[11px] font-medium text-text-secondary">
+          <ArrowUpCircle size={11} className="shrink-0" /> v{updateInfo.hubVersion} unavailable
+        </div>
+        <p className="text-[10px] text-text-tertiary mt-1 leading-relaxed">
+          A newer version is listed on the hub but is not directly downloadable — typically because it is a paid
+          resource or hosted externally.
+        </p>
       </div>
     )
   }

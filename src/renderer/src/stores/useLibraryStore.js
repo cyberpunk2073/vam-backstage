@@ -34,7 +34,10 @@ async function _enrichUpdateCheck(nonce, set, get) {
   for (const entry of Object.values(results)) {
     if (!entry.localNewerFilename) stems.push(entry.hubFilename.replace(/\.var$/i, ''))
   }
-  if (!stems.length) return
+  if (!stems.length) {
+    set({ updateDetailsLoading: false })
+    return
+  }
   try {
     const details = await window.api.packages.enrichFromHub(stems)
     if (nonce !== updateCheckNonce) return
@@ -46,9 +49,11 @@ async function _enrichUpdateCheck(nonce, set, get) {
       const detail = details[stem]
       updated[filename] = detail ? { ...entry, downloadUrl: detail.downloadUrl, fileSize: detail.fileSize } : entry
     }
-    set({ updateCheckResults: updated })
+    set({ updateCheckResults: updated, updateDetailsLoading: false })
   } catch (err) {
+    if (nonce !== updateCheckNonce) return
     console.warn('Update details enrichment failed:', err)
+    set({ updateDetailsLoading: false })
   }
 }
 
@@ -88,6 +93,9 @@ export const useLibraryStore = create((set, get) => ({
   updateCheckResults: null,
   updateCheckLoading: false,
   updateCheckLastChecked: null,
+  /** True while hub `downloadUrl`/`fileSize` enrichment for update entries is in flight.
+   *  Used to distinguish "still checking" from "checked, not directly downloadable" in the UI. */
+  updateDetailsLoading: false,
 
   // Backend-provided counts for fields that can't be computed client-side
   backendCounts: null,
@@ -264,7 +272,15 @@ export const useLibraryStore = create((set, get) => ({
       const data = await window.api.packages.checkUpdates()
       if (nonce !== updateCheckNonce) return
       if (!enrich) _mergeUpdateEnrichment(get().updateCheckResults, data)
-      set({ updateCheckResults: data, updateCheckLoading: false, updateCheckLastChecked: Date.now() })
+      // Set updateDetailsLoading=true atomically with the results so the UI never sees
+      // an interim state where every entry has downloadUrl=null but the loading flag is
+      // false (which would briefly mark all updates as "unavailable").
+      set({
+        updateCheckResults: data,
+        updateCheckLoading: false,
+        updateCheckLastChecked: Date.now(),
+        updateDetailsLoading: enrich,
+      })
     } catch (err) {
       if (nonce !== updateCheckNonce) return
       console.error('Update check failed:', err)
@@ -280,7 +296,12 @@ export const useLibraryStore = create((set, get) => ({
     try {
       const data = await window.api.packages.checkUpdates({ forceRefresh: true })
       if (nonce !== updateCheckNonce) return
-      set({ updateCheckResults: data, updateCheckLoading: false, updateCheckLastChecked: Date.now() })
+      set({
+        updateCheckResults: data,
+        updateCheckLoading: false,
+        updateCheckLastChecked: Date.now(),
+        updateDetailsLoading: true,
+      })
     } catch (err) {
       if (nonce !== updateCheckNonce) return
       console.error('Update check failed:', err)
