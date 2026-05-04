@@ -123,7 +123,7 @@ describe('buildFromDb — cross-version content dedup', () => {
 
     buildFromDb()
 
-    const items = getFilteredContents().filter((c) => c.packageName === 'Author.Pkg')
+    const items = getFilteredContents().filter((c) => c.packageFilename.startsWith('Author.Pkg.'))
     const demoOwners = items.filter((c) => c.displayName === 'Demo').map((c) => c.packageFilename)
     expect(demoOwners).toEqual(['Author.Pkg.2.var'])
     const onlyInV1 = items.filter((c) => c.displayName === 'OnlyInV1').map((c) => c.packageFilename)
@@ -159,7 +159,9 @@ describe('buildFromDb — cross-version content dedup', () => {
       type: 'scene',
     })
     buildFromDb()
-    const items = getFilteredContents().filter((c) => c.packageName === 'Tie.Pkg' && c.displayName === 'Same')
+    const items = getFilteredContents().filter(
+      (c) => c.packageFilename.startsWith('Tie.Pkg.') && c.displayName === 'Same',
+    )
     expect(items).toHaveLength(1)
     expect(items[0].packageFilename).toBe('Tie.Pkg.1.var')
   })
@@ -186,7 +188,7 @@ describe('buildFromDb — cross-version content dedup', () => {
       type: 'scene',
     })
     buildFromDb()
-    expect(getFilteredContents().filter((c) => c.packageName === 'Single.V')).toHaveLength(2)
+    expect(getFilteredContents().filter((c) => c.packageFilename.startsWith('Single.V.'))).toHaveLength(2)
   })
 
   it('does not dedupe across categories with the same display name', async () => {
@@ -218,7 +220,9 @@ describe('buildFromDb — cross-version content dedup', () => {
       type: 'look',
     })
     buildFromDb()
-    const dups = getFilteredContents().filter((c) => c.packageName === 'Mix.Pkg' && c.displayName === 'DupName')
+    const dups = getFilteredContents().filter(
+      (c) => c.packageFilename.startsWith('Mix.Pkg.') && c.displayName === 'DupName',
+    )
     expect(dups).toHaveLength(2)
   })
 })

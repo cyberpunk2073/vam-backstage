@@ -156,6 +156,17 @@ export function displayName(pkg) {
   return dotIdx > 0 ? name.slice(dotIdx + 1) : name
 }
 
+/**
+ * Resolve a display label for a content row's owning package. Reads from the
+ * `c.package` reference attached by `useContentStore.relink`; falls back to the
+ * raw `packageFilename` when the package object isn't joined yet (e.g.
+ * transient gap between `contents:list` returning and the next package
+ * refetch). Use everywhere a content row needs to show its package label.
+ */
+export function contentPackageLabel(c) {
+  return c.package ? displayName(c.package) : displayName({ filename: c.packageFilename })
+}
+
 // --- String helpers ---
 
 /** Truncate with ellipsis in the middle, preserving start and end of the string. */

@@ -1,6 +1,28 @@
 import { create } from 'zustand'
 import { toast } from '@/components/Toast'
 import { typeFilterSlice } from './typeFilterSlice'
+import { useLibraryStore } from './useLibraryStore'
+
+/**
+ * Attach `c.package` references onto a fresh content array. Content rows arrive
+ * from main as lean rows (no denormalized package fields); the renderer joins
+ * them against `useLibraryStore.packageByFilename` here. Returns a *new* array
+ * so React/Zustand subscribers re-render even when a single field on one
+ * package changed.
+ *
+ * Skips reallocation when the linked package is already the same object
+ * identity, which lets unaffected rows keep their identity if/when packages
+ * are ever updated in place rather than full-replaced.
+ */
+function linkContents(rows, pkgMap) {
+  const out = new Array(rows.length)
+  for (let i = 0; i < rows.length; i++) {
+    const c = rows[i]
+    const pkg = pkgMap.get(c.packageFilename)
+    out[i] = c.package === pkg ? c : { ...c, package: pkg }
+  }
+  return out
+}
 
 const FILTER_DEFAULTS = {
   search: '',
@@ -108,11 +130,42 @@ export const useContentStore = create((set, get) => ({
 
   fetchContents: async () => {
     try {
+      // Block on `fetchPackages` if we haven't loaded packages yet — content
+      // rows reference packages via `c.package`, so linking against an empty
+      // map would render rows with `package: undefined` on first paint.
+      // The library store dedupe gate makes this a no-op when a fetch is
+      // already in flight (e.g. kicked off from App on mount).
+      if (!useLibraryStore.getState().packagesLoaded) {
+        await useLibraryStore.getState().fetchPackages()
+      }
       const contents = await window.api.contents.list({})
-      set({ contents })
+      const pkgMap = useLibraryStore.getState().packageByFilename
+      set({ contents: linkContents(contents, pkgMap) })
     } catch (err) {
       console.error('Failed to fetch contents:', err)
     }
+  },
+
+  /**
+   * Reattach `c.package` on every existing content row using the current
+   * `packageByFilename` map. Called by `useLibraryStore.fetchPackages` after
+   * each refetch so content-side UI sees fresh package fields without an
+   * IPC round-trip. No-op when contents haven't been loaded yet.
+   *
+   * Also re-links `selectedItem` so the detail panel's `item.package?.*`
+   * reads stay in sync after a package mutation.
+   */
+  relink: () => {
+    const { contents, selectedItem } = get()
+    if (!contents.length && !selectedItem) return
+    const pkgMap = useLibraryStore.getState().packageByFilename
+    const patch = {}
+    if (contents.length) patch.contents = linkContents(contents, pkgMap)
+    if (selectedItem) {
+      const nextPkg = pkgMap.get(selectedItem.packageFilename)
+      patch.selectedItem = selectedItem.package === nextPkg ? selectedItem : { ...selectedItem, package: nextPkg }
+    }
+    set(patch)
   },
 
   selectItem: async (item) => {
@@ -120,7 +173,10 @@ export const useContentStore = create((set, get) => ({
       set({ selectedItem: null, selectedPackage: null, bulkSelectedIds: [], bulkAnchorId: null })
       return
     }
-    set({ selectedItem: item, bulkSelectedIds: [], bulkAnchorId: null })
+    const pkgMap = useLibraryStore.getState().packageByFilename
+    const nextPkg = pkgMap.get(item.packageFilename)
+    const linkedItem = item.package === nextPkg ? item : { ...item, package: nextPkg }
+    set({ selectedItem: linkedItem, bulkSelectedIds: [], bulkAnchorId: null })
     try {
       const pkg = await window.api.packages.detail(item.packageFilename)
       set({ selectedPackage: pkg })
@@ -187,9 +243,31 @@ export const useContentStore = create((set, get) => ({
     try {
       const items = await window.api.contents.list({ packageFilename: selectedItem.packageFilename })
       const fresh = items.find((c) => c.id === selectedItem.id)
-      if (fresh) set({ selectedItem: fresh })
+      if (fresh) {
+        const pkgMap = useLibraryStore.getState().packageByFilename
+        set({ selectedItem: { ...fresh, package: pkgMap.get(fresh.packageFilename) } })
+      }
       const pkg = await window.api.packages.detail(selectedItem.packageFilename)
       set({ selectedPackage: pkg })
+    } catch {}
+  },
+
+  /**
+   * Refresh just `selectedPackage` (the detail-panel package object) for the
+   * currently selected content item. Used on `packages:updated`, where the
+   * content row itself is unchanged (its `c.package` ref is refreshed by
+   * `relink`) but the heavier detail shape — dep tree, dependents, contents
+   * grouped by category — needs a `packages:detail` IPC to refresh.
+   * Stale-write guard: drops the result if the user changed selection mid-fetch.
+   */
+  refreshSelectedPackageDetail: async () => {
+    const sel = get().selectedItem
+    if (!sel?.packageFilename) return
+    try {
+      const pkg = await window.api.packages.detail(sel.packageFilename)
+      if (get().selectedItem?.packageFilename === sel.packageFilename) {
+        set({ selectedPackage: pkg })
+      }
     } catch {}
   },
 }))

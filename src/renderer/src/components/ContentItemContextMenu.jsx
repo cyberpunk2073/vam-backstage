@@ -173,12 +173,9 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
 
   const hubLabel = pkg
     ? displayName(pkg)
-    : displayName({
-        hubDisplayName: item.packageHubDisplayName,
-        title: item.packageTitle,
-        packageName: item.packageName,
-        filename: item.packageFilename,
-      })
+    : item.package
+      ? displayName(item.package)
+      : displayName({ filename: item.packageFilename })
 
   const missingByKind = useMemo(() => {
     if (!probe?.atoms?.length) return null

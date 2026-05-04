@@ -29,6 +29,7 @@ import {
   formatNumber,
   formatStarRating,
   displayName,
+  contentPackageLabel,
   extractDomainLabel,
   THUMB_OVERLAY_CHIP,
 } from '@/lib/utils'
@@ -742,18 +743,14 @@ export function ContentTableRow({
 }) {
   const typeColor = TYPE_COLORS[item.category] || '#6366f1'
   const isHidden = item.hidden
-  const isDisabledPkg = !isPackageActive(item.storageState ?? 'enabled')
+  const isDisabledPkg = !isPackageActive(item.package?.storageState ?? 'enabled')
   const dimInactive = useLibraryStore((s) => s.dimInactive)
   const dimHiddenChrome = (isHidden && !suppressHiddenDimming) || (isDisabledPkg && dimInactive)
   const thumbKey = item.thumbnailPath ? `ct:${item.packageFilename}\0${item.thumbnailPath}` : null
   const thumbUrl = useThumbnail(thumbKey)
   const isLocalContent = isLocalPackage(item.packageFilename)
-  const pkgLabel = displayName({
-    hubDisplayName: item.packageHubDisplayName,
-    title: item.packageTitle,
-    packageName: item.packageName,
-    filename: item.packageFilename,
-  })
+  const pkgLabel = contentPackageLabel(item)
+  const creator = item.package?.creator
 
   return (
     <div
@@ -793,17 +790,17 @@ export function ContentTableRow({
         </div>
       </div>
       <div
-        className={`flex-2 py-2 px-3 text-[11px] truncate ${dimHiddenChrome ? 'opacity-45' : ''} ${item.creator ? 'text-text-secondary cursor-pointer hover:brightness-150 transition-[filter]' : 'text-text-secondary'}`}
+        className={`flex-2 py-2 px-3 text-[11px] truncate ${dimHiddenChrome ? 'opacity-45' : ''} ${creator ? 'text-text-secondary cursor-pointer hover:brightness-150 transition-[filter]' : 'text-text-secondary'}`}
         onClick={
-          item.creator && onFilterAuthor
+          creator && onFilterAuthor
             ? (e) => {
                 e.stopPropagation()
-                onFilterAuthor(item.creator)
+                onFilterAuthor(creator)
               }
             : undefined
         }
       >
-        {item.creator}
+        {creator}
       </div>
       {!hideType && (
         <div className={`flex-1 min-w-0 py-2 px-3 ${dimHiddenChrome ? 'opacity-45' : ''}`}>
@@ -888,15 +885,10 @@ export function ContentCard({
 }) {
   const typeColor = TYPE_COLORS[item.category] || '#6366f1'
   const isHidden = item.hidden
-  const isDisabledPkg = !isPackageActive(item.storageState ?? 'enabled')
+  const isDisabledPkg = !isPackageActive(item.package?.storageState ?? 'enabled')
   const dimInactive = useLibraryStore((s) => s.dimInactive)
   const dimHiddenChrome = (isHidden && !suppressHiddenDimming) || (isDisabledPkg && dimInactive)
-  const pkgLabel = displayName({
-    hubDisplayName: item.packageHubDisplayName,
-    title: item.packageTitle,
-    packageName: item.packageName,
-    filename: item.packageFilename,
-  })
+  const pkgLabel = contentPackageLabel(item)
   const thumbKey = item.thumbnailPath ? `ct:${item.packageFilename}\0${item.thumbnailPath}` : null
   const thumbUrl = useThumbnail(thumbKey)
   const showBulk = bulkMode || bulkSelected
@@ -905,7 +897,7 @@ export function ContentCard({
   // package card. The hover tooltip still lists inherited labels for context so
   // users don't have to navigate to the package card to see the full set.
   const labelObjs = useLabelObjects(item.ownLabelIds)
-  const inheritedLabelObjs = useLabelObjects(item.inheritedLabelIds)
+  const inheritedLabelObjs = useLabelObjects(item.package?.labelIds)
 
   return (
     <div

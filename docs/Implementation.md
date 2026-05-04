@@ -1139,11 +1139,16 @@ User clicks "Disable" on package A
   ├─ rename B.var → B.var.disabled        (cascade)
   ├─ rename C.var → C.var.disabled        (cascade)
   ├─ DB: setStorageState for A, B, C  (via applyStorageState chokepoint)
-  ├─ In-mem: patchStorageState([A, B, C], 'disabled')  ── fast in-place patch
+  ├─ In-mem: patchStorageState([A, B, C], 'disabled')  ── fast in-place patch on packageIndex
   ├─ notify('packages:updated')
   └─ Return {ok, storageState: 'disabled', cascadeCount: 2}
   │
-  Renderer: toast "Disabled A and 2 dependencies"
+  Renderer:
+  ├─ App-level listener calls useLibraryStore.fetchPackages()
+  ├─ fetchPackages rebuilds packageByFilename + triggers useContentStore.relink()
+  ├─ relink rebuilds the contents array with refreshed c.package references
+  └─ ContentView re-renders disabled-badge dim, "disabled" facet count, etc. (no contents:list IPC)
+  Toast: "Disabled A and 2 dependencies"
 ```
 
 ### Data Staleness and Consistency
@@ -1151,7 +1156,7 @@ User clicks "Disable" on package A
 The system accepts bounded staleness in exchange for responsiveness:
 
 - **Renderer data lags by one IPC round-trip** after a mutation. Between `notify()` and the renderer's `fetchPackages()` completing, the UI shows stale data — typically <50ms and imperceptible.
-- **Fast-path patches** (`patchStorageState`, `patchTypeOverride`) mutate the in-memory index directly. Derived aggregates (stats, orphan sets) may be stale until the next `buildFromDb()`; full rebuilds run on any structural change.
+- **Fast-path patches** (`patchStorageState`, `patchTypeOverride`) mutate the in-memory `packageIndex` directly. Derived aggregates (stats, orphan sets) may be stale until the next `buildFromDb()`; full rebuilds run on any structural change. Content rows are not touched: the renderer joins package fields onto content via `c.package` references rebuilt by `useContentStore.relink()` after each `fetchPackages`, so package mutations propagate to content UI without a `contents:list` IPC.
 - **The graph is never incrementally patched** — it's rebuilt from scratch on every structural change. This keeps graph code simple at the cost of O(P × D) per change (<100ms for typical libraries of <5000 packages).
 - **Concurrent mutations are serialized** by Node.js's single-threaded event loop; two IPC handlers cannot interleave reads and writes to in-memory structures.
 

@@ -60,6 +60,15 @@ export default function App() {
         }
       }
     })
+    // Packages are also app-wide: ContentView reads package fields off
+    // `c.package` (joined from `useLibraryStore.packageByFilename` after every
+    // refetch via `useContentStore.relink()`), so we need the package map
+    // populated even when LibraryView isn't mounted. Load + listen here so
+    // every view sees fresh package data after any `packages:updated` event.
+    void useLibraryStore.getState().fetchPackages()
+    const cleanupPackagesUpdated = window.api.onPackagesUpdated(() => {
+      useLibraryStore.getState().fetchPackages()
+    })
     const cleanupUnreadable = window.api.onScanUnreadable(({ filename }) => {
       toast(`Corrupted package skipped: ${filename}`)
     })
@@ -73,6 +82,7 @@ export default function App() {
     })
     return () => {
       cleanupLabels()
+      cleanupPackagesUpdated()
       cleanupUnreadable()
     }
   }, [])

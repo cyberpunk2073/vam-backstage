@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { toast } from '@/components/Toast'
 import { typeFilterSlice } from './typeFilterSlice'
+import { useContentStore } from './useContentStore'
 
 let missingDepsNonce = 0
 let updateCheckNonce = 0
@@ -53,6 +54,9 @@ async function _enrichUpdateCheck(nonce, set, get) {
 
 export const useLibraryStore = create((set, get) => ({
   packages: [],
+  /** Derived live lookup. Rebuilt in `fetchPackages`; consumed by `useContentStore.relink`
+   *  so content rows can attach a `c.package` reference for read-time joins. */
+  packageByFilename: new Map(),
   selectedDetail: null,
   /** Multi-select: package filenames */
   bulkSelectedFilenames: [],
@@ -157,7 +161,14 @@ export const useLibraryStore = create((set, get) => ({
           packagesFetchQueued = false
           try {
             const packages = await window.api.packages.list({})
-            set({ packages, packagesLoaded: true })
+            const packageByFilename = new Map()
+            for (const p of packages) packageByFilename.set(p.filename, p)
+            set({ packages, packageByFilename, packagesLoaded: true })
+            // Refresh `c.package` references on every content row so any UI
+            // reading package fields off content (e.g. ContentView filters,
+            // disabled badge dim) picks up the new package object identities
+            // without a `contents:list` round-trip.
+            useContentStore.getState().relink()
           } catch (err) {
             console.error('Failed to fetch packages:', err)
             set({ packagesLoaded: true })

@@ -698,12 +698,13 @@ export function getPackageDetail(filename) {
 }
 
 /**
- * Returns enriched content rows. The renderer does all search / type /
- * visibility / labels / sort filtering client-side off `useContentStore.contents`,
- * so most filter keys are intentionally ignored. `packageFilename` is the
- * exception — `useContentStore.refreshSelection` uses it to fetch a single
- * package's rows (and that path also wants the un-deduplicated list, since
- * cross-version dedup hides items the caller is asking for by filename).
+ * Returns lean content rows. The renderer keeps a `packageByFilename` map in
+ * `useLibraryStore` and links each row's owning package on receive
+ * (`useContentStore.relink`); package fields are read off `c.package` at the
+ * call site, never copied here. `packageFilename` filter is honoured because
+ * `useContentStore.refreshSelection` uses it to refresh a single package's
+ * rows (and that path also wants the un-deduplicated list, since cross-version
+ * dedup hides items the caller is asking for by filename).
  */
 export function getFilteredContents(filters = {}) {
   const source = filters.packageFilename ? contentItems : contentItemsDeduped
@@ -722,17 +723,7 @@ export function getFilteredContents(filters = {}) {
     hidden: c.hidden,
     favorite: c.favorite,
     thumbnailPath: c.thumbnail_path,
-    creator: c.creator,
-    packageName: c.packageName,
-    packageTitle: c.packageTitle,
-    packageHubDisplayName: c.packageHubDisplayName || null,
-    hubTags: c.hubTags ?? null,
-    isDirect: c.isDirect,
-    storageState: c.storageState,
-    firstSeenAt: c.first_seen_at,
-    parentPackageType: effectivePackageType(packageIndex.get(c.package_filename)),
     ownLabelIds: labelsByContent.get(c.package_filename + '\0' + c.internal_path) || [],
-    inheritedLabelIds: labelsByPackage.get(c.package_filename) || [],
   }))
 }
 
@@ -921,9 +912,13 @@ export function patchTypeOverride(filename, typeOverride) {
 }
 
 /**
- * Fast-path patch of `storage_state` (+ optionally `library_dir_id`) on `packageIndex`
- * rows and cached `storageState` on content rows in `contentByPackage`. Used by
- * `applyStorageState` so a toggle/move doesn't pay for a full `buildFromDb()` rebuild.
+ * Fast-path patch of `storage_state` (+ optionally `library_dir_id`) on
+ * `packageIndex` rows so a toggle/move doesn't pay for a full `buildFromDb()`
+ * rebuild. Used by `applyStorageState`.
+ *
+ * Content rows on the renderer no longer carry `storageState` — they read it
+ * via `c.package.storageState` after relink — so there is nothing to patch on
+ * the content side here.
  *
  * NOT refreshed by this function (and currently fine because none of these
  * aggregates depend on `storage_state`):
@@ -950,11 +945,6 @@ export function patchStorageState(filenames, storageState, libraryDirId) {
       pkg.storage_state = storageState
       if (libraryDirId !== undefined) pkg.library_dir_id = libraryDirId == null ? null : libraryDirId
     }
-    const items = contentByPackage.get(fn)
-    if (items)
-      for (const item of items) {
-        item.storageState = storageState
-      }
   }
 }
 

@@ -106,10 +106,11 @@ async function unlinkPackagePhysicalAndAliases(pkg, filename) {
  * `RENAME_CONCURRENCY`) only after the root rename succeeds. Cascade-member
  * failures still log + continue.
  *
- * Does not emit `contents:updated`: storage-state toggles already patch denormalized
- * `storageState` on content rows via `patchStorageState`; every subscriber also listens
- * to `packages:updated`, which triggers `fetchContents` where needed — firing both caused
- * redundant full `contents:list` IPC storms during bulk toggle.
+ * Does not emit `contents:updated`: storage-state toggles don't change content
+ * prefs (`hidden`/`favorite`), and content rows reference their package via
+ * `c.package` on the renderer — `useLibraryStore.fetchPackages` triggers a
+ * `useContentStore.relink()` after refetch, refreshing the package fields any
+ * content view reads (e.g. disabled badge dim) without a `contents:list` IPC.
  *
  * For multi-root batches a `packages:updated` notify is emitted after each root completes,
  * throttled to `TOGGLE_PROGRESS_NOTIFY_MS`. The renderer's `packagesFetchInFlight` gate

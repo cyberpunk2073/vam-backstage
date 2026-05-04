@@ -28,6 +28,7 @@ import {
   getContentGradient,
   formatBytes,
   displayName,
+  contentPackageLabel,
   isCoreLibraryCategory,
   libraryTypeBadgeLabel,
   THUMB_OVERLAY_CHIP,
@@ -61,7 +62,7 @@ import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
 import { StorageStateChip } from '@/components/StorageStateChip'
 
 const SORT_OPTIONS = ['Recently installed', 'Name A-Z', 'Package', 'Type']
-const isPackageDisabled = (c) => !isPackageActive(c.storageState ?? 'enabled')
+const isPackageDisabled = (c) => !isPackageActive(c.package?.storageState ?? 'enabled')
 
 function matchesContentPackageStatus(c, packageStatusFilter) {
   if (packageStatusFilter === 'all') return true
@@ -72,8 +73,9 @@ function matchesContentPackageStatus(c, packageStatusFilter) {
 
 function contentMatchesSelectedTags(c, selectedTags) {
   if (selectedTags.length === 0) return true
-  if (!c.hubTags) return false
-  const tags = c.hubTags
+  const hubTags = c.package?.hubTags
+  if (!hubTags) return false
+  const tags = hubTags
     .toLowerCase()
     .split(',')
     .map((t) => t.trim())
@@ -82,7 +84,7 @@ function contentMatchesSelectedTags(c, selectedTags) {
 
 function contentLabelIds(c) {
   const own = c.ownLabelIds || []
-  const parent = c.inheritedLabelIds || []
+  const parent = c.package?.labelIds || []
   if (!own.length) return parent
   if (!parent.length) return own
   const set = new Set(own)
@@ -102,8 +104,8 @@ function matchesContentPackageFilter(c, packageFilter) {
   if (packageFilter === 'all') return true
   if (packageFilter === 'local') return isLocalPackage(c.packageFilename)
   if (isLocalPackage(c.packageFilename)) return false
-  if (packageFilter === 'installed') return c.isDirect
-  return !c.isDirect
+  if (packageFilter === 'installed') return !!c.package?.isDirect
+  return !c.package?.isDirect
 }
 
 /** Shared sidebar facet pipeline; pass `omit` to skip one dimension being counted/filtered. */
@@ -118,8 +120,9 @@ function applyContentSidebarFilters(baseItems, ctx, omit = {}) {
   if (!omit.selectedPackageTypes && ctx.selectedPackageTypes.length > 0) {
     const ptSet = new Set(ctx.selectedPackageTypes)
     items = items.filter((c) => {
-      if (ptSet.has('Other') && !isCoreLibraryCategory(c.parentPackageType)) return true
-      return ptSet.has(libraryTypeBadgeLabel(c.parentPackageType))
+      const t = c.package?.type
+      if (ptSet.has('Other') && !isCoreLibraryCategory(t)) return true
+      return ptSet.has(libraryTypeBadgeLabel(t))
     })
   }
 
@@ -211,9 +214,12 @@ export default function ContentView({ onNavigate, navContext }) {
       load()
       useContentStore.getState().refreshSelection()
     })
+    // Note: package field changes (storageState, isDirect, type, labels) reach
+    // content rows via App-level `onPackagesUpdated` → `fetchPackages` →
+    // `useContentStore.relink()`. We only refresh facet counts and the
+    // selected-package detail here; no `fetchContents` IPC needed.
     const cleanup2 = window.api.onPackagesUpdated(() => {
-      load()
-      useContentStore.getState().refreshSelection()
+      useContentStore.getState().refreshSelectedPackageDetail()
       window.api.packages
         .tagCounts()
         .then(setTagCounts)
@@ -247,18 +253,13 @@ export default function ContentView({ onNavigate, navContext }) {
     if (search?.trim()) {
       const terms = searchAndTerms(search)
       result = result.filter((c) => {
-        const pkgLabel = displayName({
-          hubDisplayName: c.packageHubDisplayName,
-          title: c.packageTitle,
-          packageName: c.packageName,
-          filename: c.packageFilename,
-        })
-        return haystacksMatchAllTerms([c.displayName, c.packageName, pkgLabel], terms)
+        const pkgLabel = contentPackageLabel(c)
+        return haystacksMatchAllTerms([c.displayName, c.package?.packageName, pkgLabel], terms)
       })
     }
     if (authorSearch) {
       const aq = authorSearch.toLowerCase()
-      result = result.filter((c) => (c.creator || '').toLowerCase().includes(aq))
+      result = result.filter((c) => (c.package?.creator || '').toLowerCase().includes(aq))
     }
     return result
   }, [contents, search, authorSearch])
@@ -307,7 +308,7 @@ export default function ContentView({ onNavigate, navContext }) {
     )
     const counts = { _total: items.length }
     for (const c of items) {
-      const label = libraryTypeBadgeLabel(c.parentPackageType)
+      const label = libraryTypeBadgeLabel(c.package?.type)
       counts[label] = (counts[label] || 0) + 1
     }
     return counts
@@ -341,7 +342,7 @@ export default function ContentView({ onNavigate, navContext }) {
       local = 0
     for (const c of items) {
       if (isLocalPackage(c.packageFilename)) local++
-      else if (c.isDirect) installed++
+      else if (c.package?.isDirect) installed++
       else dependency++
     }
     return { all: items.length, installed, dependency, local }
@@ -433,22 +434,9 @@ export default function ContentView({ onNavigate, navContext }) {
       selectedLabelIds,
     })
     const sortFns = {
-      'Recently installed': (a, b) => (b.firstSeenAt || 0) - (a.firstSeenAt || 0),
+      'Recently installed': (a, b) => (b.package?.firstSeenAt || 0) - (a.package?.firstSeenAt || 0),
       'Name A-Z': (a, b) => (a.displayName || '').localeCompare(b.displayName || ''),
-      Package: (a, b) =>
-        displayName({
-          hubDisplayName: a.packageHubDisplayName,
-          title: a.packageTitle,
-          packageName: a.packageName,
-          filename: a.packageFilename,
-        }).localeCompare(
-          displayName({
-            hubDisplayName: b.packageHubDisplayName,
-            title: b.packageTitle,
-            packageName: b.packageName,
-            filename: b.packageFilename,
-          }),
-        ),
+      Package: (a, b) => contentPackageLabel(a).localeCompare(contentPackageLabel(b)),
       Type: (a, b) => compareContentTypes(a.category, b.category),
     }
     const primary = sortFns[primarySort] || sortFns['Type']
@@ -851,7 +839,7 @@ export default function ContentView({ onNavigate, navContext }) {
     const byFilename = new Map()
     for (const c of items) {
       if (!c.packageFilename || isLocalPackage(c.packageFilename)) continue
-      if (!byFilename.has(c.packageFilename)) byFilename.set(c.packageFilename, c.storageState ?? 'enabled')
+      if (!byFilename.has(c.packageFilename)) byFilename.set(c.packageFilename, c.package?.storageState ?? 'enabled')
     }
     const states = [...byFilename.values()]
     if (!states.length)
@@ -1265,7 +1253,7 @@ function ContentDetailPanel({
   )
   const { handleApply: handleApplyLabel, handleCreate: handleCreateLabel } = useAddLabel(onApplyLabelToItem)
   const hasLabels = (item.ownLabelIds || []).length > 0
-  const inheritedLabels = useLabelObjects(item.inheritedLabelIds)
+  const inheritedLabels = useLabelObjects(item.package?.labelIds)
 
   const moreGrouped = useMemo(() => {
     if (!pkg) return {}

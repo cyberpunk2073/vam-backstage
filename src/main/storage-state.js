@@ -86,9 +86,9 @@ export async function applyStorageState(filename, target) {
   }
 
   setStorageState(filename, target.storageState, target.libraryDirId ?? null)
-  // Patch in-memory store: package row + `storageState` on every content row in
-  // `contentByPackage`. Without this, ContentView (which reads `contentByPackage`)
-  // goes stale until a rescan rebuilds the store.
+  // Patch in-memory `packageIndex` row so the next `packages:list` reads the new
+  // state without a full rebuild. Content rows reference the package via
+  // `c.package` on the renderer and pick up the patched value on relink.
   patchStorageState([filename], target.storageState, target.libraryDirId ?? null)
   return { ok: true, fromPath, toPath, changed: true }
 }
