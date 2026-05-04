@@ -1,6 +1,5 @@
 import { readdir, stat } from 'fs/promises'
 import { join } from 'path'
-import { isLocalPackage } from '@shared/local-package.js'
 import { isVarFilename, canonicalVarFilename } from './var-reader.js'
 import { detectLeaves } from './graph.js'
 import { scanAndUpsert } from './ingest.js'
@@ -24,7 +23,9 @@ import {
   getPackageIndex,
   getReverseDeps,
   getContentByPackage,
+  effectivePackageType,
 } from '../store.js'
+import { isLocalPackage } from '@shared/local-package.js'
 import { refreshLibraryDirs, getAllLibraryDirs } from '../library-dirs.js'
 import { normalizeAuxDisabled } from '../watcher.js'
 
@@ -271,26 +272,140 @@ export async function collectVarCandidates(dir, out, isRoot) {
 }
 
 /**
- * Apply auto-hide to dependency packages' content after initial scan.
- * Creates .hide for items in dep packages that aren't already hidden.
- * @param {string} vamDir
- * @param {(data: { current: number, total: number, filename?: string, items: number }) => void} [onProgress]
+ * Declarative table of every auto-hide rule. Each entry contributes a
+ * `matches(pkgCtx, content)` predicate that decides whether the rule wants
+ * the given content item hidden in the given package. All four rules
+ * (`deps` + the three `foreign_*`) share one engine — apply/remove sweeps
+ * walk the table generically and the only cross-rule logic lives in
+ * `isClaimedByAnyExcept`.
+ *
+ * `pkgCtx = { filename, is_direct, effective_type }` is a minimal package
+ * shape that works for both the in-memory `packageIndex` row (during a
+ * sweep) and the partial info we have mid-install (in `postDownloadIntegrate`,
+ * where `packageIndex` hasn't been rebuilt yet).
+ *
+ * Adding a new rule is a single table entry. Looks/Scenes are deliberately
+ * omitted — they're commonly bundled as demos.
+ *
+ * Targeted-sweep + deference invariant:
+ *   - `applyAutoHideRule(X)` hides items in rule X's claim that aren't
+ *     already hidden.
+ *   - `removeAutoHideRule(X)` unhides items in rule X's claim that *are*
+ *     hidden AND aren't still claimed by any other active rule. Caller
+ *     flips X's setting off before calling so X is naturally excluded.
+ *   - The user's "Turn on/off without sweep" path simply flips the setting
+ *     and skips the engine entirely; future installs honor the new state
+ *     via `computeAutoHidePathsForNewPackage`.
  */
-export async function applyAutoHide(vamDir, onProgress = () => {}) {
+const AUTO_HIDE_RULES = [
+  {
+    id: 'deps',
+    settingKey: 'auto_hide_deps',
+    matches: (ctx) => !ctx.is_direct,
+  },
+  {
+    id: 'foreign_hair',
+    settingKey: 'auto_hide_foreign_hair',
+    matches: (ctx, c) => ctx.effective_type !== 'Hairstyles' && (c.type === 'hairItem' || c.type === 'hairPreset'),
+  },
+  {
+    id: 'foreign_poses',
+    settingKey: 'auto_hide_foreign_poses',
+    matches: (ctx, c) => ctx.effective_type !== 'Poses' && (c.type === 'pose' || c.type === 'legacyPose'),
+  },
+  {
+    id: 'foreign_clothing',
+    settingKey: 'auto_hide_foreign_clothing',
+    matches: (ctx, c) =>
+      ctx.effective_type !== 'Clothing' && (c.type === 'clothingItem' || c.type === 'clothingPreset'),
+  },
+]
+
+function makePkgCtx(filename, pkg) {
+  return { filename, is_direct: !!pkg.is_direct, effective_type: effectivePackageType(pkg) }
+}
+
+/**
+ * Returns true iff some *other* rule (different id) is currently enabled
+ * AND would itself claim this item. This is the only place the engine
+ * needs cross-rule awareness — `removeAutoHideRule` consults it to leave
+ * items alone that another active rule still wants hidden.
+ */
+function isClaimedByAnyExcept(ctx, content, excludeRuleId) {
+  for (const r of AUTO_HIDE_RULES) {
+    if (r.id === excludeRuleId) continue
+    if (getSetting(r.settingKey) !== '1') continue
+    if (r.matches(ctx, content)) return true
+  }
+  return false
+}
+
+/**
+ * Compute the union of `.hide` paths to write for a freshly installed
+ * package, across every currently-enabled rule. Caller passes
+ * `effectiveType` and `isDirect` directly because the in-memory
+ * `packageIndex` is stale between `scanAndUpsert` and `buildGraphOnly`;
+ * `contentItems` are in upserter shape (`internalPath`, no `hidden` field
+ * yet — fresh-on-disk means nothing is already hidden).
+ */
+export function computeAutoHidePathsForNewPackage(filename, effectiveType, isDirect, contentItems) {
+  if (isLocalPackage(filename)) return []
+  const ctx = { filename, is_direct: !!isDirect, effective_type: effectiveType ?? null }
+  const hits = new Set()
+  for (const rule of AUTO_HIDE_RULES) {
+    if (getSetting(rule.settingKey) !== '1') continue
+    for (const c of contentItems) {
+      if (rule.matches(ctx, c)) hits.add(c.internalPath)
+    }
+  }
+  return [...hits]
+}
+
+function findRule(ruleId) {
+  const rule = AUTO_HIDE_RULES.find((r) => r.id === ruleId)
+  if (!rule) throw new Error(`Unknown auto-hide rule: ${ruleId}`)
+  return rule
+}
+
+/**
+ * Walk every non-local package and collect content paths the given rule
+ * wants to act on. `pick(ctx, c)` returns the path to act on or null —
+ * apply mode picks not-yet-hidden items; remove mode picks currently-hidden
+ * items that no other active rule still claims.
+ */
+function collectRuleWork(rule, pick) {
   const pkgIndex = getPackageIndex()
   const cbp = getContentByPackage()
-
   const work = []
   let totalItems = 0
   for (const [filename, pkg] of pkgIndex) {
-    if (pkg.is_direct) continue
+    if (isLocalPackage(filename)) continue
+    const ctx = makePkgCtx(filename, pkg)
     const items = cbp.get(filename) || []
-    const paths = items.filter((c) => !c.hidden).map((c) => c.internal_path)
+    const paths = []
+    for (const c of items) {
+      if (!rule.matches(ctx, c)) continue
+      const p = pick(ctx, c)
+      if (p != null) paths.push(p)
+    }
     if (paths.length > 0) {
       work.push({ filename, paths })
       totalItems += paths.length
     }
   }
+  return { work, totalItems }
+}
+
+/**
+ * Apply rule `ruleId`: hide items in its claim that aren't already hidden.
+ * Idempotent — re-running with the same setting state is a no-op.
+ * @param {string} vamDir
+ * @param {string} ruleId
+ * @param {(data: { current: number, total: number, filename?: string, items: number }) => void} [onProgress]
+ */
+export async function applyAutoHideRule(vamDir, ruleId, onProgress = () => {}) {
+  const rule = findRule(ruleId)
+  const { work, totalItems } = collectRuleWork(rule, (_ctx, c) => (c.hidden ? null : c.internal_path))
 
   onProgress({ current: 0, total: work.length, items: totalItems })
   let done = 0
@@ -304,25 +419,23 @@ export async function applyAutoHide(vamDir, onProgress = () => {}) {
 }
 
 /**
- * Remove .hide from all hidden content in dependency packages (e.g. when user turns off auto-hide).
+ * Remove rule `ruleId`: unhide items in its claim that are currently hidden
+ * AND not still claimed by any other active rule. The caller is expected to
+ * have already flipped `rule.settingKey` to `'0'` so this rule itself is no
+ * longer "active" from `isClaimedByAnyExcept`'s perspective; the deference
+ * helper would still skip the same `ruleId` either way, so order isn't
+ * load-bearing — it just keeps semantics intuitive.
  * @param {string} vamDir
+ * @param {string} ruleId
  * @param {(data: { current: number, total: number, filename?: string, items: number }) => void} [onProgress]
  */
-export async function removeAutoHide(vamDir, onProgress = () => {}) {
-  const pkgIndex = getPackageIndex()
-  const cbp = getContentByPackage()
-
-  const work = []
-  let totalItems = 0
-  for (const [filename, pkg] of pkgIndex) {
-    if (pkg.is_direct) continue
-    const items = cbp.get(filename) || []
-    const paths = items.filter((c) => c.hidden).map((c) => c.internal_path)
-    if (paths.length > 0) {
-      work.push({ filename, paths })
-      totalItems += paths.length
-    }
-  }
+export async function removeAutoHideRule(vamDir, ruleId, onProgress = () => {}) {
+  const rule = findRule(ruleId)
+  const { work, totalItems } = collectRuleWork(rule, (ctx, c) => {
+    if (!c.hidden) return null
+    if (isClaimedByAnyExcept(ctx, c, rule.id)) return null
+    return c.internal_path
+  })
 
   onProgress({ current: 0, total: work.length, items: totalItems })
   let done = 0

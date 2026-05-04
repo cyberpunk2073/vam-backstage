@@ -448,6 +448,7 @@ CREATE TABLE settings (
 - `needs_rescan` — `'1'` to force rescan on next startup (cleared after startup scan)
 - `needs_prefs_migration` — `'1'` to trigger sidecar file extension migration
 - `auto_hide_deps` — `'1'` to auto-manage `.hide` files for dependency content
+- `auto_hide_foreign_hair` / `auto_hide_foreign_poses` / `auto_hide_foreign_clothing` — `'1'` to auto-manage `.hide` files for content of that category bundled inside packages whose own effective type is _not_ that category (e.g. hide a stray hair shipped inside a clothing pack). Looks/Scenes intentionally have no equivalent — they're commonly bundled as demos. All four auto-hide settings flow through one declarative rule table (`AUTO_HIDE_RULES` in `src/main/scanner/index.js`); each rule contributes a `matches(pkgCtx, content)` predicate. **Targeted-sweep + deference invariant**: a remove sweep for rule X unhides only items rule X claims that are currently hidden AND that no other active rule still claims; an apply sweep for rule X hides only items in rule X's claim that aren't already hidden. Rules can stack freely — overlapping claims (e.g. a hair in a dep clothing pack with both `auto_hide_deps` and `auto_hide_foreign_hair` on) stay hidden until the _last_ rule claiming them is turned off and swept.
 - `hub_debug_requests` — `'1'` to log all Hub API requests
 - `hub_filters_json` — cached Hub filter metadata (types, tags, sort options)
 - `blur_thumbnails` — `'1'` when thumbnail blur (privacy) is enabled
@@ -1049,7 +1050,7 @@ When a download completes, the main process runs `postDownloadIntegrate()`, whic
 flowchart TD
     DL[Download completes] --> SCAN[scanAndUpsert]
     SCAN --> HUB[setHubDisplayName]
-    HUB --> HIDE{auto-hide enabled?}
+    HUB --> HIDE{any auto-hide rule applies?}
     HIDE -- yes --> SIDECAR[hidePackageContent]
     HIDE -- no --> GRAPH
     SIDECAR --> PREFS[readAllPrefs + setPrefsMap]
@@ -1070,20 +1071,20 @@ flowchart TD
 
 Each step in the chain:
 
-| Step                              | Effect                                                                             |
-| --------------------------------- | ---------------------------------------------------------------------------------- |
-| `scanAndUpsert`                   | Reads the ZIP, classifies contents, writes package + content rows to DB            |
-| `setHubDisplayName`               | Writes Hub metadata (display name, user ID, tags) to DB                            |
-| `hidePackageContent`              | Creates `.hide` sidecar files on disk for managed dependency content               |
-| `readAllPrefs + setPrefsMap`      | Reloads all sidecar state from disk into the in-memory prefs map                   |
-| `buildGraphOnly`                  | Rebuilds `groupIndex`, `forwardDeps`, `reverseDeps` from DB (skips aggregates)     |
-| `computeCascadeEnable`            | Finds disabled transitive deps that should be re-enabled                           |
-| rename `.var.disabled` → `.var`   | Re-enables cascade deps on disk                                                    |
-| `findPackages` on Hub             | Batch-queries Hub API for still-missing transitive deps                            |
-| `insertDownload` + `processQueue` | Queues newly discovered deps and starts transfers                                  |
-| `buildFromDb(skipGraph)`          | Full aggregate rebuild (stats, orphans, morph counts) reusing the graph from above |
-| `notify`                          | Pushes invalidation events to renderer, triggering re-fetches                      |
-| `resolvePackageThumbnails`        | Background async fetch of Hub thumbnails for new packages                          |
+| Step                              | Effect                                                                                                                                                                              |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scanAndUpsert`                   | Reads the ZIP, classifies contents, writes package + content rows to DB                                                                                                             |
+| `setHubDisplayName`               | Writes Hub metadata (display name, user ID, tags) to DB                                                                                                                             |
+| `hidePackageContent`              | Creates `.hide` sidecar files for the union of paths matched by any active auto-hide rule (deps, foreign hair/poses/clothing) — single pass via `computeAutoHidePathsForNewPackage` |
+| `readAllPrefs + setPrefsMap`      | Reloads all sidecar state from disk into the in-memory prefs map                                                                                                                    |
+| `buildGraphOnly`                  | Rebuilds `groupIndex`, `forwardDeps`, `reverseDeps` from DB (skips aggregates)                                                                                                      |
+| `computeCascadeEnable`            | Finds disabled transitive deps that should be re-enabled                                                                                                                            |
+| rename `.var.disabled` → `.var`   | Re-enables cascade deps on disk                                                                                                                                                     |
+| `findPackages` on Hub             | Batch-queries Hub API for still-missing transitive deps                                                                                                                             |
+| `insertDownload` + `processQueue` | Queues newly discovered deps and starts transfers                                                                                                                                   |
+| `buildFromDb(skipGraph)`          | Full aggregate rebuild (stats, orphans, morph counts) reusing the graph from above                                                                                                  |
+| `notify`                          | Pushes invalidation events to renderer, triggering re-fetches                                                                                                                       |
+| `resolvePackageThumbnails`        | Background async fetch of Hub thumbnails for new packages                                                                                                                           |
 
 #### Optimistic UI for Downloads
 
@@ -1360,15 +1361,16 @@ Handlers live under `src/main/ipc/` split per domain (`packages.js`, `contents.j
 
 #### Scanner / Wizard / Startup (`src/main/ipc/scanner.js`)
 
-| Channel                      | Purpose                                                                                                                            |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `scan:start`                 | Run a full rescan                                                                                                                  |
-| `scan:apply-auto-hide`       | Create `.hide` sidecars for all dep content                                                                                        |
-| `integrity:check`            | CRC32 pass over every `.var`                                                                                                       |
-| `wizard:detect-vam-dir`      | Auto-detect VaM directory (see §2)                                                                                                 |
-| `wizard:browse-vam-dir`      | Native folder picker                                                                                                               |
-| `wizard:enrich-hub`          | Trigger Hub metadata enrichment (drives `hub-scan:progress`)                                                                       |
-| `startup:consume-unreadable` | One-shot drain of unreadable-`.var` files collected during the startup scan; further instances arrive via `scan:unreadable` events |
+| Channel                      | Purpose                                                                                                                                                                            |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scan:start`                 | Run a full rescan                                                                                                                                                                  |
+| `scan:apply-auto-hide`       | Apply auto-hide sweep for the given `ruleId` (`'deps'` / `'foreign_hair'` / `'foreign_poses'` / `'foreign_clothing'`) — hides items in the rule's claim that aren't already hidden |
+| `scan:remove-auto-hide`      | Inverse of the above for the given `ruleId` — unhides items in the rule's claim that no other active rule still claims                                                             |
+| `integrity:check`            | CRC32 pass over every `.var`                                                                                                                                                       |
+| `wizard:detect-vam-dir`      | Auto-detect VaM directory (see §2)                                                                                                                                                 |
+| `wizard:browse-vam-dir`      | Native folder picker                                                                                                                                                               |
+| `wizard:enrich-hub`          | Trigger Hub metadata enrichment (drives `hub-scan:progress`)                                                                                                                       |
+| `startup:consume-unreadable` | One-shot drain of unreadable-`.var` files collected during the startup scan; further instances arrive via `scan:unreadable` events                                                 |
 
 #### Settings / App / Shell
 

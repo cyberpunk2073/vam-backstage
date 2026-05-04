@@ -162,7 +162,7 @@ export default function FirstRun({ onDone }) {
         hideCleanup = window.api.onApplyAutoHideProgress((data) => {
           setHideProgress(data)
         })
-        await window.api.scan.applyAutoHide()
+        await window.api.scan.applyAutoHide('deps')
         await window.api.settings.set('auto_hide_deps', '1')
         const pkgStats = await window.api.packages.stats()
         setStats(pkgStats)

@@ -81,8 +81,8 @@ const api = {
   },
   scan: {
     start: () => ipcRenderer.invoke('scan:start'),
-    applyAutoHide: () => ipcRenderer.invoke('scan:apply-auto-hide'),
-    removeAutoHide: () => ipcRenderer.invoke('scan:remove-auto-hide'),
+    applyAutoHide: (ruleId) => ipcRenderer.invoke('scan:apply-auto-hide', ruleId),
+    removeAutoHide: (ruleId) => ipcRenderer.invoke('scan:remove-auto-hide', ruleId),
   },
   integrity: {
     check: () => ipcRenderer.invoke('integrity:check'),

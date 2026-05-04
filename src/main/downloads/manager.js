@@ -28,6 +28,7 @@ import {
 import { getResourceDetail, getResourceDetailByName, getCachedDetail, findPackages } from '../hub/client.js'
 import { notify } from '../notify.js'
 import { scanAndUpsert } from '../scanner/ingest.js'
+import { computeAutoHidePathsForNewPackage } from '../scanner/index.js'
 import { computeCascadeEnable, parseDepRef, isFlexibleRef } from '../scanner/graph.js'
 import {
   buildFromDb,
@@ -938,7 +939,7 @@ async function postDownloadIntegrate(filename, fullPath, isDirect, hubResourceId
       typeOverride: hubType || undefined,
     })
     if (!result) return
-    const { contentItems } = result
+    const { contentItems, pkgType } = result
 
     if (hubDisplayName) setHubDisplayName(filename, hubDisplayName)
     if (hubResourceId) setHubResourceId(filename, String(hubResourceId))
@@ -947,22 +948,21 @@ async function postDownloadIntegrate(filename, fullPath, isDirect, hubResourceId
       setPackageHubMeta(filename, { tags: cached.tags, promotionalLink: cached.promotional_link })
     }
 
-    // If dependency and auto-hide is enabled, hide content.
-    // Suppress this package's stem so the watcher doesn't flood with events
-    // for sidecars we're about to write (we rebuild prefs from disk after).
+    // Apply every active auto-hide rule to the freshly installed package.
+    // `computeAutoHidePathsForNewPackage` walks the rule table once and
+    // returns the union of paths matched by any enabled rule (deps,
+    // foreign hair/poses/clothing). hidePackageContent already wraps itself
+    // in withBulkWindow — every sidecar create is recordOwnedPath'd via
+    // setHidden, so the watcher sees no flood. We rebuild the entire prefs
+    // map from disk after as the source of truth.
     const vamDir = getSetting('vam_dir')
-    const autoHide = getSetting('auto_hide_deps')
-    if (!isDirect && autoHide === '1' && vamDir) {
-      const paths = contentItems.map((c) => c.internalPath)
+    if (vamDir) {
+      const paths = computeAutoHidePathsForNewPackage(filename, pkgType, isDirect, contentItems)
       if (paths.length > 0) {
-        // hidePackageContent already wraps itself in withBulkWindow — every
-        // sidecar create is recordOwnedPath'd via setHidden, so the watcher
-        // sees no flood. We rebuild the entire prefs map from disk after as
-        // the source of truth.
         await hidePackageContent(vamDir, filename, paths)
+        const prefs = await readAllPrefs(vamDir)
+        setPrefsMap(prefs)
       }
-      const prefs = await readAllPrefs(vamDir)
-      setPrefsMap(prefs)
     }
 
     // Build graph only (skip expensive aggregates) — we need packageIndex + deps
