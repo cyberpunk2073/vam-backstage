@@ -2235,6 +2235,22 @@ function sortDepTree(items, byPackageRef) {
     })
 }
 
+/** Drop branches with no ref match; keep ancestors on paths to at least one match. */
+function pruneDepTreeForFilter(items, terms) {
+  if (!items?.length) return items
+  const out = []
+  for (const dep of items) {
+    const childPruned = dep.children?.length ? pruneDepTreeForFilter(dep.children, terms) : []
+    const selfMatch = haystacksMatchAllTerms([dep.ref], terms)
+    if (!selfMatch && !childPruned.length) continue
+    out.push({
+      ...dep,
+      children: childPruned.length ? childPruned : undefined,
+    })
+  }
+  return out
+}
+
 function flattenDepRows(items, depth = 0) {
   const out = []
   for (const dep of items) {
@@ -2258,8 +2274,8 @@ function DepList({ items, depCount, missingDeps, onInstallMissing, onSelectPacka
   const filteredFlat = useMemo(() => {
     if (!query.trim()) return flat
     const terms = searchAndTerms(query)
-    return flat.filter(({ dep }) => haystacksMatchAllTerms([dep.ref], terms)).map(({ dep }) => ({ dep, depth: 0 }))
-  }, [flat, query])
+    return flattenDepRows(pruneDepTreeForFilter(sorted, terms))
+  }, [flat, sorted, query])
 
   const visible = isExpanded ? filteredFlat : flat.slice(0, 3)
   const remaining = expanded ? 0 : collapsible ? Math.max(0, total - 3) : 0
