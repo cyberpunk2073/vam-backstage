@@ -6,6 +6,27 @@
  */
 export const CHANGELOG = [
   {
+    version: '0.2.2',
+    date: '2026-05-04',
+    notes: [
+      {
+        kind: 'new',
+        title: 'Hide bundled hairstyles, poses, and clothing',
+        body: 'Optional auto-hide rules for hair, pose, and clothing items that ship inside packages categorized as something else, so the Hairstyles, Poses, and Clothing views only show dedicated packs.',
+      },
+      {
+        kind: 'improved',
+        title: 'Faster bulk actions',
+        body: 'Enabling, disabling, and removing many packages at once is now noticeably quicker, with a handful of related bugs fixed.',
+      },
+      {
+        kind: 'improved',
+        title: 'Many small improvements',
+        body: 'Polish across the library, content, and Hub views - including dependency list filtering, custom-tag search on the Hub, Hub browser improvements, more reliable update checks, and assorted fixes.',
+      },
+    ],
+  },
+  {
     version: '0.2.1',
     date: '2026-04-30',
     notes: [
