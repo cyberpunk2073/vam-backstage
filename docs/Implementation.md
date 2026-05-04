@@ -882,6 +882,7 @@ Events are debounced for 500ms and processed as a batch:
 - New/changed files: `scanAndUpsert()` reads the ZIP and updates the database
 - Removed files: Delete from database (CASCADE removes content rows)
 - After all changes: `buildFromDb()` to rebuild in-memory structures
+- Apply auto-hide rules to freshly-scanned packages via `computeAutoHidePathsForNewPackage` + `hidePackageContent` — same flow as `postDownloadIntegrate`, ensures externally-dropped `.var`s honor the foreign-hair / poses / clothing rules. Watcher-installed files are treated as `is_direct=1`, so the `deps` rule doesn't fire here.
 - Emit `packages:updated`, `contents:updated`
 
 **Prefs events** (sidecar add/remove):

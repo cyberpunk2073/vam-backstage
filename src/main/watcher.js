@@ -5,6 +5,7 @@ import { ADDON_PACKAGES_FILE_PREFS } from '@shared/paths.js'
 import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_ROOTS } from '@shared/local-package.js'
 import { isVarFilename, canonicalVarFilename } from './scanner/var-reader.js'
 import { scanAndUpsert } from './scanner/ingest.js'
+import { computeAutoHidePathsForNewPackage } from './scanner/index.js'
 import { runLocalScan } from './scanner/local.js'
 import { deletePackage, getPackageCacheInfo, setStorageState } from './db.js'
 import { buildFromDb, getPrefsMap, setPrefsMap, getPackageIndex, getForwardDeps } from './store.js'
@@ -14,6 +15,7 @@ import { enrichNewPackages } from './hub/scanner.js'
 import { getAllLibraryDirs, refreshLibraryDirs } from './library-dirs.js'
 import { applyStorageState } from './storage-state.js'
 import { awaitStable } from './var-stability.js'
+import { hidePackageContent, readAllPrefs } from './vam-prefs.js'
 
 const DEBOUNCE_MS = 500
 
@@ -424,6 +426,8 @@ async function processBatch() {
     let packagesChanged = false
     let contentsChanged = false
     const newlyScannedEnabled = [] // enabled filenames that were freshly added/changed
+    /** @type {Array<{ filename: string, pkgType: string|null, contentItems: Array<any> }>} */
+    const autoHideCandidates = [] // freshly-scanned packages eligible for auto-hide rule application
 
     // --- Package events ---
     if (pkgEvents.size > 0) {
@@ -480,11 +484,16 @@ async function processBatch() {
         for (const { fullPath, type, isDisabled, libraryDirId } of adds) {
           const newState = inferStorageState({ libraryDirId, isDisabled })
           try {
-            const changed = await scanSingleVar(fullPath, newState, libraryDirId)
-            if (changed) {
+            const result = await scanSingleVar(fullPath, newState, libraryDirId)
+            if (result) {
               packagesChanged = true
               contentsChanged = true
               if (newState === 'enabled') newlyScannedEnabled.push(canonical)
+              autoHideCandidates.push({
+                filename: canonical,
+                pkgType: result.pkgType,
+                contentItems: result.contentItems,
+              })
             }
           } catch (err) {
             console.warn(`Watcher: ${type} failed for`, canonical, err.message)
@@ -494,6 +503,32 @@ async function processBatch() {
       }
 
       if (packagesChanged) buildFromDb()
+
+      // Apply auto-hide rules to freshly-scanned packages — same flow as
+      // postDownloadIntegrate, just for `.var`s that arrived via the FS rather
+      // than the download manager (manual drop, sync tool, another VaM-app
+      // instance, etc.). isDirect=true mirrors scanSingleVar's upsert; the
+      // `deps` rule won't claim a direct package, so this only fires the
+      // foreign_* rules for hand-dropped files. hidePackageContent wraps
+      // itself in withBulkWindow (nested with the outer one — depth-counted),
+      // and recordOwnedPath suppresses the resulting sidecar events.
+      if (autoHideCandidates.length > 0 && vamDirPath) {
+        let anyHidden = false
+        for (const { filename, pkgType, contentItems } of autoHideCandidates) {
+          const paths = computeAutoHidePathsForNewPackage(filename, pkgType, true, contentItems)
+          if (paths.length === 0) continue
+          try {
+            await hidePackageContent(vamDirPath, filename, paths)
+            anyHidden = true
+          } catch (err) {
+            console.warn(`Watcher: auto-hide failed for ${filename}:`, err.message)
+          }
+        }
+        if (anyHidden) {
+          const prefs = await readAllPrefs(vamDirPath)
+          setPrefsMap(prefs)
+        }
+      }
 
       // Cascade-enable disabled/offloaded deps needed by newly enabled packages
       if (newlyScannedEnabled.length > 0) {
@@ -658,7 +693,7 @@ async function scanSingleVar(fullPath, storageState, libraryDirId) {
   try {
     s = await stat(fullPath)
   } catch {
-    return false
+    return null
   }
 
   const mtime = s.mtimeMs / 1000
@@ -669,9 +704,10 @@ async function scanSingleVar(fullPath, storageState, libraryDirId) {
     if (cached.storage_state !== storageState || (cached.library_dir_id ?? null) !== (libraryDirId ?? null)) {
       setStorageState(filename, storageState, libraryDirId)
     }
-    return false // no change
+    return null // no change
   }
 
-  const result = await scanAndUpsert(fullPath, { storageState, libraryDirId, isDirect: 1 })
-  return result != null
+  // Returns null if the filename is unparseable, otherwise { contentItems, pkgType, ... }.
+  // Caller uses contentItems + pkgType to apply auto-hide rules to freshly-added packages.
+  return await scanAndUpsert(fullPath, { storageState, libraryDirId, isDirect: 1 })
 }
