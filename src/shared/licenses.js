@@ -38,8 +38,12 @@ export const LICENSE_DESCRIPTIONS = {
 /** Synthetic hub/library license filter: Public Domain, CC BY, CC BY-SA, CC BY-ND, FC (excludes *-NC*, PC, Questionable). */
 export const COMMERCIAL_USE_ALLOWED_LICENSE_FILTER = 'Commercial use allowed'
 
+/** Synthetic hub/library license filter: all CC licenses (incl. *-NC*) + Public Domain + FC (excludes PC, PC EA, Questionable, unknown). */
+export const NONCOMMERCIAL_USE_ALLOWED_LICENSE_FILTER = 'Non-commercial use allowed'
+
 export const LICENSE_FILTER_OPTIONS = [
   'Any',
+  NONCOMMERCIAL_USE_ALLOWED_LICENSE_FILTER,
   COMMERCIAL_USE_ALLOWED_LICENSE_FILTER,
   ...CC_LICENSE_LABELS,
   ...VAM_LICENSE_LABELS,
@@ -82,6 +86,21 @@ export function isCommercialUseAllowed(raw) {
   if (c.startsWith('CC BY-NC') || (c.startsWith('CC ') && c.includes('-NC'))) return false
   if (CC_LICENSE_LABELS.includes(c)) return !c.includes('-NC')
   if (/non-?commercial/i.test(c)) return false
+  return null
+}
+
+/**
+ * Returns true if the license permits at least non-commercial redistribution
+ * (all CC licenses including *-NC*, plus Public Domain and FC).
+ * Returns false for licenses that forbid redistribution entirely (PC, PC EA, Questionable).
+ * Returns null for unknown / missing licenses.
+ */
+export function isNonCommercialUseAllowed(raw) {
+  const c = canonicalizeLicense(raw)
+  if (!c) return null
+  if (COMMERCIAL_DENIED.has(c)) return false
+  if (COMMERCIAL_ALLOWED.has(c)) return true
+  if (CC_LICENSE_LABELS.includes(c)) return true
   return null
 }
 

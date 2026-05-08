@@ -82,9 +82,11 @@ import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
 import { useLibraryUpdateState } from '@/hooks/useLibraryUpdateState'
 import {
   COMMERCIAL_USE_ALLOWED_LICENSE_FILTER,
+  NONCOMMERCIAL_USE_ALLOWED_LICENSE_FILTER,
   LICENSE_FILTER_OPTIONS,
   canonicalizeLicense,
   isCommercialUseAllowed,
+  isNonCommercialUseAllowed,
 } from '@/lib/licenses'
 import { haystacksMatchAllTerms, searchAndTerms } from '@shared/search-text.js'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
@@ -282,6 +284,8 @@ export default function LibraryView({ onNavigate, navContext }) {
     if (license !== 'Any') {
       if (license === COMMERCIAL_USE_ALLOWED_LICENSE_FILTER) {
         result = result.filter((p) => isCommercialUseAllowed(p.license) === true)
+      } else if (license === NONCOMMERCIAL_USE_ALLOWED_LICENSE_FILTER) {
+        result = result.filter((p) => isNonCommercialUseAllowed(p.license) === true)
       } else {
         const want = canonicalizeLicense(license)
         result = result.filter((p) => canonicalizeLicense(p.license) === want)

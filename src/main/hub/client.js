@@ -10,8 +10,10 @@ import { invalidatePackagesJsonCache } from './packages-json.js'
 import {
   canonicalizeLicense,
   COMMERCIAL_USE_ALLOWED_LICENSE_FILTER,
+  NONCOMMERCIAL_USE_ALLOWED_LICENSE_FILTER,
   getHubResourceLicense,
   isCommercialUseAllowed,
+  isNonCommercialUseAllowed,
 } from '@shared/licenses.js'
 import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
 
@@ -133,7 +135,12 @@ export async function searchResources(params = {}) {
   if (params.category && params.category !== 'All') body.category = params.category
   if (params.username) body.username = params.username
   if (params.tags) body.tags = params.tags
-  if (params.license && params.license !== 'Any' && params.license !== COMMERCIAL_USE_ALLOWED_LICENSE_FILTER) {
+  if (
+    params.license &&
+    params.license !== 'Any' &&
+    params.license !== COMMERCIAL_USE_ALLOWED_LICENSE_FILTER &&
+    params.license !== NONCOMMERCIAL_USE_ALLOWED_LICENSE_FILTER
+  ) {
     body.license = params.license
   }
 
@@ -143,6 +150,8 @@ export async function searchResources(params = {}) {
   if (params.license && params.license !== 'Any') {
     if (params.license === COMMERCIAL_USE_ALLOWED_LICENSE_FILTER) {
       resources = resources.filter((r) => isCommercialUseAllowed(getHubResourceLicense(r)) === true)
+    } else if (params.license === NONCOMMERCIAL_USE_ALLOWED_LICENSE_FILTER) {
+      resources = resources.filter((r) => isNonCommercialUseAllowed(getHubResourceLicense(r)) === true)
     } else {
       const want = canonicalizeLicense(params.license)
       resources = resources.filter((r) => canonicalizeLicense(getHubResourceLicense(r)) === want)

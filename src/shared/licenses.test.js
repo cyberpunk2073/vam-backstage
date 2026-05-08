@@ -2,12 +2,14 @@ import { describe, it, expect } from 'vitest'
 import {
   canonicalizeLicense,
   isCommercialUseAllowed,
+  isNonCommercialUseAllowed,
   getLicenseDescription,
   getHubResourceLicense,
   CC_LICENSE_LABELS,
   VAM_LICENSE_LABELS,
   LICENSE_DESCRIPTIONS,
   COMMERCIAL_USE_ALLOWED_LICENSE_FILTER,
+  NONCOMMERCIAL_USE_ALLOWED_LICENSE_FILTER,
   LICENSE_FILTER_OPTIONS,
 } from './licenses'
 
@@ -120,6 +122,49 @@ describe('isCommercialUseAllowed', () => {
   })
 })
 
+describe('isNonCommercialUseAllowed', () => {
+  it('returns null for null/empty input', () => {
+    expect(isNonCommercialUseAllowed(null)).toBeNull()
+    expect(isNonCommercialUseAllowed('')).toBeNull()
+  })
+
+  it('returns true for all CC licenses (incl. *-NC*)', () => {
+    for (const label of CC_LICENSE_LABELS) {
+      expect(isNonCommercialUseAllowed(label)).toBe(true)
+    }
+  })
+
+  it('returns true for FC', () => {
+    expect(isNonCommercialUseAllowed('FC')).toBe(true)
+  })
+
+  it('returns false for restricted VaM-specific licenses', () => {
+    expect(isNonCommercialUseAllowed('PC')).toBe(false)
+    expect(isNonCommercialUseAllowed('PC EA')).toBe(false)
+    expect(isNonCommercialUseAllowed('Questionable')).toBe(false)
+  })
+
+  it('works with non-canonical input (delegates to canonicalize)', () => {
+    expect(isNonCommercialUseAllowed('cc0')).toBe(true)
+    expect(isNonCommercialUseAllowed('ccby-nc-sa')).toBe(true)
+    expect(isNonCommercialUseAllowed('CCBY')).toBe(true)
+    expect(isNonCommercialUseAllowed('pcea')).toBe(false)
+  })
+
+  it('returns null for unknown licenses', () => {
+    expect(isNonCommercialUseAllowed('MIT')).toBeNull()
+    expect(isNonCommercialUseAllowed('All Rights Reserved')).toBeNull()
+  })
+
+  it('is a strict superset of isCommercialUseAllowed for known labels', () => {
+    for (const label of [...CC_LICENSE_LABELS, ...VAM_LICENSE_LABELS]) {
+      if (isCommercialUseAllowed(label) === true) {
+        expect(isNonCommercialUseAllowed(label)).toBe(true)
+      }
+    }
+  })
+})
+
 describe('getHubResourceLicense', () => {
   it('returns null for null/undefined resource', () => {
     expect(getHubResourceLicense(null)).toBeNull()
@@ -185,9 +230,10 @@ describe('exported constants', () => {
     expect(VAM_LICENSE_LABELS).toHaveLength(4)
   })
 
-  it('LICENSE_FILTER_OPTIONS starts with Any then commercial-use synthetic', () => {
+  it('LICENSE_FILTER_OPTIONS starts with Any then the two synthetic filters', () => {
     expect(LICENSE_FILTER_OPTIONS[0]).toBe('Any')
-    expect(LICENSE_FILTER_OPTIONS[1]).toBe(COMMERCIAL_USE_ALLOWED_LICENSE_FILTER)
-    expect(LICENSE_FILTER_OPTIONS).toHaveLength(2 + CC_LICENSE_LABELS.length + VAM_LICENSE_LABELS.length)
+    expect(LICENSE_FILTER_OPTIONS[1]).toBe(NONCOMMERCIAL_USE_ALLOWED_LICENSE_FILTER)
+    expect(LICENSE_FILTER_OPTIONS[2]).toBe(COMMERCIAL_USE_ALLOWED_LICENSE_FILTER)
+    expect(LICENSE_FILTER_OPTIONS).toHaveLength(3 + CC_LICENSE_LABELS.length + VAM_LICENSE_LABELS.length)
   })
 })
