@@ -14,6 +14,7 @@
  */
 
 import { join } from 'path'
+import { realpath } from 'fs/promises'
 import { ADDON_PACKAGES, ADDON_PACKAGES_FILE_PREFS } from '@shared/paths.js'
 import { LOCAL_CONTENT_ROOTS } from '@shared/local-package.js'
 import { getSetting, listLibraryDirs as dbListLibraryDirs } from './db.js'
@@ -79,12 +80,20 @@ function isPathInside(child, parent) {
   return a.startsWith(b + '/') || a.startsWith(b + '\\')
 }
 
+/** Resolve symlinks/normalization for comparison; fall back to the input on ENOENT. */
+const resolvePath = (p) => realpath(p).catch(() => p)
+
 /** Validation helper for `library-dirs:add`. Returns null on success, error string otherwise. */
-export function validateNewAuxDirPath(path) {
+export async function validateNewAuxDirPath(path) {
   if (!path || typeof path !== 'string') return 'Invalid path'
   const main = getMainLibraryDirPath()
-  if (main && (isPathInside(path, main) || isPathInside(main, path))) {
-    return 'Offload directory cannot overlap the main AddonPackages directory'
+  if (main) {
+    if ((await resolvePath(path)) === (await resolvePath(main))) {
+      return 'That folder is your main AddonPackages directory and is already part of your library.'
+    }
+    if (isPathInside(path, main) || isPathInside(main, path)) {
+      return 'Offload directory cannot overlap the main AddonPackages directory'
+    }
   }
   // Other VaM-managed roots: prefs sidecar tree (where prefsWatcher fires) and
   // the loose-content roots (where localWatcher / runLocalScan reign). Pointing

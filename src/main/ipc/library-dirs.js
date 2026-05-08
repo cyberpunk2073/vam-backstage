@@ -100,7 +100,7 @@ export function registerLibraryDirHandlers() {
 
   ipcMain.handle('library-dirs:add', async (_, path) => {
     refreshLibraryDirs()
-    const error = validateNewAuxDirPath(path)
+    const error = await validateNewAuxDirPath(path)
     if (error) throw new Error(error)
 
     try {
