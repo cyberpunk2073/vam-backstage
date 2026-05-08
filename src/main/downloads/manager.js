@@ -29,6 +29,7 @@ import { getResourceDetail, getResourceDetailByName, getCachedDetail, findPackag
 import { notify } from '../notify.js'
 import { scanAndUpsert } from '../scanner/ingest.js'
 import { computeAutoHidePathsForNewPackage } from '../scanner/index.js'
+import { inheritFromOlderVersion } from '../scanner/inherit.js'
 import { computeCascadeEnable, parseDepRef, isFlexibleRef } from '../scanner/graph.js'
 import {
   buildFromDb,
@@ -939,7 +940,7 @@ async function postDownloadIntegrate(filename, fullPath, isDirect, hubResourceId
       typeOverride: hubType || undefined,
     })
     if (!result) return
-    const { contentItems, pkgType } = result
+    const { contentItems, pkgType, packageName } = result
 
     if (hubDisplayName) setHubDisplayName(filename, hubDisplayName)
     if (hubResourceId) setHubResourceId(filename, String(hubResourceId))
@@ -948,21 +949,29 @@ async function postDownloadIntegrate(filename, fullPath, isDirect, hubResourceId
       setPackageHubMeta(filename, { tags: cached.tags, promotionalLink: cached.promotional_link })
     }
 
-    // Apply every active auto-hide rule to the freshly installed package.
-    // `computeAutoHidePathsForNewPackage` walks the rule table once and
-    // returns the union of paths matched by any enabled rule (deps,
-    // foreign hair/poses/clothing). hidePackageContent already wraps itself
-    // in withBulkWindow — every sidecar create is recordOwnedPath'd via
-    // setHidden, so the watcher sees no flood. We rebuild the entire prefs
-    // map from disk after as the source of truth.
+    // Inherit user-set settings (labels, content visibility sidecars, custom
+    // category) from the most recent existing version of this package — see
+    // `inheritFromOlderVersion`. When a donor is found we skip auto-hide
+    // entirely: the donor's per-item state is the source of truth and
+    // overrides the default rules. Otherwise apply every active auto-hide
+    // rule. `computeAutoHidePathsForNewPackage` walks the rule table once
+    // and returns the union of paths matched by any enabled rule.
+    // `hidePackageContent` and the inherit helper both wrap themselves in
+    // `withBulkWindow` and `recordOwnedPath` their writes, so the watcher
+    // sees no event flood; we rebuild the prefs map from disk once at the
+    // end as the source of truth.
     const vamDir = getSetting('vam_dir')
-    if (vamDir) {
+    const inherited = await inheritFromOlderVersion({ filename, packageName, contentItems, vamDir })
+    let sidecarsTouched = inherited != null
+    if (!inherited && vamDir) {
       const paths = computeAutoHidePathsForNewPackage(filename, pkgType, isDirect, contentItems)
       if (paths.length > 0) {
         await hidePackageContent(vamDir, filename, paths)
-        const prefs = await readAllPrefs(vamDir)
-        setPrefsMap(prefs)
+        sidecarsTouched = true
       }
+    }
+    if (sidecarsTouched && vamDir) {
+      setPrefsMap(await readAllPrefs(vamDir))
     }
 
     // Build graph only (skip expensive aggregates) — we need packageIndex + deps

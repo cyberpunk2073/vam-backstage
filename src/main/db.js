@@ -424,6 +424,27 @@ export function getPackageCacheInfo(filename) {
   )
 }
 
+/**
+ * Find rows that share `package_name` (creator + name without version) with `filename`
+ * AND were first seen strictly before it, sorted by integer version desc. Used by the
+ * "inherit settings from older version on update" flow — caller picks rows[0] as the
+ * donor of labels / type_override / sidecars for a freshly installed package.
+ *
+ * The `first_seen_at` gate sidesteps the peer-install race: when several new versions
+ * of the same package land in one batch (watcher debounce window, runScan added-set,
+ * parallel downloads), all share the same insertion second and `first_seen_at < self`
+ * excludes every still-empty peer naturally — they all reach back to the previous
+ * version that was in the DB before the batch began.
+ */
+export function getDonorVersionsByPackageName(packageName, filename) {
+  return stmt(
+    `SELECT filename, version, type_override FROM packages
+     WHERE package_name = ? AND filename != ? AND package_name != ''
+       AND first_seen_at < (SELECT first_seen_at FROM packages WHERE filename = ?)
+     ORDER BY CAST(version AS INTEGER) DESC`,
+  ).all(packageName, filename, filename)
+}
+
 // Library directories (aux only — main is implicit via vam_dir setting + NULL pointer)
 
 export function listLibraryDirs() {
@@ -981,6 +1002,34 @@ export function applyLabelToContents(id, items) {
     for (const it of arr) ins.run(id, it.packageFilename, it.internalPath)
   })
   tx(items)
+}
+
+/**
+ * Copy `label_packages` rows from one package filename to another. INSERT OR IGNORE
+ * so re-application is a no-op. Used by the inheritance flow when a new version of
+ * a package is installed and should pick up the labels of the previous version.
+ */
+export function copyPackageLabels(fromFilename, toFilename) {
+  stmt(
+    `INSERT OR IGNORE INTO label_packages (label_id, package_filename)
+     SELECT label_id, ? FROM label_packages WHERE package_filename = ?`,
+  ).run(toFilename, fromFilename)
+}
+
+/**
+ * Copy `label_contents` rows from one package filename to another, restricted to the
+ * `internal_path`s that exist in the target package. Built dynamically because the
+ * placeholder count varies; small batches and not in a hot loop, so the per-call
+ * prepare cost is fine. INSERT OR IGNORE so partial overlap is safe.
+ */
+export function copyContentLabelsForPaths(fromFilename, toFilename, internalPaths) {
+  if (!internalPaths.length) return
+  const placeholders = internalPaths.map(() => '?').join(',')
+  db.prepare(
+    `INSERT OR IGNORE INTO label_contents (label_id, package_filename, internal_path)
+     SELECT label_id, ?, internal_path FROM label_contents
+     WHERE package_filename = ? AND internal_path IN (${placeholders})`,
+  ).run(toFilename, fromFilename, ...internalPaths)
 }
 
 export function removeLabelFromContents(id, items) {

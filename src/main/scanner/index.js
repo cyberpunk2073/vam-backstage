@@ -3,6 +3,7 @@ import { join } from 'path'
 import { isVarFilename, canonicalVarFilename } from './var-reader.js'
 import { detectLeaves } from './graph.js'
 import { scanAndUpsert } from './ingest.js'
+import { inheritFromOlderVersion } from './inherit.js'
 import {
   getPackageCacheInfo,
   getAllDbFilenamesWithDir,
@@ -75,7 +76,10 @@ export async function runScan(vamDir, onProgress = () => {}) {
   // Phase 2: Read manifests (with scan cache)
   let scanned = 0,
     added = 0
-  const newFilenames = new Set()
+  /** Map<filename, { packageName, contentItems }> for freshly-added rows. Doubles
+   * as the "new filenames" set via `.has()` / `.keys()` — extra metadata is used
+   * by the inheritance pass below, key membership by leaf detection downstream. */
+  const newAdditions = new Map()
   const unreadable = []
   for (let i = 0; i < varFiles.length; i++) {
     const { filename, fullPath, mtime, size, storageState, libraryDirId } = varFiles[i]
@@ -95,11 +99,36 @@ export async function runScan(vamDir, onProgress = () => {}) {
       scanned++
       if (!cached) {
         added++
-        newFilenames.add(filename)
+        newAdditions.set(filename, { packageName: result.packageName, contentItems: result.contentItems })
       }
     } catch (err) {
       console.warn(`Failed to scan ${filename}:`, err.message)
       unreadable.push(filename)
+    }
+  }
+
+  // Inherit user-set settings (labels, content visibility sidecars, custom
+  // category) from the previous version of each freshly-added package — but
+  // only on non-initial scans. The first ever scan indexes packages that have
+  // always been on disk; users haven't had a chance to set anything yet, and
+  // any sidecars already on disk are read separately by `readAllPrefs` in the
+  // finalize phase below. Skipping inheritance on the initial pass also avoids
+  // reorganizing existing on-disk sidecar layouts that the user may have
+  // intentionally curated per stem. The `first_seen_at` gate inside
+  // `inheritFromOlderVersion` keeps mass-additions (multiple new versions in
+  // one scan) from picking one of the other still-empty new peers as a donor.
+  if (!isInitialScan && newAdditions.size > 0) {
+    for (const [filename, info] of newAdditions) {
+      try {
+        await inheritFromOlderVersion({
+          filename,
+          packageName: info.packageName,
+          contentItems: info.contentItems,
+          vamDir,
+        })
+      } catch (err) {
+        console.warn(`Inherit from older version failed for ${filename}:`, err.message)
+      }
     }
   }
 
@@ -117,7 +146,7 @@ export async function runScan(vamDir, onProgress = () => {}) {
     .map((r) => r.filename)
   if (removed.length > 0) deletePackages(removed)
 
-  const needsLeafDetection = isInitialScan || newFilenames.size > 0 || removed.length > 0
+  const needsLeafDetection = isInitialScan || newAdditions.size > 0 || removed.length > 0
   if (needsLeafDetection && varFiles.length > 0) {
     buildGraphOnly()
     const pkgIdx = getPackageIndex()
@@ -127,9 +156,9 @@ export async function runScan(vamDir, onProgress = () => {}) {
     if (isInitialScan) {
       batchSetDirect([...pkgIdx.keys()].map((fn) => [fn, leaves.has(fn)]))
     } else {
-      const updates = [...newFilenames].map((fn) => [fn, leaves.has(fn)])
+      const updates = [...newAdditions.keys()].map((fn) => [fn, leaves.has(fn)])
       for (const fn of pkgIdx.keys()) {
-        if (newFilenames.has(fn)) continue
+        if (newAdditions.has(fn)) continue
         const hadRevDeps = rev.has(fn) && rev.get(fn).size > 0
         const pkg = pkgIdx.get(fn)
         if (!hadRevDeps && !pkg.is_direct) updates.push([fn, true])

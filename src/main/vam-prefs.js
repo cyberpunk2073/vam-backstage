@@ -184,6 +184,39 @@ export async function unhidePackageContent(vamDir, packageFilename, contentPaths
   })
 }
 
+/**
+ * Copy `.hide`/`.fav` sidecars from one package's stem dir to another's, restricted
+ * to the `internalPaths` that exist in the new package. Used by the inheritance flow
+ * when a new version of a package is installed: the per-stem sidecar tree is keyed
+ * on packageStem (which includes version), so the new install needs its own sidecars
+ * placed even if the bytes-level content paths happen to match the old stem.
+ *
+ * Loose-content sidecars (`__local__`) live next to the source file and aren't keyed
+ * by stem, so they aren't part of this copy. Wrapped in a bulk window so the watcher
+ * drops the resulting `.hide`/`.fav` create events.
+ */
+export async function copySidecarsToNewVersion(vamDir, fromFilename, toFilename, internalPaths) {
+  if (!internalPaths.length) return
+  if (isLocalPackage(fromFilename) || isLocalPackage(toFilename)) return
+  const fromStem = fromFilename.replace(/\.var$/i, '')
+  const fromDir = join(prefsDir(vamDir), fromStem)
+  if (!existsSync(fromDir)) return
+  return withBulkWindow(async () => {
+    for (const ip of internalPaths) {
+      for (const ext of ['.hide', '.fav']) {
+        const fromPath = join(fromDir, ip + ext)
+        if (!existsSync(fromPath)) continue
+        const toPath = sidecarPath(vamDir, toFilename, ip, ext)
+        recordOwnedPath(toPath)
+        try {
+          await mkdir(dirname(toPath), { recursive: true })
+          await writeFile(toPath, '')
+        } catch {}
+      }
+    }
+  })
+}
+
 const OLD_EXTS = new Set(['.vab', '.vaj'])
 
 /**

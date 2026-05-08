@@ -6,6 +6,7 @@ import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_ROOTS } from '@shared/local-packa
 import { isVarFilename, canonicalVarFilename } from './scanner/var-reader.js'
 import { scanAndUpsert } from './scanner/ingest.js'
 import { computeAutoHidePathsForNewPackage } from './scanner/index.js'
+import { inheritFromOlderVersion } from './scanner/inherit.js'
 import { runLocalScan } from './scanner/local.js'
 import { deletePackage, getPackageCacheInfo, setStorageState } from './db.js'
 import { buildFromDb, getPrefsMap, setPrefsMap, getPackageIndex, getForwardDeps } from './store.js'
@@ -426,7 +427,7 @@ async function processBatch() {
     let packagesChanged = false
     let contentsChanged = false
     const newlyScannedEnabled = [] // enabled filenames that were freshly added/changed
-    /** @type {Array<{ filename: string, pkgType: string|null, contentItems: Array<any> }>} */
+    /** @type {Array<{ filename: string, pkgType: string|null, contentItems: Array<any>, packageName: string, isNewInstall: boolean }>} */
     const autoHideCandidates = [] // freshly-scanned packages eligible for auto-hide rule application
 
     // --- Package events ---
@@ -493,6 +494,8 @@ async function processBatch() {
                 filename: canonical,
                 pkgType: result.pkgType,
                 contentItems: result.contentItems,
+                packageName: result.packageName,
+                isNewInstall: result.isNewInstall,
               })
             }
           } catch (err) {
@@ -504,30 +507,50 @@ async function processBatch() {
 
       if (packagesChanged) buildFromDb()
 
-      // Apply auto-hide rules to freshly-scanned packages — same flow as
-      // postDownloadIntegrate, just for `.var`s that arrived via the FS rather
-      // than the download manager (manual drop, sync tool, another VaM-app
-      // instance, etc.). isDirect=true mirrors scanSingleVar's upsert; the
-      // `deps` rule won't claim a direct package, so this only fires the
-      // foreign_* rules for hand-dropped files. hidePackageContent wraps
-      // itself in withBulkWindow (nested with the outer one — depth-counted),
-      // and recordOwnedPath suppresses the resulting sidecar events.
+      // For each freshly-scanned package: if it's a brand-new install (no DB
+      // row pre-scan) AND a previous version exists, inherit user-set settings
+      // (labels, content visibility sidecars, custom category) from the donor
+      // and skip auto-hide entirely — the donor's per-item state overrides the
+      // default rules. Otherwise apply the active auto-hide rules; for content
+      // rescans of an existing package this is the only branch we hit.
+      //
+      // Same flow as `postDownloadIntegrate`, just for `.var`s that arrived
+      // via the FS (manual drop, sync tool, another VaM-app instance) rather
+      // than the download manager. isDirect=true mirrors scanSingleVar's
+      // upsert; the `deps` rule won't claim a direct package, so this only
+      // fires the foreign_* rules for hand-dropped files. The inherit helper
+      // and `hidePackageContent` both wrap themselves in `withBulkWindow`
+      // (nested with the outer one — depth-counted) and `recordOwnedPath`
+      // their writes, so the resulting sidecar events get filtered out.
       if (autoHideCandidates.length > 0 && vamDirPath) {
-        let anyHidden = false
-        for (const { filename, pkgType, contentItems } of autoHideCandidates) {
+        let sidecarsTouched = false
+        for (const { filename, pkgType, contentItems, packageName, isNewInstall } of autoHideCandidates) {
+          if (isNewInstall) {
+            try {
+              const inherited = await inheritFromOlderVersion({
+                filename,
+                packageName,
+                contentItems,
+                vamDir: vamDirPath,
+              })
+              if (inherited) {
+                sidecarsTouched = true
+                continue
+              }
+            } catch (err) {
+              console.warn(`Watcher: inherit failed for ${filename}:`, err.message)
+            }
+          }
           const paths = computeAutoHidePathsForNewPackage(filename, pkgType, true, contentItems)
           if (paths.length === 0) continue
           try {
             await hidePackageContent(vamDirPath, filename, paths)
-            anyHidden = true
+            sidecarsTouched = true
           } catch (err) {
             console.warn(`Watcher: auto-hide failed for ${filename}:`, err.message)
           }
         }
-        if (anyHidden) {
-          const prefs = await readAllPrefs(vamDirPath)
-          setPrefsMap(prefs)
-        }
+        if (sidecarsTouched) setPrefsMap(await readAllPrefs(vamDirPath))
       }
 
       // Cascade-enable disabled/offloaded deps needed by newly enabled packages
@@ -708,6 +731,10 @@ async function scanSingleVar(fullPath, storageState, libraryDirId) {
   }
 
   // Returns null if the filename is unparseable, otherwise { contentItems, pkgType, ... }.
-  // Caller uses contentItems + pkgType to apply auto-hide rules to freshly-added packages.
-  return await scanAndUpsert(fullPath, { storageState, libraryDirId, isDirect: 1 })
+  // `isNewInstall` flags a row that didn't exist before this scan — caller uses
+  // it to decide between inheriting from an older version vs applying default
+  // auto-hide rules. Stale-cache rescans (row exists, content changed) are not
+  // new installs.
+  const result = await scanAndUpsert(fullPath, { storageState, libraryDirId, isDirect: 1 })
+  return result ? { ...result, isNewInstall: !cached } : null
 }

@@ -48,7 +48,7 @@ export function personAtomIdsJsonFromBuffer(buf, packageFilename = null) {
  * @param {number|null} [opts.libraryDirId=null] - NULL for main, aux dir id otherwise
  * @param {number}  [opts.isDirect=0] - 0 or 1
  * @param {string}  [opts.typeOverride] - if set, used instead of derived type
- * @returns {Promise<{ filename, contentItems, meta, size, pkgType } | null>} null if filename unparseable
+ * @returns {Promise<{ filename, contentItems, meta, size, pkgType, packageName } | null>} null if filename unparseable
  */
 export async function scanAndUpsert(
   fullPath,
@@ -96,5 +96,5 @@ export async function scanAndUpsert(
     )
   }
 
-  return { filename, contentItems, meta, size: s.size, pkgType }
+  return { filename, contentItems, meta, size: s.size, pkgType, packageName: parsed.packageName }
 }
