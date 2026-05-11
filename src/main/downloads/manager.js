@@ -442,13 +442,17 @@ export async function enqueueInstallRef(hubFileData) {
   }
   if (!url) throw new Error('No download URL available')
 
+  // Default to dependency for backward compat (missing-deps install paths); callers
+  // installing a main-package file pass `asDependency: false` so the post-download
+  // integration marks the package as `is_direct = 1`.
+  const asDependency = hubFileData.asDependency !== false
   if (existing) deleteDownload(existing.id)
   insertDownload({
     packageRef: fn,
     hubResourceId: resourceId,
     downloadUrl: url,
     fileSize,
-    priority: 'dependency',
+    priority: asDependency ? 'dependency' : 'direct',
     parentRef: null,
     displayName: null,
     autoQueueDeps: 0,

@@ -694,6 +694,7 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
   const rid = String(resourceId)
   const { state: installState, dlInfo, installStatus } = useHubInstallState(rid, { isExternal })
   const librarySelectRef = installStatus.filename || dlInfo?.packageRef || pkg._localFilename
+  const dlInstallDep = useDownloadStore((s) => s.installDep)
 
   const deps = useMemo(() => {
     const hf = detail?.hubFiles || []
@@ -704,13 +705,17 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
     const hasDownloadUrl = (f) => (f.downloadUrl && f.downloadUrl !== 'null') || (f.urlHosted && f.urlHosted !== 'null')
     // Dep entries in `dependencies[*]` have `filename` set to the verbatim ref (e.g.
     // "Creator.Package.latest", no .var). The downloads table stores `package_ref`
-    // as the concrete `packageName + "." + latest_version + ".var"`. Without a
-    // concrete lookup key, flexible refs never match the download store and flexible
-    // deps jump from "On Hub" straight to "Installed" without showing Queued/progress.
+    // as the concrete `packageName + "." + latest_version + ".var"`, so we prefer
+    // that form for both purposes:
+    //   1. byPackageRef lookup — matches what the downloads table inserts.
+    //   2. Install IPC `filename` — the version we actually want from hub.
+    // Falling back to `_resolved` first was wrong for `fallback` resolutions: it
+    // pointed at the older local file we already have, so `enqueueInstallRef` hit
+    // the silent `{ already: true }` branch and the row snapped back to Install.
     const concreteDownloadRef = (f) => {
-      if (f._resolved) return /\.var$/i.test(f._resolved) ? f._resolved : f._resolved + '.var'
       const ver = f.latest_version
       if (f.packageName && ver != null && /^\d+$/.test(String(ver))) return `${f.packageName}.${ver}.var`
+      if (f._resolved) return /\.var$/i.test(f._resolved) ? f._resolved : f._resolved + '.var'
       if (f.filename) return /\.var$/i.test(f.filename) ? f.filename : f.filename + '.var'
       return null
     }
@@ -736,6 +741,7 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
       return {
         ref: f.filename || group,
         downloadRef: concreteDownloadRef(f),
+        resourceId: f.resource_id,
         resolved: f._resolved || (f._installed ? f.filename : null),
         sizeBytes: parseInt(f.file_size || '0', 10),
         resolution,
@@ -756,6 +762,8 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
       return {
         ref: f.filename,
         isRoot: true,
+        downloadRef: f.filename,
+        resourceId: detail?.resource_id,
         resolved: installed ? f.filename : null,
         sizeBytes: parseInt(f.file_size || '0', 10),
         resolution: installed ? 'exact' : 'hub',
@@ -780,6 +788,16 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
 
     return roots
   }, [detail])
+
+  const handleInstallDep = useCallback(
+    (dep) => {
+      const filename = dep.downloadRef || dep.ref
+      if (!filename) return
+      const rid = dep.resourceId != null ? String(dep.resourceId) : String(resourceId)
+      dlInstallDep({ filename, resource_id: rid, asDependency: !dep.isRoot })
+    },
+    [resourceId, dlInstallDep],
+  )
 
   const hubUrl = `https://hub.virtamate.com/resources/${resourceId}`
   const externalOpenUrl = pkg.download_url || pkg.external_url || hubUrl
@@ -1054,7 +1072,7 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
                   </div>
                 ) : deps.length > 0 ? (
                   <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
-                    <DepTree deps={deps} />
+                    <DepTree deps={deps} onInstall={handleInstallDep} />
                   </div>
                 ) : null}
               </div>
@@ -1195,7 +1213,7 @@ function SkeletonCard({ mode = 'medium' }) {
 
 // --- Expandable dep list for hub detail ---
 
-function DepTree({ deps }) {
+function DepTree({ deps, onInstall }) {
   const flat = useMemo(() => {
     const rows = []
     for (const root of deps) {
@@ -1210,7 +1228,7 @@ function DepTree({ deps }) {
   return (
     <>
       {flat.map(({ dep, depth }, i) => (
-        <DepRow key={dep.ref || i} dep={dep} depth={depth} renderChildren={false} />
+        <DepRow key={dep.ref || i} dep={dep} depth={depth} renderChildren={false} onInstall={onInstall} />
       ))}
     </>
   )

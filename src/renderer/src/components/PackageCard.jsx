@@ -1016,7 +1016,7 @@ export function ContentCard({
 
 const TAG = 'text-[9px] font-medium px-2 py-0.5 rounded min-w-[4.5rem] text-center inline-block'
 
-function depStatusTag(dep, dlStatus, dlProgress) {
+function depStatusTag(dep, dlStatus, dlProgress, onInstall) {
   // Installed status always takes priority over stale download data
   if (dep.resolution === 'exact' || dep.resolution === 'latest')
     return <span className={`${TAG} text-success bg-success/8`}>Installed</span>
@@ -1047,7 +1047,19 @@ function depStatusTag(dep, dlStatus, dlProgress) {
       </span>
     )
   if (dep.resolution === 'hub')
-    return (
+    return onInstall ? (
+      <button
+        type="button"
+        title="Install from the hub"
+        onClick={(e) => {
+          e.stopPropagation()
+          onInstall(dep)
+        }}
+        className={`${TAG} bg-linear-to-br from-[#3a7cf4] to-[#c740e8] text-white cursor-pointer hover:brightness-110 transition-all`}
+      >
+        Install
+      </button>
+    ) : (
       <span title="Available to install from the hub" className={`${TAG} text-accent-blue bg-accent-blue/8`}>
         On Hub
       </span>
@@ -1059,7 +1071,7 @@ function depStatusTag(dep, dlStatus, dlProgress) {
   )
 }
 
-export function DepRow({ dep, depth = 0, renderChildren = true, onNavigate }) {
+export function DepRow({ dep, depth = 0, renderChildren = true, onNavigate, onInstall }) {
   // `dep.ref` is the verbatim dep ref for display (may be flexible like ".latest").
   // `dep.downloadRef` is the concrete `packageName.N.var` the downloads table keys on;
   // fall back to `ref` for roots whose filename is already a concrete `.var`.
@@ -1070,7 +1082,10 @@ export function DepRow({ dep, depth = 0, renderChildren = true, onNavigate }) {
     if (d.status === 'active') return `active|${s.liveProgress[d.id]?.progress ?? 0}`
     return d.status
   })
-  const dlStatus = dl?.startsWith('active') ? 'active' : dl
+  // Optimistic queued state — set synchronously when the user clicks Install so
+  // the row reacts before the IPC + fetchItems round-trip surfaces the real entry.
+  const pendingDep = useDownloadStore((s) => s.pendingDepInstalls.has(lookupKey))
+  const dlStatus = dl?.startsWith('active') ? 'active' : dl || (pendingDep ? 'queued' : null)
   const dlProgress = dl?.startsWith('active') ? Number(dl.split('|')[1]) || 0 : 0
   const canNavigate = !!dep.filename && !!onNavigate
 
@@ -1094,7 +1109,7 @@ export function DepRow({ dep, depth = 0, renderChildren = true, onNavigate }) {
         {dep.sizeBytes != null && (
           <span className="text-[10px] text-text-tertiary font-mono shrink-0">{formatBytes(dep.sizeBytes)}</span>
         )}
-        {depStatusTag(dep, dlStatus, dlProgress)}
+        {depStatusTag(dep, dlStatus, dlProgress, onInstall)}
       </div>
       {renderChildren &&
         dep.children?.map((child, i) => (
@@ -1104,6 +1119,7 @@ export function DepRow({ dep, depth = 0, renderChildren = true, onNavigate }) {
             depth={depth + 1}
             renderChildren={renderChildren}
             onNavigate={onNavigate}
+            onInstall={onInstall}
           />
         ))}
     </>

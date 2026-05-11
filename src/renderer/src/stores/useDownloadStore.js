@@ -45,6 +45,7 @@ export const useDownloadStore = create((set, get) => ({
   byHubResourceId: new Map(),
   byPackageRef: new Map(),
   pendingInstalls: new Set(), // hub resource IDs clicked but not yet in queue
+  pendingDepInstalls: new Set(), // dep filenames whose Install click hasn't reached the queue yet
   pendingUpdates: new Set(), // library filenames whose Update click hasn't reached the queue yet
 
   init: () => {
@@ -154,6 +155,28 @@ export const useDownloadStore = create((set, get) => ({
       })
     }
     return result
+  },
+
+  installDep: async (hubFileData) => {
+    const key = hubFileData.filename
+    set((s) => {
+      const next = new Set(s.pendingDepInstalls)
+      next.add(key)
+      return { pendingDepInstalls: next }
+    })
+    try {
+      await window.api.packages.installDep(hubFileData)
+    } catch (err) {
+      toast(`Install failed: ${err.message}`)
+    } finally {
+      await get().fetchItems()
+      set((s) => {
+        if (!s.pendingDepInstalls.has(key)) return s
+        const next = new Set(s.pendingDepInstalls)
+        next.delete(key)
+        return { pendingDepInstalls: next }
+      })
+    }
   },
 
   installMissing: async (filename) => {
