@@ -69,17 +69,37 @@ function creatorFor(packageFilename) {
 }
 
 /**
- * Cheap "do we already have an extracted appearance preset for this package?"
- * predicate, used to render the checkmark on the library card "no preset" chip.
+ * Per-row predicate: does an extracted appearance preset exist for this
+ * scene-source row? Runs the same `computeTargets` formula the writer/probe
+ * paths use and tests basename membership against the Set populated during
+ * `buildFromDb`. Pure CPU — no DB queries, no fs calls.
  *
- * Reads `person_atom_ids` straight off the cached content rows in store, runs
- * the same `computeTargets` formula the writer/probe paths use, and tests
- * basename membership against the Set populated during `buildFromDb`. No DB
- * queries, no fs calls.
- *
- * Caveat: scene-source rows whose `person_atom_ids` is unpopulated (never
- * probed) are skipped. They get filled in lazily by `probeScene` on the first
- * context-menu open, after which a subsequent rebuild flips the chip.
+ * `personAtomIdsJson` is populated by the scanner at scan time for the three
+ * scene-source types (see `PERSON_ATOM_ID_CONTENT_TYPES`), so this returns the
+ * right answer on the first scan; rows with a missing column (only possible on
+ * a pre-v17 row that hasn't been re-scanned) short-circuit to `false`.
+ */
+function rowHasExtractedAppearance({ vamDir, creator, internalPath, personAtomIdsJson, set }) {
+  if (!personAtomIdsJson) return false
+  let atomIds = null
+  try {
+    atomIds = JSON.parse(personAtomIdsJson)
+  } catch {
+    return false
+  }
+  if (!Array.isArray(atomIds) || atomIds.length === 0) return false
+  const singleAtom = atomIds.length === 1
+  for (const atomId of atomIds) {
+    const t = computeTargets({ vamDir, creator, internalPath, atomId, singleAtom })
+    if (set.has(basename(t.appearance.absPath))) return true
+  }
+  return false
+}
+
+/**
+ * Package-level predicate, used to render the checkmark on the library card
+ * "no preset" chip. Returns true as soon as any scene-source row inside the
+ * package has its expected appearance preset on disk.
  */
 export function packageHasExtractedAppearance(filename) {
   const set = getExtractedAppearanceBasenames()
@@ -92,26 +112,38 @@ export function packageHasExtractedAppearance(filename) {
   if (!items) return false
   for (const c of items) {
     if (!APPEARANCE_SOURCE_TYPES.has(c.type)) continue
-    let atomIds = []
-    try {
-      atomIds = c.person_atom_ids ? JSON.parse(c.person_atom_ids) : []
-    } catch {
-      continue
-    }
-    if (!Array.isArray(atomIds) || atomIds.length === 0) continue
-    const singleAtom = atomIds.length === 1
-    for (const atomId of atomIds) {
-      const t = computeTargets({
+    if (
+      rowHasExtractedAppearance({
         vamDir,
         creator: pkg.creator,
         internalPath: c.internal_path,
-        atomId,
-        singleAtom,
+        personAtomIdsJson: c.person_atom_ids,
+        set,
       })
-      if (set.has(basename(t.appearance.absPath))) return true
+    ) {
+      return true
     }
   }
   return false
+}
+
+/**
+ * Content-row predicate, used by the content gallery to flag legacy looks
+ * that already have an extracted appearance preset. Mirrors
+ * `packageHasExtractedAppearance` but scoped to a single row's atoms.
+ */
+export function contentHasExtractedAppearance({ creator, internalPath, personAtomIdsJson }) {
+  const set = getExtractedAppearanceBasenames()
+  if (set.size === 0) return false
+  const vamDir = getSetting('vam_dir')
+  if (!vamDir) return false
+  return rowHasExtractedAppearance({
+    vamDir,
+    creator: creator || '!local',
+    internalPath,
+    personAtomIdsJson,
+    set,
+  })
 }
 
 /**

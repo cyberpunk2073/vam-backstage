@@ -463,7 +463,7 @@ export function LibraryCard({
             )}
             {pkg.noLookPresetTag && (
               <div
-                className={`${THUMB_OVERLAY_CHIP} bg-white/15 text-white/80 backdrop-blur-sm flex items-center gap-1`}
+                className={`${THUMB_OVERLAY_CHIP} bg-white/15 text-white/80 backdrop-blur-sm gap-0.5`}
                 title={
                   pkg.hasExtractedAppearancePreset
                     ? 'No preset items in this package, but a matching appearance preset has been extracted to your library'
@@ -471,7 +471,7 @@ export function LibraryCard({
                 }
               >
                 no preset
-                {pkg.hasExtractedAppearancePreset && <Check size={10} className="shrink-0 text-success" />}
+                {pkg.hasExtractedAppearancePreset && <Check size={11} strokeWidth={3} className="shrink-0" />}
               </div>
             )}
             {!pkg.isDirect && (
@@ -824,13 +824,19 @@ export function ContentTableRow({
         <div className="flex w-full min-w-0 flex-nowrap items-center gap-1 overflow-x-auto scrollbar-hide">
           {item.tag && (
             <span
-              className={THUMB_OVERLAY_CHIP}
+              className={`${THUMB_OVERLAY_CHIP} gap-0.5`}
               style={{
                 color: item.tag.color,
                 background: `color-mix(in srgb, ${item.tag.color} 14%, transparent)`,
               }}
+              title={
+                item.hasExtractedAppearancePreset
+                  ? 'An appearance preset has already been extracted from this legacy look'
+                  : undefined
+              }
             >
               {item.tag.label}
+              {item.hasExtractedAppearancePreset && <Check size={11} strokeWidth={3} className="shrink-0" />}
             </span>
           )}
           {isLocalContent && (
@@ -943,14 +949,20 @@ export function ContentCard({
             )}
             {item.tag && (
               <span
-                className={`${THUMB_OVERLAY_CHIP} backdrop-blur-md`}
+                className={`${THUMB_OVERLAY_CHIP} backdrop-blur-md gap-0.5`}
                 style={{
                   color: item.tag.color,
                   background: `color-mix(in srgb, ${item.tag.color} 12%, rgba(0,0,0,0.3))`,
                   textShadow: `0 0 8px ${item.tag.color}60, 0 1px 2px rgba(0,0,0,0.8)`,
                 }}
+                title={
+                  item.hasExtractedAppearancePreset
+                    ? 'An appearance preset has already been extracted from this legacy look'
+                    : undefined
+                }
               >
                 {item.tag.label}
+                {item.hasExtractedAppearancePreset && <Check size={11} strokeWidth={3} className="shrink-0" />}
               </span>
             )}
             {isLocalContent && (

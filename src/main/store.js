@@ -21,7 +21,7 @@ import {
 import { categoryOf, isGalleryVisible, isVisible, LOOK_ITEM_EXACT_TYPES, tagOf } from '@shared/content-types.js'
 import { getPackagesIndex, loadPackagesJsonFromCache } from './hub/packages-json.js'
 import { isLocalPackage } from '@shared/local-package.js'
-import { packageHasExtractedAppearance } from './scenes/extract.js'
+import { packageHasExtractedAppearance, contentHasExtractedAppearance } from './scenes/extract.js'
 
 /**
  * Iterate packages excluding the synthetic `__local__` sentinel that owns loose
@@ -738,6 +738,13 @@ export function getFilteredContents(filters = {}) {
     hidden: c.hidden,
     favorite: c.favorite,
     thumbnailPath: c.thumbnail_path,
+    hasExtractedAppearancePreset:
+      c.type === 'legacyLook' &&
+      contentHasExtractedAppearance({
+        creator: c.creator,
+        internalPath: c.internal_path,
+        personAtomIdsJson: c.person_atom_ids,
+      }),
     ownLabelIds: labelsByContent.get(c.package_filename + '\0' + c.internal_path) || [],
   }))
 }
