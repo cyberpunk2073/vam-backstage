@@ -95,9 +95,11 @@ export default function HubView({ onNavigate }) {
   } = useHubStore()
 
   const [searchDraft, setSearchDraft] = useState(search)
+  const searchDraftRef = useRef(search)
   const searchDebounceRef = useRef(null)
   useEffect(() => {
     setSearchDraft(search)
+    searchDraftRef.current = search
   }, [search])
   useEffect(
     () => () => {
@@ -108,6 +110,7 @@ export default function HubView({ onNavigate }) {
   const handleSearchChange = useCallback(
     (value) => {
       setSearchDraft(value)
+      searchDraftRef.current = value
       if (searchDebounceRef.current) {
         clearTimeout(searchDebounceRef.current)
         searchDebounceRef.current = null
@@ -118,6 +121,8 @@ export default function HubView({ onNavigate }) {
       }
       searchDebounceRef.current = setTimeout(() => {
         searchDebounceRef.current = null
+        // Ignore stale timers (clear clicked after timeout fired, or newer keystrokes).
+        if (searchDraftRef.current !== value) return
         setSearch(value)
       }, HUB_SEARCH_DEBOUNCE_MS)
     },
