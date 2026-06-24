@@ -13,6 +13,8 @@ export function useHubInteractions(resourceId) {
     loggedIn: false,
     favorited: false,
     bookmarked: false,
+    liked: false,
+    disliked: false,
     loading: true,
     serverFavoriteCount: null,
   })
@@ -44,13 +46,23 @@ export function useHubInteractions(resourceId) {
           loggedIn: !!res?.loggedIn,
           favorited: !!res?.favorited,
           bookmarked: !!res?.bookmarked,
+          liked: !!res?.liked,
+          disliked: !!res?.disliked,
           loading: false,
           serverFavoriteCount: typeof res?.favoriteCount === 'number' ? res.favoriteCount : null,
         })
       })
       .catch(() => {
         if (!cancelled)
-          setState({ loggedIn: false, favorited: false, bookmarked: false, loading: false, serverFavoriteCount: null })
+          setState({
+            loggedIn: false,
+            favorited: false,
+            bookmarked: false,
+            liked: false,
+            disliked: false,
+            loading: false,
+            serverFavoriteCount: null,
+          })
       })
     return () => {
       cancelled = true
@@ -64,7 +76,16 @@ export function useHubInteractions(resourceId) {
       if (data?.loggedIn) fetchState()
       // Logged out: clear personal state too, otherwise a filled heart lingers
       // after the count/bookmark (gated on login) disappear.
-      else setState((s) => ({ ...s, loggedIn: false, favorited: false, bookmarked: false, serverFavoriteCount: null }))
+      else
+        setState((s) => ({
+          ...s,
+          loggedIn: false,
+          favorited: false,
+          bookmarked: false,
+          liked: false,
+          disliked: false,
+          serverFavoriteCount: null,
+        }))
     })
   }, [fetchState])
 
@@ -98,6 +119,23 @@ export function useHubInteractions(resourceId) {
     }
   }, [resourceId])
 
+  const toggleLike = useCallback(async () => {
+    const prevLiked = stateRef.current.liked
+    const prevDisliked = stateRef.current.disliked
+    // Liking always clears any existing dislike (the Hub treats them as exclusive).
+    setState((s) => ({ ...s, liked: !prevLiked, disliked: false }))
+    const res = await window.api.hub.toggleLike(resourceId, prevLiked)
+    if (res?.ok) {
+      setState((s) => ({ ...s, liked: !!res.liked, disliked: !!res.disliked }))
+    } else if (res?.reason === 'auth') {
+      setState((s) => ({ ...s, loggedIn: false, liked: prevLiked, disliked: prevDisliked }))
+      toast('Sign in to the Hub to like resources.', 'info')
+    } else {
+      setState((s) => ({ ...s, liked: prevLiked, disliked: prevDisliked }))
+      toast(res?.message || 'Could not update like.', 'error')
+    }
+  }, [resourceId])
+
   // null until the page reports the real count (UI shows a skeleton meanwhile).
   const favoriteCount =
     state.serverFavoriteCount == null
@@ -107,5 +145,5 @@ export function useHubInteractions(resourceId) {
           state.serverFavoriteCount + (state.favorited === serverFavoritedRef.current ? 0 : state.favorited ? 1 : -1),
         )
 
-  return { ...state, favoriteCount, toggleFavorite, toggleBookmark }
+  return { ...state, favoriteCount, toggleFavorite, toggleBookmark, toggleLike }
 }

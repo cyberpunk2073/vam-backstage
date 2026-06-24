@@ -153,10 +153,15 @@ function parseResourcePage(html, finalUrl) {
   const favorited = elementClassHas(html, 'button--favorite', 'is-favorited')
   const bookmarked = elementClassHas(html, 'button--icon--bookmark', 'is-bookmarked')
 
+  // The resource thumbs up/down rating: the two buttons gain `is-active-like` on
+  // the side the visitor picked (and lose the `add-like` affordance class).
+  const liked = elementClassHas(html, 'button--like', 'is-active-like')
+  const disliked = elementClassHas(html, 'button--unlike', 'is-active-like')
+
   // ...while the public favourite count lives in the sidebar stats (not in api.php).
   const favoriteCount = parseSidebarStat(html, 'favorites')
 
-  return { canonicalPath, token, favorited, favoriteCount, bookmarked }
+  return { canonicalPath, token, favorited, favoriteCount, bookmarked, liked, disliked }
 }
 
 /** True if the element whose class list contains `marker` also contains `stateClass`. */
@@ -185,7 +190,15 @@ export async function getResourceUserState(id) {
   let loggedIn = false
   try {
     loggedIn = await isLoggedIn()
-    if (!loggedIn) return { loggedIn: false, favorited: false, bookmarked: false, favoriteCount: null }
+    if (!loggedIn)
+      return {
+        loggedIn: false,
+        favorited: false,
+        bookmarked: false,
+        liked: false,
+        disliked: false,
+        favoriteCount: null,
+      }
     const { canonicalUrl, html } = await hubGet(`${HUB_ORIGIN}/resources/${id}/`)
     const parsed = parseResourcePage(html, canonicalUrl)
     if (parsed.token) sessionToken = parsed.token
@@ -193,17 +206,29 @@ export async function getResourceUserState(id) {
       canonicalPath: parsed.canonicalPath || `/resources/${id}/`,
       favorited: parsed.favorited,
       bookmarked: parsed.bookmarked,
+      liked: parsed.liked,
+      disliked: parsed.disliked,
     })
     return {
       loggedIn,
       favorited: parsed.favorited,
       favoriteCount: parsed.favoriteCount,
       bookmarked: parsed.bookmarked,
+      liked: parsed.liked,
+      disliked: parsed.disliked,
     }
   } catch {
     // Page fetch failed: keep the cookie-derived login state with neutral
     // (unknown) favorite/bookmark status rather than flapping the UI.
-    return { loggedIn, favorited: false, bookmarked: false, favoriteCount: null, statusUnknown: true }
+    return {
+      loggedIn,
+      favorited: false,
+      bookmarked: false,
+      liked: false,
+      disliked: false,
+      favoriteCount: null,
+      statusUnknown: true,
+    }
   }
 }
 
@@ -282,6 +307,33 @@ export async function toggleBookmark(id, currentlyBookmarked) {
   const bookmarked = json.switchKey === 'bookmarked'
   updateSnapshot(id, { bookmarked })
   return { bookmarked }
+}
+
+/**
+ * Toggle the visitor's resource "like" (thumbs up). The endpoint's JSON only
+ * reports `success` — it never echoes the new state — so we derive it: liking
+ * sends `liked=1` (which also clears any prior dislike), un-liking sends both
+ * flags 0. We never set the dislike here; the UI only offers a like action and
+ * merely surfaces an existing dislike made on the Hub.
+ */
+export async function toggleLike(id, currentlyLiked) {
+  if (!(await isLoggedIn())) throw new HubAuthError()
+  const like = currentlyLiked ? 0 : 1
+  await postWithRecovery(id, () => ({
+    url: `${HUB_ORIGIN}/resources/${id}/like/`,
+    body: {
+      liked: like,
+      unliked: 0,
+      resource_id: id,
+      _xfRequestUri: canonicalPathFor(id),
+      _xfWithData: 1,
+      _xfToken: sessionToken,
+      _xfResponseType: 'json',
+    },
+  }))
+  const liked = !!like
+  updateSnapshot(id, { liked, disliked: false })
+  return { liked, disliked: false }
 }
 
 function canonicalPathFor(id) {

@@ -10,6 +10,7 @@ import {
   Bookmark,
   Star,
   ThumbsUp,
+  ThumbsDown,
   ExternalLink,
   Bug,
   Copy,
@@ -558,9 +559,12 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
     favorited,
     favoriteCount,
     bookmarked,
+    liked,
+    disliked,
     loading: interactionsLoading,
     toggleFavorite,
     toggleBookmark,
+    toggleLike,
   } = useHubInteractions(resourceId)
 
   const tabUrls = useMemo(
@@ -1044,12 +1048,39 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
                 <Star size={13} />
                 <span className="text-text-primary font-medium">{formatStarRating(pkg.rating_avg)}</span>
               </span>
-              <span className="flex items-center gap-1.5 text-text-tertiary" title="Likes">
-                <ThumbsUp size={13} />
-                <span className="text-text-primary font-medium">
-                  {formatNumber(parseInt(pkg.reaction_score || '0', 10))}
+              {hubLoggedIn ? (
+                <button
+                  type="button"
+                  onClick={toggleLike}
+                  disabled={interactionsLoading}
+                  title={disliked ? 'Disliked — click to like' : liked ? 'Remove like' : 'Like'}
+                  className={`flex items-center gap-1.5 transition-colors disabled:cursor-default cursor-pointer ${
+                    disliked
+                      ? 'text-error hover:text-accent-blue'
+                      : liked
+                        ? 'text-accent-blue'
+                        : 'text-text-tertiary hover:text-accent-blue'
+                  }`}
+                >
+                  {disliked ? (
+                    <ThumbsDown size={13} className="fill-current" />
+                  ) : (
+                    <ThumbsUp size={13} className={liked ? 'fill-current' : ''} />
+                  )}
+                  <span
+                    className={`font-medium ${disliked ? 'text-error' : liked ? 'text-accent-blue' : 'text-text-primary'}`}
+                  >
+                    {formatNumber(parseInt(pkg.reaction_score || '0', 10))}
+                  </span>
+                </button>
+              ) : (
+                <span className="flex items-center gap-1.5 text-text-tertiary" title="Likes">
+                  <ThumbsUp size={13} />
+                  <span className="text-text-primary font-medium">
+                    {formatNumber(parseInt(pkg.reaction_score || '0', 10))}
+                  </span>
                 </span>
-              </span>
+              )}
               {hubLoggedIn && (
                 <>
                   <button

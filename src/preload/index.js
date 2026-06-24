@@ -70,6 +70,7 @@ const api = {
     resourceUserState: (id) => ipcRenderer.invoke('hub:resourceUserState', id),
     toggleFavorite: (id) => ipcRenderer.invoke('hub:toggleFavorite', id),
     toggleBookmark: (id, currentlyBookmarked) => ipcRenderer.invoke('hub:toggleBookmark', id, currentlyBookmarked),
+    toggleLike: (id, currentlyLiked) => ipcRenderer.invoke('hub:toggleLike', id, currentlyLiked),
   },
   downloads: {
     list: () => ipcRenderer.invoke('downloads:list'),

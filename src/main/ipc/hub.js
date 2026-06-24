@@ -19,7 +19,14 @@ import { setHubResourceId, setHubUserId, setHubDisplayName, upsertHubUser, setPa
 import { cacheAvatarsFromResources } from '../avatar-cache.js'
 import { notify } from '../notify.js'
 import { scanHubDetails } from '../hub/scanner.js'
-import { isLoggedIn, getResourceUserState, toggleFavorite, toggleBookmark, HubAuthError } from '../hub/interactions.js'
+import {
+  isLoggedIn,
+  getResourceUserState,
+  toggleFavorite,
+  toggleBookmark,
+  toggleLike,
+  HubAuthError,
+} from '../hub/interactions.js'
 
 export function registerHubHandlers() {
   ipcMain.handle('hub:filters', async () => {
@@ -47,7 +54,15 @@ export function registerHubHandlers() {
       return await getResourceUserState(id)
     } catch (e) {
       console.warn('hub:resourceUserState failed:', e.message)
-      return { loggedIn: false, favorited: false, bookmarked: false, favoriteCount: null, statusUnknown: true }
+      return {
+        loggedIn: false,
+        favorited: false,
+        bookmarked: false,
+        liked: false,
+        disliked: false,
+        favoriteCount: null,
+        statusUnknown: true,
+      }
     }
   })
 
@@ -68,6 +83,19 @@ export function registerHubHandlers() {
     try {
       const { bookmarked } = await toggleBookmark(id, currentlyBookmarked)
       return { ok: true, bookmarked }
+    } catch (e) {
+      if (e instanceof HubAuthError) {
+        notify('hub:auth-changed', { loggedIn: false })
+        return { ok: false, reason: 'auth' }
+      }
+      return { ok: false, reason: 'error', message: e.message }
+    }
+  })
+
+  ipcMain.handle('hub:toggleLike', async (_, id, currentlyLiked) => {
+    try {
+      const { liked, disliked } = await toggleLike(id, currentlyLiked)
+      return { ok: true, liked, disliked }
     } catch (e) {
       if (e instanceof HubAuthError) {
         notify('hub:auth-changed', { loggedIn: false })
