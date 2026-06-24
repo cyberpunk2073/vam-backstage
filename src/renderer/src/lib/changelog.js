@@ -6,6 +6,32 @@
  */
 export const CHANGELOG = [
   {
+    version: '0.2.3',
+    date: '2026-06-24',
+    notes: [
+      {
+        kind: 'new',
+        title: 'Install dependencies straight from the Hub',
+        body: "Missing dependencies in a Hub resource's dependency list now have their own Install button, so you can grab just the pieces you need without leaving the list.",
+      },
+      {
+        kind: 'new',
+        title: 'Settings carried over on update',
+        body: 'Installing a newer version of a package now inherits your custom category, labels, and hidden/favorite flags from the previous version, so updates no longer reset how you organized it.',
+      },
+      {
+        kind: 'improved',
+        title: 'Know which looks are already extracted',
+        body: "Packages and legacy looks now show a checkmark once you've extracted an appearance preset from them, making it easy to see what's left to convert.",
+      },
+      {
+        kind: 'improved',
+        title: 'Many small improvements',
+        body: 'Added a "Non-commercial use allowed" license filter, dependency search now keeps parent items so matches stay in context, smoother Hub scrolling.',
+      },
+    ],
+  },
+  {
     version: '0.2.2',
     date: '2026-05-04',
     notes: [
