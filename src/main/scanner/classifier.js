@@ -5,6 +5,14 @@ import { VISIBLE_CATEGORIES, categoryOf } from '@shared/content-types.js'
  * Classification rules ordered by specificity.
  * Each rule maps a path pattern + extension set to an exact internal type.
  * `prefer` defines extension priority for same-type same-stem dedup.
+ *
+ * COUPLING (loose content): for loose files under the VaM dir, only the subtrees
+ * listed in `LOCAL_CONTENT_DIRS` (see `src/shared/local-package.js`) are walked
+ * and watched. Today those are `Saves/scene`, `Saves/Person`, and all of `Custom`.
+ * If you add a rule anchored under a NEW `Saves/` prefix (e.g. `^Saves/Foo/`),
+ * add that prefix to `LOCAL_CONTENT_DIRS` too — otherwise loose files matching
+ * the new rule will never be indexed under `__local__`. (`Custom/*` is fully
+ * covered already, so new `Custom/...` rules need no change there.)
  */
 const RULES = [
   // --- Scenes ---

@@ -2,7 +2,7 @@ import { readdir, writeFile, unlink, mkdir, rename } from 'fs/promises'
 import { join, dirname, extname } from 'path'
 import { existsSync } from 'fs'
 import { ADDON_PACKAGES_FILE_PREFS } from '@shared/paths.js'
-import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_ROOTS, isLocalPackage } from '@shared/local-package.js'
+import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_DIRS, isLocalPackage } from '@shared/local-package.js'
 import { recordOwnedPath, withBulkWindow } from './watcher.js'
 import { pLimit } from './p-limit.js'
 
@@ -65,8 +65,8 @@ export async function readAllPrefs(vamDir) {
       ),
   )
 
-  for (const localRoot of LOCAL_CONTENT_ROOTS) {
-    await walkSidecarDir(join(vamDir, localRoot), localRoot, LOCAL_PACKAGE_FILENAME, prefs, {
+  for (const localDir of LOCAL_CONTENT_DIRS) {
+    await walkSidecarDir(join(vamDir, localDir), localDir, LOCAL_PACKAGE_FILENAME, prefs, {
       requireSiblingTarget: true,
     })
   }

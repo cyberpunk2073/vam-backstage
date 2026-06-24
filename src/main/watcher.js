@@ -2,7 +2,7 @@ import parcelWatcher from '@parcel/watcher'
 import { join, extname, basename, relative, sep, dirname } from 'path'
 import { stat, mkdir, rename, unlink } from 'fs/promises'
 import { ADDON_PACKAGES_FILE_PREFS } from '@shared/paths.js'
-import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_ROOTS } from '@shared/local-package.js'
+import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_DIRS } from '@shared/local-package.js'
 import { isVarFilename, canonicalVarFilename } from './scanner/var-reader.js'
 import { scanAndUpsert } from './scanner/ingest.js'
 import { computeAutoHidePathsForNewPackage } from './scanner/index.js'
@@ -162,25 +162,34 @@ export async function startWatcher(vamDir) {
 }
 
 /**
- * Watch loose-content roots (`Saves/`, `Custom/`) for both content changes and
- * sibling `.hide`/`.fav` sidecars. Content files trigger a debounced
- * `runLocalScan()` to reconcile the `__local__`-owned `contents` rows; sidecar
- * files update the in-memory prefs map directly so the UI flips without a
- * full rescan.
+ * Watch the monitored loose-content dirs (`LOCAL_CONTENT_DIRS` — `Saves/scene`,
+ * `Saves/Person`, `Custom`) for both content changes and sibling `.hide`/`.fav`
+ * sidecars. Content files trigger a debounced `runLocalScan()` to reconcile the
+ * `__local__`-owned `contents` rows; sidecar files update the in-memory prefs
+ * map directly so the UI flips without a full rescan.
  *
- * Implementation note: parcel's `subscribe` watches one root, so we wrap each
- * `LOCAL_CONTENT_ROOT` (Saves/, Custom/) in its own subscription tracked in
- * `localSubs` (declared at the top of the module with the other state).
+ * We deliberately subscribe to the specific content subtrees rather than the
+ * bare `Saves/`/`Custom/` roots: this keeps the loose-content watcher entirely
+ * out of offload (aux) territory — e.g. a `Saves/PluginData/.../OffloadedVARs`
+ * offload dir is never under any monitored dir, so external churn there can't
+ * wake this watcher (the package watcher owns it). It also avoids watching
+ * plugin runtime scratch under `Saves/PluginData` that classifies to nothing.
+ *
+ * Each dir is `mkdir`'d first (parcel can't subscribe to a missing path) and
+ * gets its own subscription tracked in `localSubs`. parcel's `subscribe`
+ * watches one path; it does not follow symlinks, so a BrowserAssist symlink
+ * farm inside a monitored dir won't be recursed into.
  */
 async function initLocalWatcher(vamDir) {
   await Promise.all(localSubs.map((s) => s.unsubscribe().catch(() => {})))
   localSubs = []
   const t0 = Date.now()
-  const roots = LOCAL_CONTENT_ROOTS.map((r) => join(vamDir, r))
-  for (const root of roots) {
+  const dirs = LOCAL_CONTENT_DIRS.map((d) => join(vamDir, d))
+  for (const dir of dirs) {
+    await mkdir(dir, { recursive: true }).catch(() => {})
     try {
       const sub = await parcelWatcher.subscribe(
-        root,
+        dir,
         (err, events) => {
           if (err) {
             console.warn('Local watcher error:', err.message)
@@ -192,10 +201,10 @@ async function initLocalWatcher(vamDir) {
       )
       localSubs.push(sub)
     } catch (err) {
-      console.warn(`[watcher] Failed to subscribe to local root ${root}: ${err.message}`)
+      console.warn(`[watcher] Failed to subscribe to local content dir ${dir}: ${err.message}`)
     }
   }
-  console.info(`FS watcher 'localWatcher' ready in ${Date.now() - t0} ms (${localSubs.length}/${roots.length} root(s))`)
+  console.info(`FS watcher 'localWatcher' ready in ${Date.now() - t0} ms (${localSubs.length}/${dirs.length} dir(s))`)
 }
 
 function onLocalRawEvent(ev) {

@@ -18,7 +18,6 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import yazl from 'yazl'
 import { ADDON_PACKAGES, ADDON_PACKAGES_FILE_PREFS } from '../../src/shared/paths.js'
-import { LOCAL_CONTENT_ROOTS } from '../../src/shared/local-package.js'
 
 /**
  * Scaffold a temp VaM root with the standard subdirs and a unique DB path.
@@ -39,8 +38,8 @@ export async function mkTempVamDir() {
   const vamDir = join(root, 'VaM')
   const addonPackages = join(vamDir, ADDON_PACKAGES)
   const prefsDir = join(vamDir, ADDON_PACKAGES_FILE_PREFS)
-  const savesDir = join(vamDir, LOCAL_CONTENT_ROOTS[0])
-  const customDir = join(vamDir, LOCAL_CONTENT_ROOTS[1])
+  const savesDir = join(vamDir, 'Saves')
+  const customDir = join(vamDir, 'Custom')
   await mkdir(addonPackages, { recursive: true })
   await mkdir(prefsDir, { recursive: true })
   await mkdir(savesDir, { recursive: true })

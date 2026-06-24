@@ -16,7 +16,7 @@
 import { join } from 'path'
 import { realpath } from 'fs/promises'
 import { ADDON_PACKAGES, ADDON_PACKAGES_FILE_PREFS } from '@shared/paths.js'
-import { LOCAL_CONTENT_ROOTS } from '@shared/local-package.js'
+import { LOCAL_CONTENT_DIRS } from '@shared/local-package.js'
 import { getSetting, listLibraryDirs as dbListLibraryDirs } from './db.js'
 
 let auxDirsById = new Map() // id -> { id, path, created_at }
@@ -95,13 +95,19 @@ export async function validateNewAuxDirPath(path) {
       return 'Offload directory cannot overlap the main AddonPackages directory'
     }
   }
-  // Other VaM-managed roots: prefs sidecar tree (where prefsWatcher fires) and
-  // the loose-content roots (where localWatcher / runLocalScan reign). Pointing
-  // an aux library dir at any of these (or any nested subtree) would have the
-  // package watcher and the loose-content watcher fight over the same files.
+  // Other VaM-managed roots the offload dir must stay clear of:
+  //   • the prefs sidecar tree (where prefsWatcher fires), and
+  //   • the monitored loose-content dirs (`LOCAL_CONTENT_DIRS` — where
+  //     localWatcher / runLocalScan reign).
+  // Overlap in EITHER direction is rejected: an offload dir nested inside one
+  // would be double-walked/watched as loose content, and one that *contains* a
+  // monitored dir would drag that actively-watched subtree under the package
+  // watcher. Anything outside this set is fair game — which is what lets a
+  // plugin's offload location (e.g. `Saves/PluginData/.../OffloadedVARs`,
+  // outside `Saves/scene` and `Saves/Person`) be registered.
   const vamDir = getSetting('vam_dir')
   if (vamDir) {
-    const forbiddenRoots = [join(vamDir, ADDON_PACKAGES_FILE_PREFS), ...LOCAL_CONTENT_ROOTS.map((r) => join(vamDir, r))]
+    const forbiddenRoots = [join(vamDir, ADDON_PACKAGES_FILE_PREFS), ...LOCAL_CONTENT_DIRS.map((d) => join(vamDir, d))]
     for (const root of forbiddenRoots) {
       if (isPathInside(path, root) || isPathInside(root, path)) {
         return `Offload directory cannot overlap a VaM-managed directory: ${root}`

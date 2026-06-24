@@ -3,7 +3,7 @@ import { join, relative, sep } from 'path'
 import { classifyContents } from './classifier.js'
 import { personAtomIdsJsonFromBuffer, PERSON_ATOM_ID_CONTENT_TYPES } from './ingest.js'
 import { pLimit } from '../p-limit.js'
-import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_ROOTS } from '@shared/local-package.js'
+import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_DIRS } from '@shared/local-package.js'
 import { ensureLocalPackage, getLocalContentMeta, upsertContents, deleteContentsForPackagePaths } from '../db.js'
 
 // Default libuv pool is 4 workers; 8 is 2× headroom for transient bursts.
@@ -11,11 +11,12 @@ import { ensureLocalPackage, getLocalContentMeta, upsertContents, deleteContents
 const LOCAL_STAT_CONCURRENCY = 8
 
 /**
- * Walk loose-content roots — `Saves/` and `Custom/` under the VaM dir — and
- * sync the resulting items into the `contents` table under the synthetic
- * `__local__` package. Files are classified with the same rules used for
- * packaged content, so loose scenes/looks/poses/etc. show up in the gallery
- * with the right type and thumbnail.
+ * Walk the monitored loose-content dirs (`LOCAL_CONTENT_DIRS` — `Saves/scene`,
+ * `Saves/Person`, `Custom`) under the VaM dir and sync the resulting items into
+ * the `contents` table under the synthetic `__local__` package. Files are
+ * classified with the same rules used for packaged content, so loose
+ * scenes/looks/poses/etc. show up in the gallery with the right type and
+ * thumbnail.
  *
  * Mirrors the var scan's mtime+size gate, just at item granularity instead of
  * package granularity. Each loose file is `stat`ed once; if its `(mtime, size)`
@@ -30,8 +31,9 @@ const LOCAL_STAT_CONCURRENCY = 8
  * file's own mtime didn't move — `classifyContents` is sibling-aware, so
  * `thumbnailPath` can shift without the file itself changing.
  *
- * Both roots being inaccessible aborts reconciliation (transient FS failure
- * protection — don't blow away the whole local index on a momentary EACCES).
+ * All monitored dirs being inaccessible aborts reconciliation (transient FS
+ * failure protection — don't blow away the whole local index on a momentary
+ * EACCES, or because none of the dirs exist yet on a fresh install).
  */
 export async function runLocalScan(vamDir) {
   if (!vamDir) return { added: 0, removed: 0, total: 0 }
@@ -39,8 +41,8 @@ export async function runLocalScan(vamDir) {
 
   const fileList = []
   let anyRootWalked = false
-  for (const root of LOCAL_CONTENT_ROOTS) {
-    const walked = await walk(join(vamDir, root), vamDir, fileList)
+  for (const dir of LOCAL_CONTENT_DIRS) {
+    const walked = await walk(join(vamDir, dir), vamDir, fileList)
     if (walked) anyRootWalked = true
   }
   if (!anyRootWalked) return { added: 0, removed: 0, total: 0 }

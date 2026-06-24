@@ -242,4 +242,50 @@ describe('runScan — local content', () => {
     expect(after?.file_mtime).not.toBe(before?.file_mtime)
     expect(Math.abs((after?.file_mtime ?? 0) - t.getTime() / 1000)).toBeLessThan(2)
   })
+
+  it('loose .json outside monitored dirs (Saves/PluginData) is NOT indexed', async () => {
+    // Only `Saves/scene` / `Saves/Person` (and all of Custom) are monitored, so a
+    // scene-shaped file dropped elsewhere under Saves is never walked. This keeps
+    // plugin scratch — and offload dirs — out of the __local__ index.
+    const pluginDir = join(tmp.savesDir, 'PluginData', 'scene')
+    await mkdir(pluginDir, { recursive: true })
+    await writeFile(join(pluginDir, 'NotIndexed.json'), JSON.stringify({ atoms: [] }))
+    await runScan(tmp.vamDir)
+    const hit = getAllContents().find((r) => r.internal_path.replace(/\\/g, '/').includes('NotIndexed.json'))
+    expect(hit).toBeUndefined()
+  })
+})
+
+describe('runScan — offload dir under Saves/PluginData (BrowserAssist) coexists with loose content', () => {
+  it('indexes a .var in the offload dir as offloaded while loose Saves/scene content stays __local__', async () => {
+    const offload = join(tmp.savesDir, 'PluginData', 'JayJayWon', 'BrowserAssist', 'OffloadedVARs')
+    await mkdir(offload, { recursive: true })
+    const auxId = insertLibraryDir(offload)
+
+    const buf = await buildVar({
+      meta: { packageName: 'Off.Browser', creator: 'O' },
+      files: { 'Saves/scene/o.json': '{"atoms":[]}' },
+    })
+    await placeVar(offload, 'Off.Browser.1.var', buf)
+
+    const sceneDir = join(tmp.savesDir, 'scene')
+    await mkdir(sceneDir, { recursive: true })
+    await writeFile(join(sceneDir, 'Loose.json'), JSON.stringify({ atoms: [] }))
+
+    await runScan(tmp.vamDir)
+
+    const pkg = getAllPackages().find((r) => r.filename === 'Off.Browser.1.var')
+    expect(pkg?.storage_state).toBe('offloaded')
+    expect(pkg?.library_dir_id).toBe(auxId)
+
+    // The loose scene outside the offload dir is still indexed under __local__…
+    const loose = getAllContents().find((r) => r.internal_path.replace(/\\/g, '/').endsWith('Saves/scene/Loose.json'))
+    expect(loose?.package_filename).toBe(LOCAL_PACKAGE_FILENAME)
+    // …and nothing inside the offload dir leaked into __local__.
+    const leaked = getAllContents().some(
+      (r) =>
+        r.package_filename === LOCAL_PACKAGE_FILENAME && r.internal_path.replace(/\\/g, '/').includes('OffloadedVARs'),
+    )
+    expect(leaked).toBe(false)
+  })
 })
