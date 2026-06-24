@@ -9,7 +9,7 @@ import {
   Power,
   Star,
   Download,
-  Heart,
+  ThumbsUp,
   Plus,
   Library,
   Clock,
@@ -391,8 +391,8 @@ export function HubCard({
                 {formatNumber(parseInt(resource.download_count || '0', 10))}
               </span>
               <span className="inline-flex items-center gap-1 shrink-0 whitespace-nowrap tabular-nums @max-[120px]:hidden">
-                <Heart size={11} className="shrink-0 opacity-80" />
-                {formatNumber(parseInt(resource.rating_count || '0', 10))}
+                <ThumbsUp size={11} className="shrink-0 opacity-80" />
+                {formatNumber(parseInt(resource.reaction_score || '0', 10))}
               </span>
               <span className="inline-flex items-center gap-1 shrink-0 whitespace-nowrap tabular-nums @max-[150px]:hidden">
                 <Star size={11} className="shrink-0 opacity-80" />

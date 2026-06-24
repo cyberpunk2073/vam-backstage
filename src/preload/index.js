@@ -66,6 +66,10 @@ const api = {
     checkAvailability: (refs) => ipcRenderer.invoke('hub:check-availability', refs),
     localSnapshot: (resourceIds) => ipcRenderer.invoke('hub:localSnapshot', resourceIds),
     scanPackages: () => ipcRenderer.invoke('hub:scan-packages'),
+    isLoggedIn: () => ipcRenderer.invoke('hub:isLoggedIn'),
+    resourceUserState: (id) => ipcRenderer.invoke('hub:resourceUserState', id),
+    toggleFavorite: (id) => ipcRenderer.invoke('hub:toggleFavorite', id),
+    toggleBookmark: (id, currentlyBookmarked) => ipcRenderer.invoke('hub:toggleBookmark', id, currentlyBookmarked),
   },
   downloads: {
     list: () => ipcRenderer.invoke('downloads:list'),
@@ -187,6 +191,11 @@ const api = {
     const handler = (_, data) => cb(data)
     ipcRenderer.on('hub-scan:progress', handler)
     return () => ipcRenderer.removeListener('hub-scan:progress', handler)
+  },
+  onHubAuthChanged: (cb) => {
+    const handler = (_, data) => cb(data)
+    ipcRenderer.on('hub:auth-changed', handler)
+    return () => ipcRenderer.removeListener('hub:auth-changed', handler)
   },
   onApplyAutoHideProgress: (cb) => {
     const handler = (_, data) => cb(data)

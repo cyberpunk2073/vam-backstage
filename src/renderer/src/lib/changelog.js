@@ -6,6 +6,17 @@
  */
 export const CHANGELOG = [
   {
+    version: '0.2.4',
+    date: '2026-06-24',
+    notes: [
+      {
+        kind: 'new',
+        title: 'Favorites and bookmarks',
+        body: 'When signed in to the Hub browser, favorite and bookmark resources right from their details panel.',
+      },
+    ],
+  },
+  {
     version: '0.2.3',
     date: '2026-06-24',
     notes: [

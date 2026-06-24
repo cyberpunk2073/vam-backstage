@@ -16,6 +16,7 @@ import { refreshLibraryDirs } from './library-dirs.js'
 import { setPendingStartupUnreadable } from './ipc/scanner.js'
 import { fetchPackagesJson, loadPackagesJsonFromCache } from './hub/packages-json.js'
 import { scanHubDetails } from './hub/scanner.js'
+import { initHubAuthWatch } from './hub/interactions.js'
 import { initAutoUpdater } from './updater.js'
 import {
   attachMainWindowStatePersistence,
@@ -209,6 +210,7 @@ function initBackend() {
   initNotify(() => mainWindow)
   initLogForward(() => mainWindow)
   setupHubConsent()
+  initHubAuthWatch()
   initDownloadManager()
 
   refreshLibraryDirs()

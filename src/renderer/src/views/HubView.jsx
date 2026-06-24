@@ -7,7 +7,9 @@ import {
   ChevronRight,
   Download,
   Heart,
+  Bookmark,
   Star,
+  ThumbsUp,
   ExternalLink,
   Bug,
   Copy,
@@ -40,6 +42,7 @@ import { useHubStore } from '@/stores/useHubStore'
 import { useDownloadStore } from '@/stores/useDownloadStore'
 import { useInstalledStore } from '@/stores/useInstalledStore'
 import { useHubInstallState } from '@/hooks/useHubInstallState'
+import { useHubInteractions } from '@/hooks/useHubInteractions'
 import { HubCard, AuthorAvatar, DepRow } from '@/components/PackageCard'
 import FilterPanel from '@/components/FilterPanel'
 import ResizeHandle from '@/components/ResizeHandle'
@@ -509,6 +512,16 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
   const resourceId = detail?.resource_id || resource.resource_id
   const threadId = detail?.discussion_thread_id
 
+  const {
+    loggedIn: hubLoggedIn,
+    favorited,
+    favoriteCount,
+    bookmarked,
+    loading: interactionsLoading,
+    toggleFavorite,
+    toggleBookmark,
+  } = useHubInteractions(resourceId)
+
   const tabUrls = useMemo(
     () => ({
       overview: `https://hub.virtamate.com/resources/${resourceId}/overview-panel`,
@@ -943,15 +956,44 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
                 </span>
               </span>
               <span className="flex items-center gap-1.5 text-text-tertiary">
-                <Heart size={13} />
-                <span className="text-text-primary font-medium">
-                  {formatNumber(parseInt(pkg.rating_count || '0', 10))}
-                </span>
-              </span>
-              <span className="flex items-center gap-1.5 text-text-tertiary">
                 <Star size={13} />
                 <span className="text-text-primary font-medium">{formatStarRating(pkg.rating_avg)}</span>
               </span>
+              <span className="flex items-center gap-1.5 text-text-tertiary" title="Likes">
+                <ThumbsUp size={13} />
+                <span className="text-text-primary font-medium">
+                  {formatNumber(parseInt(pkg.reaction_score || '0', 10))}
+                </span>
+              </span>
+              {hubLoggedIn && (
+                <>
+                  <button
+                    type="button"
+                    onClick={toggleFavorite}
+                    disabled={interactionsLoading}
+                    title={favorited ? 'Remove favorite' : 'Add to favorites'}
+                    className="flex items-center gap-1.5 text-text-tertiary transition-colors hover:text-accent-pink disabled:hover:text-text-tertiary disabled:cursor-default cursor-pointer"
+                  >
+                    <Heart size={13} className={favorited ? 'fill-current text-accent-pink' : ''} />
+                    {favoriteCount == null ? (
+                      <span className="h-3 w-4 skeleton rounded" />
+                    ) : (
+                      <span className={`font-medium ${favorited ? 'text-accent-pink' : 'text-text-primary'}`}>
+                        {formatNumber(favoriteCount)}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={toggleBookmark}
+                    disabled={interactionsLoading}
+                    title={bookmarked ? 'Remove bookmark' : 'Bookmark'}
+                    className="flex items-center text-text-tertiary transition-colors hover:text-accent-blue disabled:opacity-50 cursor-pointer"
+                  >
+                    <Bookmark size={14} className={bookmarked ? 'fill-current text-accent-blue' : ''} />
+                  </button>
+                </>
+              )}
             </div>
 
             {/* Dates */}
@@ -1172,7 +1214,7 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
               ref={webviewRef}
               src={targetUrl}
               partition="persist:hub"
-              allowpopups
+              allowpopups="true"
               className="w-full h-full"
               style={{ display: 'flex', pointerEvents: hubPanelResizeDrag ? 'none' : 'auto' }}
             />
