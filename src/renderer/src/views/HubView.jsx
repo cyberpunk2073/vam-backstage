@@ -498,6 +498,23 @@ function browserTabMatchingUrl(navUrl, tabUrls, tabs) {
   return null
 }
 
+/**
+ * Extract the numeric resource id from a Hub resource URL, or null for any
+ * non-resource page (threads, member profiles, search, etc.). Handles both the
+ * numeric `*-panel` forms we build and the slug form the Hub redirects to
+ * (e.g. /resources/my-package.66186/overview-panel -> "66186").
+ */
+function parseHubResourceId(urlString) {
+  try {
+    const u = new URL(urlString)
+    if (u.hostname !== 'hub.virtamate.com') return null
+    const m = u.pathname.match(/^\/resources\/(?:[^/]*\.)?(\d+)(?:\/|$)/)
+    return m ? m[1] : null
+  } catch {
+    return null
+  }
+}
+
 // --- Hub Detail ---
 
 function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) {
@@ -511,6 +528,12 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
 
   const resourceId = detail?.resource_id || resource.resource_id
   const threadId = detail?.discussion_thread_id
+
+  // The webview key is pinned to the resource the panel was opened with. Following
+  // in-browser navigation swaps `resourceId` (above) to drive the left panel, but
+  // the guest must never remount/reload — the user is already on the page they
+  // navigated to. Captured once per mount; fresh gallery opens remount HubDetail.
+  const [browserResourceId] = useState(() => String(resource.resource_id))
 
   const {
     loggedIn: hubLoggedIn,
@@ -548,13 +571,32 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
     return t
   }, [pkg.review_count, pkg.rating_count, pkg.update_count])
 
-  // The URL the webview should load — computed synchronously so src is never empty
-  const targetUrl = tabUrls[browserTab] || tabUrls.overview
-  // Display URL for the address bar — tracks in-page navigation independently
-  const [displayUrl, setDisplayUrl] = useState(targetUrl)
+  // URL committed to the webview. Only changes on explicit tab clicks (and at
+  // mount), never as a side effect of `resourceId` changing — otherwise following
+  // in-browser navigation would yank the guest back to a *-panel fragment.
+  const [navUrl, setNavUrl] = useState(() => tabUrls[browserTab] || tabUrls.overview)
+  // Display URL for the address bar — tracks in-page navigation independently.
+  const [displayUrl, setDisplayUrl] = useState(navUrl)
+
+  const selectTab = useCallback(
+    (key) => {
+      setBrowserTab(key)
+      const url = tabUrls[key] || tabUrls.overview
+      setNavUrl(url)
+      setDisplayUrl(url)
+    },
+    [tabUrls],
+  )
+
+  // When navigation swaps the displayed resource, reset the panel's tab highlight
+  // to Overview (highlight only — `setBrowserTab` no longer drives the webview).
+  const prevResourceIdRef = useRef(resourceId)
   useEffect(() => {
-    setDisplayUrl(targetUrl)
-  }, [targetUrl])
+    if (prevResourceIdRef.current !== resourceId) {
+      prevResourceIdRef.current = resourceId
+      setBrowserTab('overview')
+    }
+  }, [resourceId])
 
   useEffect(() => {
     const wv = webviewRef.current
@@ -565,6 +607,23 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
       setCanGoForward(wv.canGoForward())
       const tabKey = browserTabMatchingUrl(e.url, tabUrls, tabs)
       if (tabKey) setBrowserTab(tabKey)
+      // Follow in-browser navigation: when the guest lands on a different
+      // resource, load it into the details panel in the background and swap once
+      // ready, so the previous resource stays visible (no skeleton flash). Skip
+      // when the target is already shown or already being fetched — this also
+      // covers tab/in-page navigation within the current resource.
+      const navId = parseHubResourceId(e.url)
+      if (navId) {
+        const store = useHubStore.getState()
+        const shown = String(store.detailData?.resource_id ?? store.detailResource?.resource_id ?? '')
+        if (navId !== shown) {
+          // Reuse the gallery row as the stub when the target is already in the
+          // results; otherwise a bare id, filled by hub:detail. followDetail
+          // self-dedupes concurrent calls for the same in-flight resource.
+          const known = store.resources?.find((r) => String(r.resource_id) === navId)
+          store.followDetail(known || { resource_id: navId })
+        }
+      }
     }
     const ignoreAbort = (e) => {
       if (e.errorCode === -3 || e.errorCode === -2) e.preventDefault()
@@ -883,23 +942,31 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
               ) : null}
             </div>
 
-            {/* Author card */}
-            <button
-              type="button"
-              onClick={() => {
-                if (!username) return
-                onFilterAuthor?.(username)
-                onBack()
-              }}
-              disabled={!username}
-              className="w-full flex items-center gap-2.5 mt-2.5 p-2 rounded-lg bg-elevated/50 text-left transition-colors hover:bg-elevated disabled:opacity-60 disabled:pointer-events-none"
-            >
-              <AuthorAvatar author={username} userId={pkg.user_id} size={32} />
-              <div>
-                <div className="text-xs text-text-primary font-medium">{username}</div>
-                <div className="text-[10px] text-text-tertiary">Package author</div>
+            {/* Author card — skeleton while a nav-driven detail with no stub author loads */}
+            {username ? (
+              <button
+                type="button"
+                onClick={() => {
+                  onFilterAuthor?.(username)
+                  onBack()
+                }}
+                className="w-full flex items-center gap-2.5 mt-2.5 p-2 rounded-lg bg-elevated/50 text-left transition-colors hover:bg-elevated"
+              >
+                <AuthorAvatar author={username} userId={pkg.user_id} size={32} />
+                <div>
+                  <div className="text-xs text-text-primary font-medium">{username}</div>
+                  <div className="text-[10px] text-text-tertiary">Package author</div>
+                </div>
+              </button>
+            ) : (
+              <div className="w-full flex items-center gap-2.5 mt-2.5 p-2 rounded-lg bg-elevated/50">
+                <div className="h-8 w-8 skeleton rounded-md shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="h-3 w-24 skeleton rounded" />
+                  <div className="h-2.5 w-16 skeleton rounded mt-1" />
+                </div>
               </div>
-            </button>
+            )}
 
             {pkg.promotional_link && (
               <a
@@ -1199,7 +1266,7 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
               <button
                 type="button"
                 key={tab.key}
-                onClick={() => setBrowserTab(tab.key)}
+                onClick={() => selectTab(tab.key)}
                 className={`px-4 py-2 text-xs border-b-2 transition-colors cursor-pointer ${browserTab === tab.key ? 'border-accent-blue text-text-primary' : 'border-transparent text-text-tertiary hover:text-text-secondary'}`}
               >
                 {tab.label}
@@ -1210,9 +1277,9 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
           {/* Webview */}
           <div className="flex-1 min-h-0">
             <webview
-              key={String(resourceId)}
+              key={browserResourceId}
               ref={webviewRef}
-              src={targetUrl}
+              src={navUrl}
               partition="persist:hub"
               allowpopups="true"
               className="w-full h-full"

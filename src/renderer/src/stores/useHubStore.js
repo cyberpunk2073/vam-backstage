@@ -40,6 +40,10 @@ export const useHubStore = create((set, get) => ({
   detailResource: null,
   detailData: null,
   detailLoading: false,
+  // Resource id whose detail followDetail is fetching in the background; dedupes
+  // concurrent follows and lets stale responses be discarded after a newer
+  // follow/open supersedes them.
+  followingDetailId: null,
   cardMode: 'medium',
   cardWidth: 220,
 
@@ -144,7 +148,7 @@ export const useHubStore = create((set, get) => ({
   },
 
   openDetail: async (resource) => {
-    set({ detailResource: resource, detailData: null, detailLoading: true })
+    set({ detailResource: resource, detailData: null, detailLoading: true, followingDetailId: null })
     try {
       const detail = await window.api.hub.detail(resource.resource_id)
       syncInstalledFromDetail(detail)
@@ -165,7 +169,40 @@ export const useHubStore = create((set, get) => ({
     }
   },
 
-  closeDetail: () => set({ detailResource: null, detailData: null }),
+  /**
+   * Load a different resource while keeping the currently displayed detail on
+   * screen, then swap atomically once the new detail is ready (no skeleton flash).
+   * Used when following in-browser navigation. Self-dedupes concurrent follows and
+   * discards stale responses superseded by a newer follow or by openDetail/closeDetail.
+   */
+  followDetail: async (resource) => {
+    const rid = String(resource.resource_id)
+    if (String(get().detailData?.resource_id) === rid || get().followingDetailId === rid) return
+    set({ followingDetailId: rid })
+    try {
+      const detail = await window.api.hub.detail(resource.resource_id)
+      if (get().followingDetailId !== rid) return
+      syncInstalledFromDetail(detail)
+      set((s) => ({
+        detailResource: resource,
+        detailData: detail,
+        detailLoading: false,
+        followingDetailId: null,
+        resources:
+          detail._installSizeBytes != null
+            ? s.resources.map((r) =>
+                String(r.resource_id) === rid ? { ...r, _installSizeBytes: detail._installSizeBytes } : r,
+              )
+            : s.resources,
+      }))
+    } catch (err) {
+      if (get().followingDetailId !== rid) return
+      toast(`Failed to load hub detail: ${err.message}`)
+      set({ followingDetailId: null })
+    }
+  },
+
+  closeDetail: () => set({ detailResource: null, detailData: null, followingDetailId: null }),
 
   refreshDetail: async () => {
     const { detailResource } = get()
