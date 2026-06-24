@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Package, GitFork, Layers, HardDrive, Download, RefreshCw, Loader2 } from 'lucide-react'
+import { Package, GitFork, Layers, HardDrive, Download, RefreshCw, Loader2, Compass } from 'lucide-react'
 import { useStatusStore } from '@/stores/useStatusStore'
 import { useDownloadStore } from '@/stores/useDownloadStore'
 import { CONTENT_TYPES, formatBytes, middleTruncate } from '@/lib/utils'
@@ -35,13 +35,17 @@ function VersionLabelButton({ busy, onClick, children, className = '' }) {
 }
 
 export default function StatusBar() {
-  const { stats, scan } = useStatusStore()
+  const { stats, scan, hubScan } = useStatusStore()
   const dlItems = useDownloadStore((s) => s.items)
   const liveProgress = useDownloadStore((s) => s.liveProgress)
   const scanStart = useRef(null)
   const [showScan, setShowScan] = useState(false)
   const showScanRef = useRef(showScan)
   showScanRef.current = showScan
+  const hubScanStart = useRef(null)
+  const [showHubScan, setShowHubScan] = useState(false)
+  const showHubScanRef = useRef(showHubScan)
+  showHubScanRef.current = showHubScan
   const [isDev, setIsDev] = useState(true)
   const [appVersion, setAppVersion] = useState('')
   const [updateState, setUpdateState] = useState(null)
@@ -106,10 +110,26 @@ export default function StatusBar() {
       setScan(data)
       if (!showScanRef.current && Date.now() - scanStart.current > 1000) setShowScan(true)
     })
+    // Background Hub metadata pass (startup chain / watcher / manual). Shown with
+    // the same 1s debounce as the file scan so fast warm starts don't flash it.
+    const cleanupHubScan = window.api.onHubScanProgress((data) => {
+      const { setHubScan } = useStatusStore.getState()
+      if (data.phase === 'hub-finalize' && data.current === data.total) {
+        setHubScan(null)
+        setShowHubScan(false)
+        hubScanStart.current = null
+        fetch()
+        return
+      }
+      if (!hubScanStart.current) hubScanStart.current = Date.now()
+      setHubScan(data)
+      if (!showHubScanRef.current && Date.now() - hubScanStart.current > 1000) setShowHubScan(true)
+    })
     return () => {
       cleanup1()
       cleanup2()
       cleanupScan()
+      cleanupHubScan()
     }
   }, [])
 
@@ -196,6 +216,19 @@ export default function StatusBar() {
           />
           <span className="text-[10px] w-[160px] overflow-hidden whitespace-nowrap">
             {middleTruncate(scan.message, 28)}
+          </span>
+        </div>
+      )}
+      {showHubScan && hubScan && (
+        <div className="flex items-center gap-2 text-text-secondary/80">
+          <Compass size={11} className="animate-spin" />
+          <Progress
+            value={hubScan.total > 0 ? Math.round((hubScan.current / hubScan.total) * 100) : 0}
+            className="w-24 h-1.5 bg-elevated"
+            indicatorClassName="bg-text-secondary/40"
+          />
+          <span className="text-[10px] whitespace-nowrap">
+            {hubScan.phase === 'fetching' ? `Hub details ${hubScan.current}/${hubScan.total}` : 'Indexing Hub'}
           </span>
         </div>
       )}

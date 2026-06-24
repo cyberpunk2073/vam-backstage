@@ -15,6 +15,7 @@ export const useStatusStore = create((set) => ({
   },
 
   scan: null, // { phase, step, total, message } or null when idle
+  hubScan: null, // { phase, current, total, found } or null when idle
 
   fetchStats: async () => {
     try {
@@ -26,4 +27,5 @@ export const useStatusStore = create((set) => ({
   },
 
   setScan: (scan) => set({ scan }),
+  setHubScan: (hubScan) => set({ hubScan }),
 }))

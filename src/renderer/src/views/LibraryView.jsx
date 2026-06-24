@@ -1948,7 +1948,7 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
           {/* Actions */}
           <div className="mt-3 space-y-1.5">
             {updateInfo && <UpdateActions pkg={pkg} updateInfo={updateInfo} />}
-            {pkg.isCorrupted && (
+            {pkg.isCorrupted && !pkg.isLocalOnly && (
               <Button
                 variant="gradient"
                 size="sm"

@@ -203,17 +203,23 @@ export async function getResourceDetailByName(packageName) {
   const cached = lruGet(cache.details, key)
   if (cached) return cached
 
-  const data = await hubPost({
-    action: 'getResourceDetail',
-    latest_image: 'Y',
-    package_name: packageName + '.latest',
-  })
+  // throwOnApiError:false so an authoritative "Resource not found" comes back as
+  // null (a real negative answer the caller can cache), while transport/HTTP
+  // failures still throw out of hubPost and are NOT mistaken for "absent".
+  const data = await hubPost(
+    {
+      action: 'getResourceDetail',
+      latest_image: 'Y',
+      package_name: packageName + '.latest',
+    },
+    { throwOnApiError: false },
+  )
 
   try {
-    if (data.resource_id) upsertHubResourceDetail(String(data.resource_id), data)
+    if (data?.resource_id) upsertHubResourceDetail(String(data.resource_id), data)
   } catch {}
   lruSet(cache.details, key, data, MAX_DETAILS)
-  if (data.resource_id) lruSet(cache.details, String(data.resource_id), data, MAX_DETAILS)
+  if (data?.resource_id) lruSet(cache.details, String(data.resource_id), data, MAX_DETAILS)
   return data
 }
 

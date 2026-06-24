@@ -575,7 +575,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                   Install missing dependencies
                 </ContextMenuItem>
               )}
-              {p.isCorrupted && (
+              {p.isCorrupted && !p.isLocalOnly && (
                 <ContextMenuItem onSelect={() => void handleRedownload()}>
                   <Download size={12} className="shrink-0 text-error" />
                   Redownload

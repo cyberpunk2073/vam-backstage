@@ -4,7 +4,7 @@ import { app } from 'electron'
 import { join } from 'path'
 import { LOCAL_PACKAGE_FILENAME } from '@shared/local-package.js'
 
-const SCHEMA_VERSION = 21
+const SCHEMA_VERSION = 22
 
 let db
 
@@ -96,6 +96,7 @@ function migrate() {
     if (current < 19) applyV19()
     if (current < 20) applyV20()
     if (current < 21) applyV21()
+    if (current < 22) applyV22()
   }
 
   ensureLocalPackage()
@@ -217,6 +218,18 @@ function applyV21() {
 }
 
 /**
+ * v22 — add `hub_name_checked_at` to `packages`. Negative cache for the
+ * name-based Hub lookup that resolves packages absent from `packages.json`
+ * (paid, hub-removed, or genuinely off-Hub). A name miss has no resource_id to
+ * key the `hub_resources` cache on, so this column records "already asked the
+ * Hub for this package's name" — stamped on a definitive answer (hit or
+ * authoritative not-found) and left NULL on transient errors so they retry.
+ */
+function applyV22() {
+  db.exec(`ALTER TABLE packages ADD COLUMN hub_name_checked_at INTEGER`)
+}
+
+/**
  * Ensure the synthetic "local content" package row exists. Loose files under
  * `vamDir/Saves` and `vamDir/Custom` are stored as `contents` rows that point
  * at this sentinel so the foreign key holds without nullable columns. The
@@ -269,7 +282,8 @@ function createSchema() {
       promotional_link TEXT,
       type_override TEXT,
       is_corrupted INTEGER NOT NULL DEFAULT 0,
-      hub_detail_applied_at INTEGER
+      hub_detail_applied_at INTEGER,
+      hub_name_checked_at INTEGER
     );
 
     CREATE INDEX IF NOT EXISTS idx_packages_package_name ON packages(package_name);
@@ -519,6 +533,23 @@ export function getPackagesNeedingHubDetailFetch() {
   `).all()
 }
 
+/**
+ * Work-list for the name-based Hub resolution pass: packages that the
+ * `packages.json` index couldn't link (`hub_resource_id IS NULL`) and that we
+ * haven't yet asked the Hub about by name (`hub_name_checked_at IS NULL`).
+ * Excludes the synthetic local-content sentinel. Each is looked up once per
+ * lifetime; `markHubNameChecked` retires it whether it resolves or not.
+ */
+export function getPackagesNeedingHubNameLookup() {
+  return stmt(`
+    SELECT filename, package_name AS packageName
+    FROM packages
+    WHERE hub_resource_id IS NULL
+      AND hub_name_checked_at IS NULL
+      AND filename != ?
+  `).all(LOCAL_PACKAGE_FILENAME)
+}
+
 // Contents
 export function insertContents(rows) {
   if (rows.length === 0) return
@@ -662,6 +693,15 @@ export function setHubResourceId(filename, resourceId) {
     resourceId,
   )
   return r.changes
+}
+
+/**
+ * Stamp a package as "name-checked" against the Hub so the name-based lookup
+ * pass never asks again. Called on a definitive answer only — a hit (after
+ * setHubResourceId) or an authoritative not-found — never on transient errors.
+ */
+export function markHubNameChecked(filename) {
+  stmt('UPDATE packages SET hub_name_checked_at = unixepoch() WHERE filename = ?').run(filename)
 }
 
 export function setHubUserId(filename, userId) {
