@@ -1,3 +1,4 @@
+import { net } from 'electron'
 import {
   getSetting,
   setSetting,
@@ -69,7 +70,7 @@ function lruSet(map, key, val, max) {
 async function hubPost(body, { throwOnApiError = true } = {}) {
   const payload = { source: 'VaM', ...body }
   hubDebug('→ request', payload)
-  const res = await fetch(API_URL, {
+  const res = await net.fetch(API_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { app, net } from 'electron'
 import { join } from 'path'
 import { readFile, writeFile, mkdir, unlink } from 'fs/promises'
 
@@ -74,7 +74,7 @@ export async function cacheAvatarsFromResources(resources) {
     if (existing?.avatarDate === r.avatar_date) continue
 
     try {
-      const res = await fetch(r.icon_url)
+      const res = await net.fetch(r.icon_url)
       if (!res.ok) continue
       const buf = Buffer.from(await res.arrayBuffer())
 

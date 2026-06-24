@@ -1,3 +1,4 @@
+import { net } from 'electron'
 import { randomUUID } from 'crypto'
 import { getSetting, setSetting } from '../db.js'
 import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
@@ -85,7 +86,7 @@ export async function fetchPackagesJson({ force = false } = {}) {
       const headers = { 'User-Agent': HUB_HTTP_USER_AGENT }
       if (stored && !force && packagesIndex) headers['If-None-Match'] = stored
 
-      const res = await fetch(`${PACKAGES_JSON_URL}?cb=${buster}`, { headers })
+      const res = await net.fetch(`${PACKAGES_JSON_URL}?cb=${buster}`, { headers })
 
       if (res.status === 304) {
         lastFetchedAt = Date.now()

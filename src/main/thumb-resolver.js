@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { app, net } from 'electron'
 import { join } from 'path'
 import { writeFile, mkdir } from 'fs/promises'
 import { getPackagesNeedingThumbnail, setPackageThumbnail, setHubResourceId } from './db.js'
@@ -74,7 +74,7 @@ export async function resolvePackageThumbnails() {
           if (!pkg.hub_resource_id) return
           try {
             const imageUrl = imageUrlForResource(pkg.hub_resource_id)
-            const res = await fetch(imageUrl)
+            const res = await net.fetch(imageUrl)
             if (!res.ok) return
             const buf = Buffer.from(await res.arrayBuffer())
             await writeFile(join(cacheDir, pkg.filename + '.jpg'), buf)

@@ -2,7 +2,7 @@ import { createWriteStream } from 'fs'
 import { stat as fsStat, rename, unlink, mkdir } from 'fs/promises'
 import { join, dirname } from 'path'
 import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
-import { session } from 'electron'
+import { net, session } from 'electron'
 import { verifyZipFile } from '../var-stability.js'
 import {
   insertDownload,
@@ -778,7 +778,7 @@ async function startDownload(entry) {
     const headers = { 'User-Agent': HUB_HTTP_USER_AGENT, Cookie: cookieHeader }
     if (existingBytes > 0) headers['Range'] = `bytes=${existingBytes}-`
 
-    const res = await fetch(download_url, {
+    const res = await net.fetch(download_url, {
       signal: controller.signal,
       headers,
       redirect: 'follow',
