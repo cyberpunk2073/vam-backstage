@@ -203,8 +203,6 @@ export default function HubView({ onNavigate }) {
 
   // Intersection observer sentinel for infinite scroll (root = gallery scroller so rootMargin
   // prefetches below the fold; viewport root + overflow-y ancestor clips the target until late).
-  // Depends on resources.length so the observer is (re)created after each page load —
-  // handles both the initial null-ref case and the sentinel-still-visible edge case.
   const sentinelRef = useRef(null)
   useEffect(() => {
     const root = galleryRef.current
@@ -219,6 +217,21 @@ export default function HubView({ onNavigate }) {
     io.observe(el)
     return () => io.disconnect()
   }, [fetchNextPage, resources.length])
+
+  // The observer only fires on intersection *changes*, so when the sentinel stays visible across
+  // a page load (common with cached pages) nothing re-triggers it. After each page settles, probe
+  // whether the sentinel is still in the prefetch zone and keep loading if so.
+  useEffect(() => {
+    if (loading || page >= totalPages) return
+    const root = galleryRef.current
+    const el = sentinelRef.current
+    if (!root || !el) return
+    const rootRect = root.getBoundingClientRect()
+    const elRect = el.getBoundingClientRect()
+    if (elRect.top < rootRect.bottom + HUB_LOAD_MORE_MARGIN_BOTTOM_PX && elRect.bottom > rootRect.top) {
+      fetchNextPage()
+    }
+  }, [loading, page, totalPages, resources.length, fetchNextPage])
 
   // When packages change (promote, download completes, uninstall), resync install status from DB.
   // The hub detail panel is refreshed at App level; here we only patch the
