@@ -5,6 +5,7 @@ import ResizeHandle from './ResizeHandle'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { LabelChip } from '@/components/labels/LabelChip'
 import { LabelManageMenu } from '@/components/labels/LabelManageMenu'
 import { useLabelRename } from '@/components/labels/useLabelRename'
@@ -195,6 +196,13 @@ export default function FilterPanel({
                   })}
                 </SelectContent>
               </Select>
+            )}
+
+            {section.type === 'switch' && (
+              <label className="flex items-center justify-between gap-3 rounded px-2 py-1.5 text-xs text-text-secondary hover:bg-elevated hover:text-text-primary transition-colors cursor-pointer">
+                <span className="truncate">{section.switchLabel}</span>
+                <Switch size="sm" checked={!!section.checked} onCheckedChange={section.onCheckedChange} />
+              </label>
             )}
           </SectionWrapper>
         ))}
