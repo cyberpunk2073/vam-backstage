@@ -801,6 +801,7 @@ export default function LibraryView({ onNavigate, navContext }) {
       if (bulkActive) clearBulkSelection()
     },
     getId: (p) => p.filename,
+    columnCount: viewMode !== 'table' ? gridLayout.cols : 1,
   })
 
   useEffect(() => {
@@ -1059,6 +1060,7 @@ export default function LibraryView({ onNavigate, navContext }) {
             fixedHeight={compactCards ? 0 : 84}
             className="flex-1"
             scrollResetKey={scrollResetKey}
+            selectedIndex={selectedIdx}
             onLayout={setGridLayout}
             onEmptyAreaPointerDown={bulkActive ? () => clearBulkSelection() : undefined}
             renderItem={(pkg) => {

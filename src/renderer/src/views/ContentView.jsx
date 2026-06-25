@@ -734,6 +734,7 @@ export default function ContentView({ onNavigate, navContext }) {
       if (bulkActive) clearBulkSelection()
     },
     getId: (c) => c.id,
+    columnCount: viewMode === 'grid' ? gridLayout.cols : 1,
   })
 
   useEffect(() => {
@@ -1081,6 +1082,7 @@ export default function ContentView({ onNavigate, navContext }) {
             itemHeight={cardWidth}
             className="flex-1"
             scrollResetKey={scrollResetKey}
+            selectedIndex={selectedIdx}
             onLayout={setGridLayout}
             onEmptyAreaPointerDown={bulkActive ? () => clearBulkSelection() : undefined}
             renderItem={(item) => (

@@ -437,8 +437,9 @@ export function LibraryCard({
     <button
       type="button"
       data-grid-card
+      tabIndex={-1}
       onClick={(e) => onClick?.(pkg, e)}
-      className={`@container w-full bg-surface border rounded-lg overflow-hidden text-left transition-all duration-150 card-glow cursor-pointer shrink-0 group
+      className={`@container w-full bg-surface border rounded-lg overflow-hidden text-left transition-all duration-150 card-glow cursor-pointer shrink-0 group outline-none
         ${selected || bulkSelected ? 'border-accent-blue/40 bg-elevated' : 'border-border hover:bg-elevated'}
         ${dim ? 'opacity-60 hover:opacity-90' : ''}`}
     >
@@ -925,7 +926,7 @@ export function ContentCard({
     <div
       data-grid-card
       onClick={(e) => onClick?.(item, e)}
-      className={`w-full bg-surface border rounded-lg overflow-hidden transition-all duration-150 card-glow cursor-pointer shrink-0 group
+      className={`w-full bg-surface border rounded-lg overflow-hidden transition-all duration-150 card-glow cursor-pointer shrink-0 group outline-none
         ${selected || bulkSelected ? 'border-accent-blue/40 bg-elevated' : 'border-border hover:bg-elevated'}
         ${dimHiddenChrome ? 'opacity-75 hover:opacity-100' : ''}`}
     >

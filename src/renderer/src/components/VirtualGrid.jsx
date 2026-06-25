@@ -24,6 +24,8 @@ export function VirtualGrid({
   onLayout,
   /** When bulk selection is on, clear it on pointer down outside any `[data-grid-card]` (gaps, padding, empty scroll area). */
   onEmptyAreaPointerDown,
+  /** Flat index of the selected item; keeps keyboard selection visible in the viewport. */
+  selectedIndex,
 }) {
   const rowGap = gapY ?? gap
   const scrollRef = useRef(null)
@@ -110,6 +112,12 @@ export function VirtualGrid({
     estimateSize: () => rowHeight + rowGap,
     overscan,
   })
+
+  useEffect(() => {
+    if (selectedIndex == null || selectedIndex < 0 || !items.length) return
+    const row = Math.floor(selectedIndex / cols)
+    virtualizer.scrollToIndex(row, { align: 'auto' })
+  }, [selectedIndex, cols, items.length, virtualizer])
 
   useLayoutEffect(() => {
     virtualizer.measure()
