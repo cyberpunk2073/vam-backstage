@@ -8,6 +8,7 @@ import {
   FolderTree,
   Heart,
   LayoutGrid,
+  Link2,
   Plus,
   Tag,
   Trash2,
@@ -33,6 +34,7 @@ import {
   UninstallDialogContent,
 } from '@/components/package-action-dialogs'
 import FileTreeDialog from '@/components/FileTreeDialog'
+import LinkHubDialog from '@/components/LinkHubDialog'
 import { displayName } from '@/lib/utils'
 import { toastIfBulkToggleFailures, toastIfSingleToggleFailed } from '@/lib/packageStorageToggleResults'
 import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
@@ -163,6 +165,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
   const [detail, setDetail] = useState(null)
   const [probe, setProbe] = useState(null)
   const [fileTreeOpen, setFileTreeOpen] = useState(false)
+  const [linkHubOpen, setLinkHubOpen] = useState(false)
   const [uninstallOpen, setUninstallOpen] = useState(false)
   const [disableOpen, setDisableOpen] = useState(false)
   const [forceRemoveOpen, setForceRemoveOpen] = useState(false)
@@ -555,6 +558,12 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                   View on Hub
                 </ContextMenuItem>
               )}
+              {!p.hubResourceId && (
+                <ContextMenuItem onSelect={() => setLinkHubOpen(true)}>
+                  <Link2 size={12} className="shrink-0" />
+                  Link to Hub…
+                </ContextMenuItem>
+              )}
               {p.promotionalLink && (
                 <ContextMenuItem
                   onSelect={() => {
@@ -646,6 +655,8 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
       </ContextMenu>
 
       <FileTreeDialog open={fileTreeOpen} onOpenChange={setFileTreeOpen} filename={pkg.filename} />
+
+      {linkHubOpen && <LinkHubDialog pkg={pkg} open={linkHubOpen} onOpenChange={setLinkHubOpen} />}
 
       <AlertDialog open={uninstallOpen} onOpenChange={setUninstallOpen}>
         {uninstallOpen && detail ? (

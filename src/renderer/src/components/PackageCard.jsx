@@ -139,6 +139,7 @@ export function HubCard({
   onFilterAuthor,
   mode = 'medium',
   hideType,
+  linkAction,
 }) {
   const minimal = mode === 'minimal'
   const isPaid = resource.category === 'Paid'
@@ -304,6 +305,8 @@ export function HubCard({
     )
   }
 
+  const finalBtn = linkAction ?? actionBtn
+
   const imgUrl = resource.image_url
   const gradientId = resource.resource_id || resource.title || ''
   const [thumbFailed, setThumbFailed] = useState(false)
@@ -313,9 +316,11 @@ export function HubCard({
 
   return (
     <div
-      className={`@container w-full min-w-0 bg-surface border rounded-lg overflow-hidden text-left transition-all duration-150 card-glow cursor-pointer flex flex-col border-border hover:bg-elevated`}
+      className={`@container w-full min-w-0 bg-surface border rounded-lg overflow-hidden text-left transition-all duration-150 flex flex-col border-border ${
+        linkAction ? '' : 'card-glow cursor-pointer hover:bg-elevated'
+      }`}
     >
-      <div onClick={() => onClick?.(resource)} className="flex-1">
+      <div onClick={linkAction ? undefined : () => onClick?.(resource)} className="flex-1">
         <div className="relative aspect-square">
           <div className="absolute inset-0" style={{ background: getGradient(String(gradientId)) }} />
           {imgUrl && !thumbFailed ? <div className="absolute inset-0 bg-elevated" /> : null}
@@ -365,7 +370,7 @@ export function HubCard({
                   </span>
                 </div>
               </div>
-              <div className="shrink-0 mb-[1.5px]">{actionBtn}</div>
+              <div className="shrink-0 mb-[1.5px]">{finalBtn}</div>
             </div>
           )}
         </div>
@@ -402,7 +407,7 @@ export function HubCard({
           </div>
         )}
       </div>
-      {!minimal && <div className="px-3 pb-3 pt-2 min-w-0">{actionBtn}</div>}
+      {!minimal && <div className="px-3 pb-3 pt-2 min-w-0">{finalBtn}</div>}
     </div>
   )
 }

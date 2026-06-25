@@ -32,6 +32,7 @@ const api = {
         : ipcRenderer.invoke('packages:set-type-override', { filename: filenameOrPayload, typeOverride }),
     fileList: (filename) => ipcRenderer.invoke('packages:file-list', filename),
     redownload: (filename) => ipcRenderer.invoke('packages:redownload', filename),
+    setHubResource: (filename, id) => ipcRenderer.invoke('packages:setHubResource', filename, id),
   },
   contents: {
     list: (filters) => ipcRenderer.invoke('contents:list', filters),

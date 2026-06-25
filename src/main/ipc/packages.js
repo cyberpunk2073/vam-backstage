@@ -3,7 +3,15 @@ import { ipcMain, net, session } from 'electron'
 import { access, rename, unlink } from 'fs/promises'
 import { dirname, join } from 'path'
 import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
-import { setPackageDirect, deletePackage, getSetting, setPackageTypeOverride, setPackageCorrupted } from '../db.js'
+import {
+  setPackageDirect,
+  deletePackage,
+  getSetting,
+  setPackageTypeOverride,
+  setPackageCorrupted,
+  setHubResourceId,
+  applyHubDetailToPackage,
+} from '../db.js'
 import { scanAndUpsert } from '../scanner/ingest.js'
 import { readVar } from '../scanner/var-reader.js'
 import { verifyPackageFull } from '../scanner/integrity.js'
@@ -50,6 +58,7 @@ import { recordOwnedPath, withBulkWindow } from '../watcher.js'
 import { pLimit } from '../p-limit.js'
 import { getResourceDetail, findPackages } from '../hub/client.js'
 import { cacheAvatarsFromResources } from '../avatar-cache.js'
+import { resolvePackageThumbnails } from '../thumb-resolver.js'
 import { VISIBLE_CATEGORIES } from '@shared/content-types.js'
 
 /** Matches libuv FS worker pool default (`UV_THREADPOOL_SIZE`); renames are pure fs ops. */
@@ -265,6 +274,31 @@ export function registerPackageHandlers() {
     notify('packages:updated')
     notify('contents:updated')
     return filenames.length === 1 ? { ok: true } : { ok: true, count: filenames.length }
+  })
+
+  ipcMain.handle('packages:setHubResource', async (_, filename, resourceId) => {
+    const pkg = getPackageIndex().get(filename)
+    if (!pkg) throw new Error(`Package not found: ${filename}`)
+    const rid = String(resourceId ?? '').trim()
+    if (!/^\d+$/.test(rid)) throw new Error('Invalid hub resource id')
+
+    const detail = await getResourceDetail(rid)
+    if (!detail?.resource_id || !detail?.title) throw new Error('No resource found for that id')
+
+    setHubResourceId(filename, rid)
+    applyHubDetailToPackage(filename, detail)
+    buildFromDb({ skipGraph: true })
+
+    try {
+      await cacheAvatarsFromResources([detail])
+      notify('avatars:updated')
+    } catch {}
+
+    notify('packages:updated')
+    // Fetch the Hub thumbnail now that the package is linked; resolver emits
+    // 'thumbnails:updated' so the card refreshes without waiting for a rescan.
+    void resolvePackageThumbnails()
+    return { ok: true, resourceId: rid }
   })
 
   ipcMain.handle('packages:uninstall', async (_, filenameOrFilenames) => {
