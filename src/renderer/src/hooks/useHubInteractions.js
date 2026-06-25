@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { toast } from '@/components/Toast'
 
+// The personal flags, all cleared. Spread into a fresh/logged-out state so the
+// shape stays in one place.
+const CLEARED = { favorited: false, bookmarked: false, liked: false, disliked: false }
+
 /**
  * Favorite/bookmark interactivity for a single Hub resource. Fetches the user's
  * state on mount/id-change, reacts to Hub login/logout, and exposes optimistic
@@ -11,10 +15,7 @@ import { toast } from '@/components/Toast'
 export function useHubInteractions(resourceId) {
   const [state, setState] = useState({
     loggedIn: false,
-    favorited: false,
-    bookmarked: false,
-    liked: false,
-    disliked: false,
+    ...CLEARED,
     loading: true,
     serverFavoriteCount: null,
   })
@@ -53,16 +54,7 @@ export function useHubInteractions(resourceId) {
         })
       })
       .catch(() => {
-        if (!cancelled)
-          setState({
-            loggedIn: false,
-            favorited: false,
-            bookmarked: false,
-            liked: false,
-            disliked: false,
-            loading: false,
-            serverFavoriteCount: null,
-          })
+        if (!cancelled) setState({ loggedIn: false, ...CLEARED, loading: false, serverFavoriteCount: null })
       })
     return () => {
       cancelled = true
@@ -76,65 +68,70 @@ export function useHubInteractions(resourceId) {
       if (data?.loggedIn) fetchState()
       // Logged out: clear personal state too, otherwise a filled heart lingers
       // after the count/bookmark (gated on login) disappear.
-      else
-        setState((s) => ({
-          ...s,
-          loggedIn: false,
-          favorited: false,
-          bookmarked: false,
-          liked: false,
-          disliked: false,
-          serverFavoriteCount: null,
-        }))
+      else setState((s) => ({ ...s, loggedIn: false, ...CLEARED, serverFavoriteCount: null }))
     })
   }, [fetchState])
 
-  const toggleFavorite = useCallback(async () => {
-    const prev = stateRef.current.favorited
-    setState((s) => ({ ...s, favorited: !prev }))
-    const res = await window.api.hub.toggleFavorite(resourceId)
-    if (res?.ok) {
-      setState((s) => ({ ...s, favorited: !!res.favorited }))
-    } else if (res?.reason === 'auth') {
-      setState((s) => ({ ...s, loggedIn: false, favorited: prev }))
-      toast('Sign in to the Hub to use favorites.', 'info')
-    } else {
-      setState((s) => ({ ...s, favorited: prev }))
-      toast(res?.message || 'Could not update favorite.', 'error')
-    }
-  }, [resourceId])
+  // Shared optimistic toggle: snapshot prev → apply optimistic patch → reconcile
+  // against the POST result, reverting (and surfacing a toast) on auth/error.
+  const runToggle = useCallback(({ snapshot, optimistic, reconcile, revert, call, authMsg, errMsg }) => {
+    const prev = snapshot(stateRef.current)
+    setState((s) => ({ ...s, ...optimistic(prev) }))
+    return call(prev).then((res) => {
+      if (res?.ok) {
+        setState((s) => ({ ...s, ...reconcile(res) }))
+      } else if (res?.reason === 'auth') {
+        setState((s) => ({ ...s, loggedIn: false, ...revert(prev) }))
+        toast(authMsg, 'info')
+      } else {
+        setState((s) => ({ ...s, ...revert(prev) }))
+        toast(res?.message || errMsg, 'error')
+      }
+    })
+  }, [])
 
-  const toggleBookmark = useCallback(async () => {
-    const prev = stateRef.current.bookmarked
-    setState((s) => ({ ...s, bookmarked: !prev }))
-    const res = await window.api.hub.toggleBookmark(resourceId, prev)
-    if (res?.ok) {
-      setState((s) => ({ ...s, bookmarked: !!res.bookmarked }))
-    } else if (res?.reason === 'auth') {
-      setState((s) => ({ ...s, loggedIn: false, bookmarked: prev }))
-      toast('Sign in to the Hub to use bookmarks.', 'info')
-    } else {
-      setState((s) => ({ ...s, bookmarked: prev }))
-      toast(res?.message || 'Could not update bookmark.', 'error')
-    }
-  }, [resourceId])
+  const toggleFavorite = useCallback(
+    () =>
+      runToggle({
+        snapshot: (s) => s.favorited,
+        optimistic: (prev) => ({ favorited: !prev }),
+        reconcile: (res) => ({ favorited: !!res.favorited }),
+        revert: (prev) => ({ favorited: prev }),
+        call: () => window.api.hub.toggleFavorite(resourceId),
+        authMsg: 'Sign in to the Hub to use favorites.',
+        errMsg: 'Could not update favorite.',
+      }),
+    [resourceId, runToggle],
+  )
 
-  const toggleLike = useCallback(async () => {
-    const prevLiked = stateRef.current.liked
-    const prevDisliked = stateRef.current.disliked
-    // Liking always clears any existing dislike (the Hub treats them as exclusive).
-    setState((s) => ({ ...s, liked: !prevLiked, disliked: false }))
-    const res = await window.api.hub.toggleLike(resourceId, prevLiked)
-    if (res?.ok) {
-      setState((s) => ({ ...s, liked: !!res.liked, disliked: !!res.disliked }))
-    } else if (res?.reason === 'auth') {
-      setState((s) => ({ ...s, loggedIn: false, liked: prevLiked, disliked: prevDisliked }))
-      toast('Sign in to the Hub to like resources.', 'info')
-    } else {
-      setState((s) => ({ ...s, liked: prevLiked, disliked: prevDisliked }))
-      toast(res?.message || 'Could not update like.', 'error')
-    }
-  }, [resourceId])
+  const toggleBookmark = useCallback(
+    () =>
+      runToggle({
+        snapshot: (s) => s.bookmarked,
+        optimistic: (prev) => ({ bookmarked: !prev }),
+        reconcile: (res) => ({ bookmarked: !!res.bookmarked }),
+        revert: (prev) => ({ bookmarked: prev }),
+        call: (prev) => window.api.hub.toggleBookmark(resourceId, prev),
+        authMsg: 'Sign in to the Hub to use bookmarks.',
+        errMsg: 'Could not update bookmark.',
+      }),
+    [resourceId, runToggle],
+  )
+
+  const toggleLike = useCallback(
+    () =>
+      runToggle({
+        snapshot: (s) => ({ liked: s.liked, disliked: s.disliked }),
+        // Liking always clears any existing dislike (the Hub treats them as exclusive).
+        optimistic: (prev) => ({ liked: !prev.liked, disliked: false }),
+        reconcile: (res) => ({ liked: !!res.liked, disliked: !!res.disliked }),
+        revert: (prev) => ({ liked: prev.liked, disliked: prev.disliked }),
+        call: (prev) => window.api.hub.toggleLike(resourceId, prev.liked),
+        authMsg: 'Sign in to the Hub to like resources.',
+        errMsg: 'Could not update like.',
+      }),
+    [resourceId, runToggle],
+  )
 
   // null until the page reports the real count (UI shows a skeleton meanwhile).
   const favoriteCount =

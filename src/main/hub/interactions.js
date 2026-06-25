@@ -31,6 +31,19 @@ function getSession() {
   return session.fromPartition('persist:hub')
 }
 
+/** Neutral per-resource state: no personal flags, unknown favourite count. */
+export function neutralResourceState(extra) {
+  return {
+    loggedIn: false,
+    favorited: false,
+    bookmarked: false,
+    liked: false,
+    disliked: false,
+    favoriteCount: null,
+    ...extra,
+  }
+}
+
 export function invalidateToken() {
   sessionToken = null
 }
@@ -190,15 +203,7 @@ export async function getResourceUserState(id) {
   let loggedIn = false
   try {
     loggedIn = await isLoggedIn()
-    if (!loggedIn)
-      return {
-        loggedIn: false,
-        favorited: false,
-        bookmarked: false,
-        liked: false,
-        disliked: false,
-        favoriteCount: null,
-      }
+    if (!loggedIn) return neutralResourceState()
     const { canonicalUrl, html } = await hubGet(`${HUB_ORIGIN}/resources/${id}/`)
     const parsed = parseResourcePage(html, canonicalUrl)
     if (parsed.token) sessionToken = parsed.token
@@ -220,15 +225,7 @@ export async function getResourceUserState(id) {
   } catch {
     // Page fetch failed: keep the cookie-derived login state with neutral
     // (unknown) favorite/bookmark status rather than flapping the UI.
-    return {
-      loggedIn,
-      favorited: false,
-      bookmarked: false,
-      liked: false,
-      disliked: false,
-      favoriteCount: null,
-      statusUnknown: true,
-    }
+    return neutralResourceState({ loggedIn, statusUnknown: true })
   }
 }
 

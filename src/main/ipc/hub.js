@@ -25,6 +25,7 @@ import {
   toggleFavorite,
   toggleBookmark,
   toggleLike,
+  neutralResourceState,
   HubAuthError,
 } from '../hub/interactions.js'
 
@@ -54,56 +55,31 @@ export function registerHubHandlers() {
       return await getResourceUserState(id)
     } catch (e) {
       console.warn('hub:resourceUserState failed:', e.message)
-      return {
-        loggedIn: false,
-        favorited: false,
-        bookmarked: false,
-        liked: false,
-        disliked: false,
-        favoriteCount: null,
-        statusUnknown: true,
-      }
+      return neutralResourceState({ statusUnknown: true })
     }
   })
 
-  ipcMain.handle('hub:toggleFavorite', async (_, id) => {
-    try {
-      const { favorited } = await toggleFavorite(id)
-      return { ok: true, favorited }
-    } catch (e) {
-      if (e instanceof HubAuthError) {
-        notify('hub:auth-changed', { loggedIn: false })
-        return { ok: false, reason: 'auth' }
+  // Each toggle returns exactly the renderer's response shape; the auth/error
+  // handling around it is identical, so wrap once.
+  const withAuthGuard =
+    (fn) =>
+    async (...args) => {
+      try {
+        return { ok: true, ...(await fn(...args)) }
+      } catch (e) {
+        if (e instanceof HubAuthError) {
+          notify('hub:auth-changed', { loggedIn: false })
+          return { ok: false, reason: 'auth' }
+        }
+        return { ok: false, reason: 'error', message: e.message }
       }
-      return { ok: false, reason: 'error', message: e.message }
     }
-  })
 
-  ipcMain.handle('hub:toggleBookmark', async (_, id, currentlyBookmarked) => {
-    try {
-      const { bookmarked } = await toggleBookmark(id, currentlyBookmarked)
-      return { ok: true, bookmarked }
-    } catch (e) {
-      if (e instanceof HubAuthError) {
-        notify('hub:auth-changed', { loggedIn: false })
-        return { ok: false, reason: 'auth' }
-      }
-      return { ok: false, reason: 'error', message: e.message }
-    }
-  })
-
-  ipcMain.handle('hub:toggleLike', async (_, id, currentlyLiked) => {
-    try {
-      const { liked, disliked } = await toggleLike(id, currentlyLiked)
-      return { ok: true, liked, disliked }
-    } catch (e) {
-      if (e instanceof HubAuthError) {
-        notify('hub:auth-changed', { loggedIn: false })
-        return { ok: false, reason: 'auth' }
-      }
-      return { ok: false, reason: 'error', message: e.message }
-    }
-  })
+  ipcMain.handle('hub:toggleFavorite', (_, id) => withAuthGuard(toggleFavorite)(id))
+  ipcMain.handle('hub:toggleBookmark', (_, id, currentlyBookmarked) =>
+    withAuthGuard(toggleBookmark)(id, currentlyBookmarked),
+  )
+  ipcMain.handle('hub:toggleLike', (_, id, currentlyLiked) => withAuthGuard(toggleLike)(id, currentlyLiked))
 
   ipcMain.handle('hub:search', async (_, params) => {
     const result = await searchResources(params)
