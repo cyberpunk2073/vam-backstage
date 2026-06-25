@@ -36,6 +36,7 @@ export const useHubStore = create((set, get) => ({
   selectedHubTags: [],
   sort: '',
   license: 'Any',
+  hideInstalled: false,
 
   detailResource: null,
   detailData: null,
@@ -59,6 +60,7 @@ export const useHubStore = create((set, get) => ({
     void window.api.settings.set('hub_last_sort', sort)
   },
   setLicense: (license) => set({ license }),
+  setHideInstalled: (hideInstalled) => set({ hideInstalled }),
   setCardMode: (cardMode) => {
     set({ cardMode })
     void window.api.settings.set('hub_card_mode', cardMode)
@@ -236,6 +238,7 @@ export const useHubStore = create((set, get) => ({
       selectedHubTags: [],
       sort: nextSort,
       license: 'Any',
+      hideInstalled: false,
       page: 1,
     })
     if (nextSort) void window.api.settings.set('hub_last_sort', nextSort)

@@ -76,6 +76,7 @@ export default function HubView({ onNavigate }) {
     selectedHubTags,
     sort,
     license,
+    hideInstalled,
     detailResource,
     cardMode,
     cardWidth,
@@ -87,6 +88,7 @@ export default function HubView({ onNavigate }) {
     setSelectedHubTags,
     setSort,
     setLicense,
+    setHideInstalled,
     setCardMode,
     setCardWidth,
     fetchResources,
@@ -180,13 +182,19 @@ export default function HubView({ onNavigate }) {
     )
   }, [availableWidth, cardWidth])
 
+  const installedByHubResourceId = useInstalledStore((s) => s.byHubResourceId)
+  const filteredResources = useMemo(() => {
+    if (!hideInstalled) return resources
+    return resources.filter((r) => !(installedByHubResourceId.get(String(r.resource_id))?.installed ?? r._installed))
+  }, [resources, hideInstalled, installedByHubResourceId])
+
   /** While more pages exist, hide the trailing partial row so the bottom is always full rows */
   const visibleResources = useMemo(() => {
-    if (page >= totalPages) return resources
-    const fullRowCount = Math.floor(resources.length / columnCount) * columnCount
-    if (fullRowCount === 0) return resources
-    return resources.slice(0, fullRowCount)
-  }, [resources, page, totalPages, columnCount])
+    if (page >= totalPages) return filteredResources
+    const fullRowCount = Math.floor(filteredResources.length / columnCount) * columnCount
+    if (fullRowCount === 0) return filteredResources
+    return filteredResources.slice(0, fullRowCount)
+  }, [filteredResources, page, totalPages, columnCount])
 
   // Filter changes → reset to page 1 and fetch
   useEffect(() => {
@@ -217,7 +225,7 @@ export default function HubView({ onNavigate }) {
     )
     io.observe(el)
     return () => io.disconnect()
-  }, [fetchNextPage, resources.length])
+  }, [fetchNextPage, filteredResources.length])
 
   // The observer only fires on intersection *changes*, so when the sentinel stays visible across
   // a page load (common with cached pages) nothing re-triggers it. After each page settles, probe
@@ -232,7 +240,7 @@ export default function HubView({ onNavigate }) {
     if (elRect.top < rootRect.bottom + HUB_LOAD_MORE_MARGIN_BOTTOM_PX && elRect.bottom > rootRect.top) {
       fetchNextPage()
     }
-  }, [loading, page, totalPages, resources.length, fetchNextPage])
+  }, [loading, page, totalPages, filteredResources.length, fetchNextPage])
 
   // When packages change (promote, download completes, uninstall), resync install status from DB.
   // The hub detail panel is refreshed at App level; here we only patch the
@@ -369,6 +377,14 @@ export default function HubView({ onNavigate }) {
         onChange: setLicense,
         options: LICENSE_FILTER_OPTIONS,
       },
+      {
+        key: 'installed',
+        label: 'Installed',
+        type: 'switch',
+        switchLabel: 'Hide installed',
+        checked: hideInstalled,
+        onCheckedChange: setHideInstalled,
+      },
       { key: 'sort', label: 'Sort by', type: 'select', value: sort, onChange: setSort, options: sortOptions },
     ],
     [
@@ -377,6 +393,7 @@ export default function HubView({ onNavigate }) {
       selectedHubTags,
       authorSearch,
       license,
+      hideInstalled,
       sort,
       sortOptions,
       hubTypes,
@@ -387,6 +404,7 @@ export default function HubView({ onNavigate }) {
       setSelectedHubTags,
       setAuthorSearch,
       setLicense,
+      setHideInstalled,
       setSort,
     ],
   )
@@ -399,7 +417,11 @@ export default function HubView({ onNavigate }) {
         {/* Toolbar */}
         <div className="h-10 flex items-center px-4 border-b border-border shrink-0 gap-2">
           <span className="text-[11px] text-text-tertiary">
-            {loading && resources.length === 0 ? 'Searching…' : `${totalFound.toLocaleString()} packages`}
+            {loading && resources.length === 0
+              ? 'Searching…'
+              : hideInstalled
+                ? `${filteredResources.length.toLocaleString()} shown`
+                : `${totalFound.toLocaleString()} packages`}
           </span>
           <button
             type="button"
@@ -476,7 +498,7 @@ export default function HubView({ onNavigate }) {
                   <span className="text-[11px] text-text-tertiary ml-2">Loading more…</span>
                 </div>
               )}
-              {!loading && sort && resources.length === 0 && (
+              {!loading && sort && filteredResources.length === 0 && page >= totalPages && (
                 <div className="text-center py-16 text-text-tertiary text-sm">No packages found</div>
               )}
             </>
