@@ -4,7 +4,24 @@ import { app } from 'electron'
 import { join } from 'path'
 import { LOCAL_PACKAGE_FILENAME } from '@shared/local-package.js'
 
-const SCHEMA_VERSION = 22
+const SCHEMA_VERSION = 23
+
+/**
+ * Normalize a value to a non-negative integer string, or null. Hub resource/user
+ * ids are integers but arrive as strings; an unguarded `String(x)` of a nullish
+ * value yields the literal 'null'/'undefined' that then slips past `IS NOT NULL`
+ * filters once stored. This is the single chokepoint that rejects that garbage.
+ */
+export function toIntString(value) {
+  if (value == null) return null
+  const s = String(value).trim()
+  return /^[0-9]+$/.test(s) ? s : null
+}
+
+/** SQL fragment asserting `col` holds a non-negative integer string (GLOB twin of toIntString). */
+function intCheckSql(col) {
+  return `${col} GLOB '[0-9]*' AND ${col} NOT GLOB '*[^0-9]*'`
+}
 
 let db
 
@@ -97,6 +114,7 @@ function migrate() {
     if (current < 20) applyV20()
     if (current < 21) applyV21()
     if (current < 22) applyV22()
+    if (current < 23) applyV23()
   }
 
   ensureLocalPackage()
@@ -230,6 +248,62 @@ function applyV22() {
 }
 
 /**
+ * v23 — hub-id correctness. Two failure modes converge on the bogus string
+ * `'null'` (and friends): a `TEXT` column accepts it, and it then slips past
+ * every `IS NOT NULL` filter. This migration (a) scrubs non-numeric ids out of
+ * the value columns (`packages.hub_resource_id`/`hub_user_id`,
+ * `downloads.hub_resource_id`) by nulling them — never dropping a row — and
+ * (b) rebuilds the two cache tables (`hub_resources`, `hub_users`) with a
+ * numeric-only PK CHECK, dropping invalid-PK rows (pure cache, regenerable).
+ * The cache tables have no foreign keys in either direction, so no FK dance is
+ * needed. Wrapped in one transaction so an unexpected failure rolls back clean
+ * and retries next launch. Code-side, every DB writer of a hub id now runs it
+ * through `toIntString` (the `setHub*` setters, `insertDownload`, and the
+ * `upsertHub*` cache writers fed by raw Hub API responses), so junk ids — most
+ * often a `String(null)` from an API field — can't be reintroduced.
+ */
+function applyV23() {
+  const tx = db.transaction(() => {
+    const bad = (col) => `${col} IS NOT NULL AND NOT (${intCheckSql(col)})`
+    const p1 = db.prepare(`UPDATE packages SET hub_resource_id = NULL WHERE ${bad('hub_resource_id')}`).run()
+    const p2 = db.prepare(`UPDATE packages SET hub_user_id = NULL WHERE ${bad('hub_user_id')}`).run()
+    const d1 = db.prepare(`UPDATE downloads SET hub_resource_id = NULL WHERE ${bad('hub_resource_id')}`).run()
+
+    db.exec(`
+      CREATE TABLE hub_resources_new (
+        resource_id TEXT PRIMARY KEY CHECK (${intCheckSql('resource_id')}),
+        hub_json TEXT,
+        search_json TEXT,
+        find_json TEXT,
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      INSERT INTO hub_resources_new (resource_id, hub_json, search_json, find_json, updated_at)
+        SELECT resource_id, hub_json, search_json, find_json, updated_at
+        FROM hub_resources WHERE ${intCheckSql('resource_id')};
+      DROP TABLE hub_resources;
+      ALTER TABLE hub_resources_new RENAME TO hub_resources;
+
+      CREATE TABLE hub_users_new (
+        user_id TEXT PRIMARY KEY CHECK (${intCheckSql('user_id')}),
+        username TEXT,
+        hub_json TEXT,
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      INSERT INTO hub_users_new (user_id, username, hub_json, updated_at)
+        SELECT user_id, username, hub_json, updated_at
+        FROM hub_users WHERE ${intCheckSql('user_id')};
+      DROP TABLE hub_users;
+      ALTER TABLE hub_users_new RENAME TO hub_users;
+      CREATE INDEX IF NOT EXISTS idx_hub_users_username ON hub_users(username);
+    `)
+
+    const scrubbed = p1.changes + p2.changes + d1.changes
+    if (scrubbed > 0) console.info(`[migrate v23] nulled ${scrubbed} non-numeric hub id(s) across packages/downloads`)
+  })
+  tx()
+}
+
+/**
  * Ensure the synthetic "local content" package row exists. Loose files under
  * `vamDir/Saves` and `vamDir/Custom` are stored as `contents` rows that point
  * at this sentinel so the foreign key holds without nullable columns. The
@@ -323,7 +397,7 @@ function createSchema() {
     );
 
     CREATE TABLE IF NOT EXISTS hub_resources (
-      resource_id TEXT PRIMARY KEY,
+      resource_id TEXT PRIMARY KEY CHECK (${intCheckSql('resource_id')}),
       hub_json TEXT,
       search_json TEXT,
       find_json TEXT,
@@ -331,7 +405,7 @@ function createSchema() {
     );
 
     CREATE TABLE IF NOT EXISTS hub_users (
-      user_id TEXT PRIMARY KEY,
+      user_id TEXT PRIMARY KEY CHECK (${intCheckSql('user_id')}),
       username TEXT,
       hub_json TEXT,
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
@@ -687,10 +761,15 @@ export function trySetSetting(key, value) {
  * @returns {number}
  */
 export function setHubResourceId(filename, resourceId) {
+  // Guard the sole writer of packages.hub_resource_id: reject non-numeric input
+  // (e.g. the string 'null' from an unguarded String(null) upstream) as a no-op
+  // so it neither writes junk nor clears an existing good link.
+  const rid = toIntString(resourceId)
+  if (rid === null) return 0
   const r = stmt('UPDATE packages SET hub_resource_id = ? WHERE filename = ? AND hub_resource_id IS NOT ?').run(
-    resourceId,
+    rid,
     filename,
-    resourceId,
+    rid,
   )
   return r.changes
 }
@@ -705,7 +784,9 @@ export function markHubNameChecked(filename) {
 }
 
 export function setHubUserId(filename, userId) {
-  stmt('UPDATE packages SET hub_user_id = ? WHERE filename = ?').run(userId, filename)
+  const uid = toIntString(userId)
+  if (uid === null) return
+  stmt('UPDATE packages SET hub_user_id = ? WHERE filename = ?').run(uid, filename)
 }
 
 export function setHubDisplayName(filename, displayName) {
@@ -717,7 +798,7 @@ export function insertDownload(entry) {
   return stmt(`
     INSERT OR IGNORE INTO downloads (package_ref, hub_resource_id, download_url, file_size, priority, parent_ref, display_name, auto_queue_deps, status)
     VALUES (@packageRef, @hubResourceId, @downloadUrl, @fileSize, @priority, @parentRef, @displayName, @autoQueueDeps, 'queued')
-  `).run({ autoQueueDeps: 1, ...entry })
+  `).run({ autoQueueDeps: 1, ...entry, hubResourceId: toIntString(entry.hubResourceId) })
 }
 
 export function getDownload(id) {
@@ -872,30 +953,36 @@ export function clearAllCorrupted() {
 // idempotent and rare; the alternative (per-column timestamps) isn't worth it.
 
 export function upsertHubResourceDetail(resourceId, json) {
+  const rid = toIntString(resourceId)
+  if (rid === null) return
   stmt(`INSERT INTO hub_resources (resource_id, hub_json, updated_at)
     VALUES (?, ?, unixepoch())
     ON CONFLICT(resource_id) DO UPDATE SET
       hub_json = excluded.hub_json, updated_at = excluded.updated_at
     WHERE hub_resources.hub_json IS NOT excluded.hub_json
-  `).run(resourceId, JSON.stringify(json))
+  `).run(rid, JSON.stringify(json))
 }
 
 export function upsertHubResourceSearch(resourceId, json) {
+  const rid = toIntString(resourceId)
+  if (rid === null) return
   stmt(`INSERT INTO hub_resources (resource_id, search_json, updated_at)
     VALUES (?, ?, unixepoch())
     ON CONFLICT(resource_id) DO UPDATE SET
       search_json = excluded.search_json, updated_at = excluded.updated_at
     WHERE hub_resources.search_json IS NOT excluded.search_json
-  `).run(resourceId, JSON.stringify(json))
+  `).run(rid, JSON.stringify(json))
 }
 
 export function upsertHubResourceFind(resourceId, json) {
+  const rid = toIntString(resourceId)
+  if (rid === null) return
   stmt(`INSERT INTO hub_resources (resource_id, find_json, updated_at)
     VALUES (?, ?, unixepoch())
     ON CONFLICT(resource_id) DO UPDATE SET
       find_json = excluded.find_json, updated_at = excluded.updated_at
     WHERE hub_resources.find_json IS NOT excluded.find_json
-  `).run(resourceId, JSON.stringify(json))
+  `).run(rid, JSON.stringify(json))
 }
 
 export function getAllHubResourceJsons() {
@@ -903,11 +990,13 @@ export function getAllHubResourceJsons() {
 }
 
 export function upsertHubUser(userId, username, json) {
+  const uid = toIntString(userId)
+  if (uid === null) return
   stmt(`INSERT INTO hub_users (user_id, username, hub_json, updated_at)
     VALUES (?, ?, ?, unixepoch())
     ON CONFLICT(user_id) DO UPDATE SET
       username = excluded.username, hub_json = excluded.hub_json, updated_at = excluded.updated_at
-  `).run(userId, username || null, JSON.stringify(json))
+  `).run(uid, username || null, JSON.stringify(json))
 }
 
 export function getHubResource(resourceId) {
@@ -939,7 +1028,7 @@ export function applyHubDetailToPackage(filename, detail) {
     stmt('UPDATE packages SET hub_detail_applied_at = unixepoch() WHERE filename = ?').run(filename)
     return
   }
-  const userId = detail?.user_id ? String(detail.user_id) : null
+  const userId = toIntString(detail?.user_id)
   const displayName = detail?.title || null
   const tags = detail?.tags || null
   const promotionalLink = detail?.promotional_link || null
