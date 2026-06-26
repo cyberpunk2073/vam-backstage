@@ -4,6 +4,7 @@ import { HUB_PER_PAGE_OPTIONS, sanitizeHubState } from '@/lib/view-state'
 import { useInstalledStore } from './useInstalledStore'
 
 let fetchSeq = 0
+const HUB_REMEMBER_INFINITE_PAGE_KEY = 'hub_remember_infinite_page'
 
 function syncInstalledFromResources(resources) {
   useInstalledStore.getState().applyBatch(
@@ -99,6 +100,10 @@ export const useHubStore = create((set, get) => ({
     const restorePage = Math.min(Math.max(1, Number(page) || 1), max)
     if (restorePage !== state.restorePage) set({ restorePage })
   },
+  setTrackInfiniteRestorePage: (trackInfiniteRestorePage) => {
+    set({ trackInfiniteRestorePage })
+    void window.api.settings.set(HUB_REMEMBER_INFINITE_PAGE_KEY, trackInfiniteRestorePage ? '1' : '0')
+  },
 
   getPersistedState: () => {
     const s = get()
@@ -171,17 +176,21 @@ export const useHubStore = create((set, get) => ({
     }
   },
 
-  /** Restore Hub UI preferences from disk (sort + gallery card size/mode) */
+  /** Restore Hub UI preferences from disk (sort, gallery card size/mode, page memory) */
   hydrateHubFilterPreferences: async () => {
     try {
-      const [last, mode, widthStr] = await Promise.all([
+      const [last, mode, widthStr, rememberInfinitePage] = await Promise.all([
         window.api.settings.get('hub_last_sort'),
         window.api.settings.get('hub_card_mode'),
         window.api.settings.get('hub_card_width'),
+        window.api.settings.get(HUB_REMEMBER_INFINITE_PAGE_KEY),
       ])
       const patch = {}
       if (last) patch.sort = last
       if (mode === 'minimal' || mode === 'medium') patch.cardMode = mode
+      if (rememberInfinitePage === '0' || rememberInfinitePage === '1') {
+        patch.trackInfiniteRestorePage = rememberInfinitePage === '1'
+      }
       const w = parseInt(String(widthStr ?? ''), 10)
       if (!Number.isNaN(w) && w >= 100 && w <= 500) patch.cardWidth = w
       if (Object.keys(patch).length) set(patch)

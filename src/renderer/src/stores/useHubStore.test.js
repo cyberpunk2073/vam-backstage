@@ -10,6 +10,7 @@ describe('useHubStore', () => {
           filters: vi.fn().mockResolvedValue({ sort: ['Latest Update'] }),
         },
         settings: {
+          get: vi.fn(),
           set: vi.fn(),
         },
       },
@@ -70,6 +71,23 @@ describe('useHubStore', () => {
     useHubStore.getState().setInfiniteRestorePage(4)
 
     expect(useHubStore.getState().getPersistedState()).toMatchObject({ page: 1 })
+  })
+
+  it('hydrates the infinite page memory setting', async () => {
+    window.api.settings.get.mockImplementation((key) =>
+      Promise.resolve(key === 'hub_remember_infinite_page' ? '0' : null),
+    )
+
+    await useHubStore.getState().hydrateHubFilterPreferences()
+
+    expect(useHubStore.getState().trackInfiniteRestorePage).toBe(false)
+  })
+
+  it('persists the infinite page memory setting', () => {
+    useHubStore.getState().setTrackInfiniteRestorePage(false)
+
+    expect(useHubStore.getState().trackInfiniteRestorePage).toBe(false)
+    expect(window.api.settings.set).toHaveBeenCalledWith('hub_remember_infinite_page', '0')
   })
 
   it('normalizes hub sort before exposing loaded filter options', async () => {
