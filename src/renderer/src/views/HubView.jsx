@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
+  BookOpen,
+  ChevronLeft,
   RotateCw,
   Globe,
   ChevronRight,
@@ -18,6 +20,7 @@ import {
   Library as LibraryIcon,
   Grid2x2,
   Grid3x3,
+  Infinity as InfinityIcon,
   Calendar,
   Clock,
   Plus,
@@ -67,6 +70,7 @@ export default function HubView({ onNavigate, active = true }) {
     totalFound,
     totalPages,
     page,
+    browseMode,
     loading,
     error,
     search,
@@ -95,6 +99,8 @@ export default function HubView({ onNavigate, active = true }) {
     openDetail,
     openDetailById,
     closeDetail,
+    setBrowseMode,
+    goToPage,
   } = useHubStore()
 
   const [searchDraft, setSearchDraft] = useState(search)
@@ -185,13 +191,15 @@ export default function HubView({ onNavigate, active = true }) {
 
   /** While more pages exist, hide the trailing partial row so the bottom is always full rows */
   const visibleResources = useMemo(() => {
+    if (browseMode === 'paged') return resources
     if (page >= totalPages) return resources
     const fullRowCount = Math.floor(resources.length / columnCount) * columnCount
     if (fullRowCount === 0) return resources
     return resources.slice(0, fullRowCount)
-  }, [resources, page, totalPages, columnCount])
+  }, [browseMode, resources, page, totalPages, columnCount])
 
   // Filter changes → reset to page 1 and fetch
+  const firstFetchRef = useRef(true)
   const hubFetchKey = useMemo(
     () =>
       `${search}\0${selectedType}\0${paidFilter}\0${authorSearch}\0${selectedHubTags.join(',')}\0${sort}\0${license}`,
@@ -202,29 +210,59 @@ export default function HubView({ onNavigate, active = true }) {
     if (!active) return
     if (!sort) return // wait for sort options to load
     if (fetchedFilterKeyRef.current === hubFetchKey) return
+    const firstFetch = firstFetchRef.current
+    firstFetchRef.current = false
     fetchedFilterKeyRef.current = hubFetchKey
-    useHubStore.getState().fetchResources(true)
-  }, [active, hubFetchKey, sort])
-
-  // Page changes (without filter change) → fetch same filters, new page (append mode)
-  const pageRef = useRef(page)
-  useEffect(() => {
-    if (!active) return
-    if (pageRef.current === page) return
-    pageRef.current = page
-    useHubStore.getState().fetchResources()
-  }, [active, page])
+    const targetPage = firstFetch && browseMode === 'paged' ? page : 1
+    useHubStore.getState().fetchResources(true, { page: targetPage })
+  }, [active, browseMode, hubFetchKey, page, sort])
 
   useEffect(() => {
     if (!active || !pendingDetailResourceId || detailResource) return
     void openDetailById(pendingDetailResourceId)
   }, [active, pendingDetailResourceId, detailResource, openDetailById])
 
+  const topVisiblePage = useCallback(() => {
+    const root = galleryRef.current
+    if (!root) return page
+    const rootTop = root.getBoundingClientRect().top
+    const cards = root.querySelectorAll('[data-hub-resource-index]')
+    for (const card of cards) {
+      if (card.getBoundingClientRect().bottom <= rootTop + 8) continue
+      const index = Number(card.dataset.hubResourceIndex)
+      return Number.isInteger(index) ? Math.floor(index / 30) + 1 : page
+    }
+    return page
+  }, [page])
+
+  const toggleBrowseMode = useCallback(() => {
+    const store = useHubStore.getState()
+    if (browseMode === 'infinite') {
+      const nextPage = topVisiblePage()
+      setBrowseMode('paged')
+      galleryRef.current?.scrollTo({ top: 0 })
+      void store.fetchResources(true, { page: nextPage })
+    } else {
+      setBrowseMode('infinite')
+      galleryRef.current?.scrollTo({ top: 0 })
+      void store.fetchResources(true, { page: 1 })
+    }
+  }, [browseMode, setBrowseMode, topVisiblePage])
+
+  const goPagedPage = useCallback(
+    (nextPage) => {
+      galleryRef.current?.scrollTo({ top: 0 })
+      goToPage(nextPage)
+    },
+    [goToPage],
+  )
+
   // Intersection observer sentinel for infinite scroll (root = gallery scroller so rootMargin
   // prefetches below the fold; viewport root + overflow-y ancestor clips the target until late).
   const sentinelRef = useRef(null)
   useEffect(() => {
     if (!active) return
+    if (browseMode !== 'infinite') return
     const root = galleryRef.current
     const el = sentinelRef.current
     if (!root || !el) return
@@ -236,13 +274,14 @@ export default function HubView({ onNavigate, active = true }) {
     )
     io.observe(el)
     return () => io.disconnect()
-  }, [active, fetchNextPage, resources.length])
+  }, [active, browseMode, fetchNextPage, resources.length])
 
   // The observer only fires on intersection *changes*, so when the sentinel stays visible across
   // a page load (common with cached pages) nothing re-triggers it. After each page settles, probe
   // whether the sentinel is still in the prefetch zone and keep loading if so.
   useEffect(() => {
     if (!active) return
+    if (browseMode !== 'infinite') return
     if (loading || page >= totalPages) return
     const root = galleryRef.current
     const el = sentinelRef.current
@@ -252,7 +291,7 @@ export default function HubView({ onNavigate, active = true }) {
     if (elRect.top < rootRect.bottom + HUB_LOAD_MORE_MARGIN_BOTTOM_PX && elRect.bottom > rootRect.top) {
       fetchNextPage()
     }
-  }, [active, loading, page, totalPages, resources.length, fetchNextPage])
+  }, [active, browseMode, loading, page, totalPages, resources.length, fetchNextPage])
 
   // When packages change (promote, download completes, uninstall), resync install status from DB.
   // The hub detail panel is refreshed at App level; here we only patch the
@@ -423,7 +462,7 @@ export default function HubView({ onNavigate, active = true }) {
           </span>
           <button
             type="button"
-            onClick={() => fetchResources(true, { forceRefresh: true })}
+            onClick={() => fetchResources(true, { forceRefresh: true, page: browseMode === 'paged' ? page : 1 })}
             disabled={loading}
             title="Refresh"
             className="p-1 rounded text-text-tertiary hover:text-text-secondary disabled:opacity-30 cursor-pointer disabled:cursor-default"
@@ -432,6 +471,39 @@ export default function HubView({ onNavigate, active = true }) {
           </button>
           <div className="flex-1" />
           <ThumbnailSizeSlider cardWidth={cardWidth} availableWidth={availableWidth} onCardWidthChange={setCardWidth} />
+          <button
+            type="button"
+            onClick={toggleBrowseMode}
+            title={browseMode === 'infinite' ? 'Infinite scroll' : 'Paged browsing'}
+            className="p-1.5 rounded cursor-pointer text-text-tertiary hover:text-text-primary hover:bg-elevated"
+          >
+            {browseMode === 'infinite' ? <InfinityIcon size={14} /> : <BookOpen size={14} />}
+          </button>
+          {browseMode === 'paged' && (
+            <div className="flex items-center gap-1 text-[11px] text-text-tertiary">
+              <button
+                type="button"
+                disabled={loading || page <= 1}
+                onClick={() => goPagedPage(page - 1)}
+                title="Previous Hub page"
+                className="p-1 rounded disabled:opacity-30 hover:bg-elevated cursor-pointer disabled:cursor-default"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <span className="tabular-nums whitespace-nowrap">
+                {page} / {Math.max(totalPages, 1)}
+              </span>
+              <button
+                type="button"
+                disabled={loading || page >= totalPages}
+                onClick={() => goPagedPage(page + 1)}
+                title="Next Hub page"
+                className="p-1 rounded disabled:opacity-30 hover:bg-elevated cursor-pointer disabled:cursor-default"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          )}
           <div className="flex items-center gap-px bg-elevated rounded p-0.5">
             <button
               type="button"
@@ -474,23 +546,27 @@ export default function HubView({ onNavigate, active = true }) {
                 className="grid gap-3 content-start"
                 style={{ gridTemplateColumns: `repeat(auto-fill,minmax(min(${cardWidth}px,100%),1fr))` }}
               >
-                {visibleResources.map((r) => (
-                  <HubCard
+                {visibleResources.map((r, i) => (
+                  <div
                     key={r.resource_id}
-                    resource={r}
-                    onClick={openDetail}
-                    onViewInLibrary={handleViewInLibrary}
-                    onInstall={handleInstall}
-                    onPromote={handlePromote}
-                    onFilterAuthor={handleFilterAuthor}
-                    mode={cardMode}
-                    hideType={selectedType !== 'All'}
-                  />
+                    data-hub-resource-index={browseMode === 'infinite' ? i : (page - 1) * 30 + i}
+                  >
+                    <HubCard
+                      resource={r}
+                      onClick={openDetail}
+                      onViewInLibrary={handleViewInLibrary}
+                      onInstall={handleInstall}
+                      onPromote={handlePromote}
+                      onFilterAuthor={handleFilterAuthor}
+                      mode={cardMode}
+                      hideType={selectedType !== 'All'}
+                    />
+                  </div>
                 ))}
               </div>
               {/* Infinite scroll sentinel */}
-              {page < totalPages && <div ref={sentinelRef} className="h-1" />}
-              {loading && resources.length > 0 && (
+              {browseMode === 'infinite' && page < totalPages && <div ref={sentinelRef} className="h-1" />}
+              {browseMode === 'infinite' && loading && resources.length > 0 && (
                 <div className="flex items-center justify-center py-6">
                   <Loader2 size={20} className="animate-spin text-accent-blue" />
                   <span className="text-[11px] text-text-tertiary ml-2">Loading more…</span>
