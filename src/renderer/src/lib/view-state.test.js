@@ -13,7 +13,7 @@ describe('view-state sanitizers', () => {
     expect(sanitizeLastView('hub')).toBe('hub')
     expect(sanitizeLastView('library')).toBe('library')
     expect(sanitizeLastView('content')).toBe('content')
-    expect(sanitizeLastView('settings')).toBe('settings')
+    expect(sanitizeLastView('settings')).toBe('hub')
     expect(sanitizeLastView('downloads')).toBe('library')
     expect(sanitizeLastView(null)).toBe('library')
   })

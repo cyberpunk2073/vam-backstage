@@ -28,6 +28,7 @@ const hubPerPage = (value) => {
 }
 
 export function sanitizeLastView(value) {
+  if (value === 'settings') return 'hub'
   return VALID_VIEWS.has(value) ? value : 'library'
 }
 
