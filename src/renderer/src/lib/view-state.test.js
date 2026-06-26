@@ -32,6 +32,7 @@ describe('view-state sanitizers', () => {
         detailResourceId: 123,
         browseMode: 'paged',
         page: 7,
+        perPage: 60,
       }),
     ).toEqual({
       search: 'alice',
@@ -44,8 +45,13 @@ describe('view-state sanitizers', () => {
       detailResourceId: '123',
       browseMode: 'paged',
       page: 7,
+      perPage: 60,
     })
-    expect(sanitizeHubState({ browseMode: 'bad', page: -3 })).toMatchObject({ browseMode: 'infinite', page: 1 })
+    expect(sanitizeHubState({ browseMode: 'bad', page: -3, perPage: 42 })).toMatchObject({
+      browseMode: 'infinite',
+      page: 1,
+      perPage: 30,
+    })
   })
 
   it('normalizes library and content restore ids', () => {

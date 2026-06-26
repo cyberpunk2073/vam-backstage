@@ -58,6 +58,8 @@ import { LICENSE_FILTER_OPTIONS, getHubResourceLicense } from '@/lib/licenses'
 import { LicenseTag } from '@/components/LicenseTag'
 import { Tag } from '@/components/ui/tag'
 import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { HUB_PER_PAGE_OPTIONS } from '@/lib/view-state'
 
 /** Hub text search: avoid a network request on every keystroke */
 const HUB_SEARCH_DEBOUNCE_MS = 320
@@ -72,6 +74,7 @@ export default function HubView({ onNavigate, active = true }) {
     totalFound,
     totalPages,
     page,
+    perPage,
     browseMode,
     loading,
     error,
@@ -102,6 +105,7 @@ export default function HubView({ onNavigate, active = true }) {
     openDetailById,
     closeDetail,
     setBrowseMode,
+    setPerPage,
     goToPage,
   } = useHubStore()
 
@@ -232,10 +236,10 @@ export default function HubView({ onNavigate, active = true }) {
     for (const card of cards) {
       if (card.getBoundingClientRect().bottom <= rootTop + 8) continue
       const index = Number(card.dataset.hubResourceIndex)
-      return Number.isInteger(index) ? Math.floor(index / 30) + 1 : page
+      return Number.isInteger(index) ? Math.floor(index / perPage) + 1 : page
     }
     return page
-  }, [page])
+  }, [page, perPage])
 
   const toggleBrowseMode = useCallback(() => {
     const store = useHubStore.getState()
@@ -260,6 +264,11 @@ export default function HubView({ onNavigate, active = true }) {
   )
 
   const maxHubPage = Math.max(totalPages || 1, 1)
+  const pageStart = resources.length ? (page - 1) * perPage + 1 : 0
+  const pageEnd = resources.length ? Math.min((page - 1) * perPage + resources.length, totalFound) : 0
+  const pageRange = resources.length
+    ? `Showing ${pageStart.toLocaleString()}-${pageEnd.toLocaleString()} of ${totalFound.toLocaleString()}`
+    : `Showing 0 of ${totalFound.toLocaleString()}`
   const pageButtons = useMemo(() => {
     if (maxHubPage <= 7) return Array.from({ length: maxHubPage }, (_, i) => i + 1)
     const pages = new Set([1, maxHubPage, page - 1, page, page + 1])
@@ -281,70 +290,87 @@ export default function HubView({ onNavigate, active = true }) {
       'h-8 min-w-8 px-2 rounded text-xs tabular-nums hover:bg-elevated disabled:cursor-default cursor-pointer'
     return (
       <div
-        className={`flex flex-wrap items-center justify-center gap-1 text-[11px] text-text-tertiary ${
+        className={`flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-[11px] text-text-tertiary ${
           edge === 'top' ? 'mb-3' : 'mt-4'
         }`}
       >
-        <button
-          type="button"
-          disabled={loading || page <= 1}
-          onClick={() => goPagedPage(1)}
-          title="First Hub page"
-          aria-label="First Hub page"
-          className={iconClass}
-        >
-          <ChevronsLeft size={17} />
-        </button>
-        <button
-          type="button"
-          disabled={loading || page <= 1}
-          onClick={() => goPagedPage(page - 1)}
-          title="Previous Hub page"
-          aria-label="Previous Hub page"
-          className={iconClass}
-        >
-          <ChevronLeft size={18} />
-        </button>
-        {pageButtons.map((p, i) =>
-          p === '...' ? (
-            <span key={`ellipsis-${i}`} className="h-8 px-1 flex items-center text-text-tertiary">
-              ...
-            </span>
-          ) : (
-            <button
-              key={p}
-              type="button"
-              disabled={loading || p === page}
-              onClick={() => goPagedPage(p)}
-              aria-current={p === page ? 'page' : undefined}
-              className={`${pageClass} ${
-                p === page ? 'bg-hover text-text-primary font-medium' : 'text-text-tertiary hover:text-text-primary'
-              }`}
-            >
-              {p}
-            </button>
-          ),
-        )}
-        <button
-          type="button"
-          disabled={loading || page >= maxHubPage}
-          onClick={() => goPagedPage(page + 1)}
-          title="Next Hub page"
-          aria-label="Next Hub page"
-          className={iconClass}
-        >
-          <ChevronRight size={18} />
-        </button>
-        <button
-          type="button"
-          disabled={loading || page >= maxHubPage}
-          onClick={() => goPagedPage(maxHubPage)}
-          title="Last Hub page"
-          aria-label="Last Hub page"
-          className={iconClass}
-        >
-          <ChevronsRight size={17} />
-        </button>
+        <div className="min-w-[150px] flex-1 text-center text-[11px] tabular-nums text-text-tertiary">{pageRange}</div>
+        <div className="flex min-w-0 max-w-full flex-wrap items-center justify-center gap-1">
+          <button
+            type="button"
+            disabled={loading || page <= 1}
+            onClick={() => goPagedPage(1)}
+            title="First Hub page"
+            aria-label="First Hub page"
+            className={iconClass}
+          >
+            <ChevronsLeft size={17} />
+          </button>
+          <button
+            type="button"
+            disabled={loading || page <= 1}
+            onClick={() => goPagedPage(page - 1)}
+            title="Previous Hub page"
+            aria-label="Previous Hub page"
+            className={iconClass}
+          >
+            <ChevronLeft size={18} />
+          </button>
+          {pageButtons.map((p, i) =>
+            p === '...' ? (
+              <span key={`ellipsis-${i}`} className="h-8 px-1 flex items-center text-text-tertiary">
+                ...
+              </span>
+            ) : (
+              <button
+                key={p}
+                type="button"
+                disabled={loading || p === page}
+                onClick={() => goPagedPage(p)}
+                aria-current={p === page ? 'page' : undefined}
+                className={`${pageClass} ${
+                  p === page ? 'bg-hover text-text-primary font-medium' : 'text-text-tertiary hover:text-text-primary'
+                }`}
+              >
+                {p}
+              </button>
+            ),
+          )}
+          <button
+            type="button"
+            disabled={loading || page >= maxHubPage}
+            onClick={() => goPagedPage(page + 1)}
+            title="Next Hub page"
+            aria-label="Next Hub page"
+            className={iconClass}
+          >
+            <ChevronRight size={18} />
+          </button>
+          <button
+            type="button"
+            disabled={loading || page >= maxHubPage}
+            onClick={() => goPagedPage(maxHubPage)}
+            title="Last Hub page"
+            aria-label="Last Hub page"
+            className={iconClass}
+          >
+            <ChevronsRight size={17} />
+          </button>
+        </div>
+        <div className="flex min-w-[92px] flex-1 justify-end">
+          <Select value={String(perPage)} onValueChange={setPerPage}>
+            <SelectTrigger size="sm" className="h-8 min-w-[92px]" aria-label="Hub items per page">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end" className="min-w-[92px]">
+              {HUB_PER_PAGE_OPTIONS.map((n) => (
+                <SelectItem key={n} value={String(n)}>
+                  {n} / page
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
     )
   }
@@ -617,7 +643,7 @@ export default function HubView({ onNavigate, active = true }) {
                 {visibleResources.map((r, i) => (
                   <div
                     key={r.resource_id}
-                    data-hub-resource-index={browseMode === 'infinite' ? i : (page - 1) * 30 + i}
+                    data-hub-resource-index={browseMode === 'infinite' ? i : (page - 1) * perPage + i}
                   >
                     <HubCard
                       resource={r}

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { toast } from '@/components/Toast'
-import { sanitizeHubState } from '@/lib/view-state'
+import { HUB_PER_PAGE_OPTIONS, sanitizeHubState } from '@/lib/view-state'
 import { useInstalledStore } from './useInstalledStore'
 
 let fetchSeq = 0
@@ -26,6 +26,7 @@ export const useHubStore = create((set, get) => ({
   totalFound: 0,
   totalPages: 0,
   page: 1,
+  perPage: HUB_PER_PAGE_OPTIONS[0],
   browseMode: 'infinite',
   loading: false,
   error: null,
@@ -72,6 +73,14 @@ export const useHubStore = create((set, get) => ({
   },
   setPage: (page) => set({ page }),
   setBrowseMode: (browseMode) => set({ browseMode: browseMode === 'paged' ? 'paged' : 'infinite' }),
+  setPerPage: (perPage) => {
+    const nextPerPage = HUB_PER_PAGE_OPTIONS.includes(Number(perPage)) ? Number(perPage) : HUB_PER_PAGE_OPTIONS[0]
+    const state = get()
+    if (nextPerPage === state.perPage) return
+    const nextPage = Math.floor(((state.page - 1) * state.perPage) / nextPerPage) + 1
+    set({ perPage: nextPerPage, page: nextPage })
+    void get().fetchResources(true, { page: nextPage })
+  },
   goToPage: (page) => get().fetchResources(true, { page }),
 
   getPersistedState: () => {
@@ -86,6 +95,7 @@ export const useHubStore = create((set, get) => ({
       license: s.license,
       browseMode: s.browseMode,
       page: s.page,
+      perPage: s.perPage,
       detailResourceId: s.detailData?.resource_id ?? s.detailResource?.resource_id ?? s.pendingDetailResourceId ?? null,
     }
   },
@@ -102,6 +112,7 @@ export const useHubStore = create((set, get) => ({
       license: saved.license,
       browseMode: saved.browseMode,
       page: saved.page,
+      perPage: saved.perPage,
       pendingDetailResourceId: saved.detailResourceId,
     })
   },
@@ -172,7 +183,7 @@ export const useHubStore = create((set, get) => ({
         await get().fetchFilters(true)
       }
       const q = get()
-      const params = { page: requestedPage, perpage: 30 }
+      const params = { page: requestedPage, perpage: q.perPage }
       if (q.sort) params.sort = q.sort
       if (q.search) params.search = q.search
       if (q.selectedType !== 'All') params.type = q.selectedType

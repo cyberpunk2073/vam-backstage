@@ -3,6 +3,7 @@ export const LAST_VIEW_KEY = 'ui:last_view'
 export const HUB_STATE_KEY = 'ui:hub_state'
 export const LIBRARY_STATE_KEY = 'ui:library_state'
 export const CONTENT_STATE_KEY = 'ui:content_state'
+export const HUB_PER_PAGE_OPTIONS = [30, 60, 90, 120]
 
 const VALID_VIEWS = new Set(['hub', 'library', 'content', 'settings'])
 const VALID_HUB_BROWSE_MODE = new Set(['infinite', 'paged'])
@@ -20,6 +21,10 @@ const id = (value) => (typeof value === 'string' || typeof value === 'number' ? 
 const page = (value) => {
   const n = Number(value)
   return Number.isInteger(n) && n >= 1 ? n : 1
+}
+const hubPerPage = (value) => {
+  const n = Number(value)
+  return HUB_PER_PAGE_OPTIONS.includes(n) ? n : HUB_PER_PAGE_OPTIONS[0]
 }
 
 export function sanitizeLastView(value) {
@@ -39,6 +44,7 @@ export function sanitizeHubState(raw) {
     detailResourceId: id(r.detailResourceId),
     browseMode: VALID_HUB_BROWSE_MODE.has(r.browseMode) ? r.browseMode : 'infinite',
     page: page(r.page),
+    perPage: hubPerPage(r.perPage),
   }
 }
 
