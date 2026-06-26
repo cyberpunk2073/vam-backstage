@@ -1,12 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useHubStore } from './useHubStore'
+import { useInstalledStore } from './useInstalledStore'
+
+function resource(id) {
+  return { resource_id: id, title: `Resource ${id}` }
+}
 
 describe('useHubStore', () => {
   beforeEach(() => {
     vi.stubGlobal('window', {
       api: {
         hub: {
-          search: vi.fn().mockResolvedValue({ resources: [], totalFound: 0, totalPages: 10 }),
+          search: vi
+            .fn()
+            .mockImplementation(({ page }) =>
+              Promise.resolve({ resources: [resource(page)], totalFound: 300, totalPages: 10 }),
+            ),
+          invalidateCaches: vi.fn(),
           filters: vi.fn().mockResolvedValue({ sort: ['Latest Update'] }),
         },
         settings: {
@@ -16,17 +26,28 @@ describe('useHubStore', () => {
       },
     })
     useHubStore.setState({
-      page: 3,
-      startPage: 3,
-      restorePage: 3,
-      trackInfiniteRestorePage: true,
-      browseMode: 'infinite',
-      perPage: 60,
       resources: [],
       totalFound: 0,
       totalPages: 10,
+      page: 3,
+      startPage: 3,
+      restorePage: 3,
+      showInfinitePagerControls: true,
+      trackInfiniteRestorePage: true,
+      perPage: 60,
+      browseMode: 'infinite',
       loading: false,
+      error: null,
+      search: '',
+      selectedType: 'All',
+      paidFilter: 'all',
+      authorSearch: '',
+      selectedHubTags: [],
+      sort: '',
+      license: 'Any',
+      filterOptions: null,
     })
+    useInstalledStore.setState({ byHubResourceId: new Map() })
   })
 
   it('restarts infinite scrolling from a requested page', async () => {
@@ -116,5 +137,42 @@ describe('useHubStore', () => {
     unsubscribe()
 
     expect(snapshots).not.toContainEqual({ filterOptions: { sort: ['Latest Update'] }, sort: 'Missing Sort' })
+  })
+
+  it('keeps page 1 empty without probing lower pages', async () => {
+    window.api.hub.search.mockResolvedValueOnce({ resources: [], totalFound: 0, totalPages: 0 })
+
+    await useHubStore.getState().fetchResources(true, { page: 1 })
+
+    expect(window.api.hub.search).toHaveBeenCalledTimes(1)
+    expect(useHubStore.getState()).toMatchObject({ resources: [], page: 1, totalPages: 0, loading: false })
+  })
+
+  it('keeps non-empty requested pages unchanged', async () => {
+    window.api.hub.search.mockResolvedValueOnce({ resources: [resource(3)], totalFound: 90, totalPages: 3 })
+
+    await useHubStore.getState().fetchResources(true, { page: 3 })
+
+    expect(window.api.hub.search).toHaveBeenCalledTimes(1)
+    expect(window.api.hub.search).toHaveBeenCalledWith(expect.objectContaining({ page: 3 }))
+    expect(useHubStore.getState()).toMatchObject({ resources: [resource(3)], page: 3, totalPages: 3 })
+  })
+
+  it('resolves an empty tail page to the last non-empty page', async () => {
+    window.api.hub.search.mockImplementation(({ page }) => {
+      const resources = page <= 6 ? [resource(page)] : []
+      return Promise.resolve({ resources, totalFound: 300, totalPages: 10 })
+    })
+
+    await useHubStore.getState().fetchResources(true, { page: 10 })
+
+    expect(window.api.hub.search.mock.calls.length).toBeLessThanOrEqual(5)
+    expect(useHubStore.getState()).toMatchObject({
+      resources: [resource(6)],
+      page: 6,
+      startPage: 6,
+      restorePage: 6,
+      totalPages: 6,
+    })
   })
 })

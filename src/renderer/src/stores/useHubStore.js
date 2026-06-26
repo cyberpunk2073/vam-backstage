@@ -23,6 +23,52 @@ function syncInstalledFromDetail(detail) {
   useInstalledStore.getState().update(detail.resource_id, detail._installed, detail._isDirect, detail._localFilename)
 }
 
+function hubResources(result) {
+  return Array.isArray(result?.resources) ? result.resources : []
+}
+
+async function resolveEmptyTailPage(params, requestedPage, isCurrent) {
+  let emptyUpper = requestedPage
+  let lowerPage = 0
+  let lowerResult = null
+  let pageOneResult = null
+  let step = 1
+
+  while (requestedPage - step > 0) {
+    const page = Math.max(1, requestedPage - step)
+    const result = await window.api.hub.search({ ...params, page })
+    if (!isCurrent()) return null
+    if (hubResources(result).length) {
+      lowerPage = page
+      lowerResult = result
+      break
+    }
+    if (page === 1) pageOneResult = result
+    emptyUpper = page
+    step *= 2
+  }
+
+  if (!lowerResult) {
+    const result = pageOneResult || (await window.api.hub.search({ ...params, page: 1 }))
+    if (!isCurrent()) return null
+    return { page: 1, result }
+  }
+
+  while (lowerPage + 1 < emptyUpper) {
+    const page = Math.floor((lowerPage + emptyUpper) / 2)
+    const result = await window.api.hub.search({ ...params, page })
+    if (!isCurrent()) return null
+    if (hubResources(result).length) {
+      lowerPage = page
+      lowerResult = result
+    } else {
+      emptyUpper = page
+    }
+  }
+
+  return { page: lowerPage, result: lowerResult }
+}
+
 export const useHubStore = create((set, get) => ({
   resources: [],
   totalFound: 0,
@@ -238,14 +284,31 @@ export const useHubStore = create((set, get) => ({
 
       const result = await window.api.hub.search(params)
       if (seq !== fetchSeq) return
-      const incoming = result.resources || []
-      syncInstalledFromResources(incoming)
-      set({
+      let incoming = hubResources(result)
+      let totalFound = result.totalFound || 0
+      let totalPages = result.totalPages || 0
+      let page = requestedPage
+      if (!append && requestedPage > 1 && incoming.length === 0 && totalPages >= requestedPage) {
+        const resolved = await resolveEmptyTailPage(params, requestedPage, () => seq === fetchSeq)
+        if (!resolved || seq !== fetchSeq) return
+        incoming = hubResources(resolved.result)
+        totalFound = resolved.result.totalFound || totalFound
+        totalPages = incoming.length ? resolved.page : resolved.result.totalPages || 0
+        page = resolved.page
+      }
+      const patch = {
         resources: append ? [...get().resources, ...incoming] : incoming,
-        totalFound: result.totalFound || 0,
-        totalPages: result.totalPages || 0,
+        totalFound,
+        totalPages,
+        page,
         loading: false,
-      })
+      }
+      if (!append && q.browseMode === 'infinite') {
+        patch.startPage = page
+        patch.restorePage = page
+      }
+      syncInstalledFromResources(incoming)
+      set(patch)
     } catch (err) {
       if (seq !== fetchSeq) return
       set({ error: err.message, loading: false, ...(append ? {} : { resources: [] }) })
