@@ -10,6 +10,16 @@ import { WhatsNewDialog } from '@/components/WhatsNewDialog'
 import { ThumbnailLightbox } from '@/components/ThumbnailLightbox'
 import { CHANGELOG } from '@/lib/changelog'
 import { compareVersions, parseVersionCore, selectUnseen } from '@/lib/semver'
+import {
+  CONTENT_STATE_KEY,
+  HUB_STATE_KEY,
+  LAST_VIEW_KEY,
+  LIBRARY_STATE_KEY,
+  debounce,
+  readSettingJson,
+  sanitizeLastView,
+  writeSettingJson,
+} from '@/lib/view-state'
 import HubView from '@/views/HubView'
 import LibraryView from '@/views/LibraryView'
 import ContentView from '@/views/ContentView'
@@ -30,6 +40,8 @@ const NAV_ITEMS = [
 
 export default function App() {
   const [view, setView] = useState('library')
+  const [visitedViews, setVisitedViews] = useState(() => new Set(['library']))
+  const [uiHydrated, setUiHydrated] = useState(false)
   const [dlPanelOpen, setDlPanelOpen] = useState(false)
   const [showWizard, setShowWizard] = useState(null) // null=checking, true/false
   const [whatsNew, setWhatsNew] = useState(null) // { entries, current } | null
@@ -39,10 +51,48 @@ export default function App() {
   const dlErrorBadge = dlItems.filter((d) => d.status === 'failed').length
 
   useEffect(() => {
+    let cancelled = false
     useDownloadStore.getState().init()
-    useHubStore.getState().hydrateHubFilterPreferences()
-    useLibraryStore.getState().hydrateLibraryVisualPreferences()
-    useContentStore.getState().hydrateContentVisualPreferences()
+
+    const saveHubState = debounce((state) => writeSettingJson(HUB_STATE_KEY, state), 300)
+    const saveLibraryState = debounce((state) => writeSettingJson(LIBRARY_STATE_KEY, state), 300)
+    const saveContentState = debounce((state) => writeSettingJson(CONTENT_STATE_KEY, state), 300)
+    const cleanupHubPersistence = useHubStore.subscribe((state) => saveHubState(state.getPersistedState()))
+    const cleanupLibraryPersistence = useLibraryStore.subscribe((state) => saveLibraryState(state.getPersistedState()))
+    const cleanupContentPersistence = useContentStore.subscribe((state) => saveContentState(state.getPersistedState()))
+
+    const hydrateUiState = async () => {
+      try {
+        const [lastView, hubState, libraryState, contentState] = await Promise.all([
+          readSettingJson(LAST_VIEW_KEY, 'library'),
+          readSettingJson(HUB_STATE_KEY, null),
+          readSettingJson(LIBRARY_STATE_KEY, null),
+          readSettingJson(CONTENT_STATE_KEY, null),
+        ])
+
+        await Promise.all([
+          useHubStore.getState().hydrateHubFilterPreferences(),
+          useLibraryStore.getState().hydrateLibraryVisualPreferences(),
+          useContentStore.getState().hydrateContentVisualPreferences(),
+        ])
+
+        useHubStore.getState().applyPersistedState(hubState)
+        useLibraryStore.getState().applyPersistedState(libraryState)
+        useContentStore.getState().applyPersistedState(contentState)
+
+        const safeView = sanitizeLastView(lastView)
+        if (!cancelled) {
+          setView(safeView)
+          setVisitedViews(new Set([safeView]))
+          setUiHydrated(true)
+        }
+      } catch (err) {
+        console.warn('Failed to hydrate view state:', err.message)
+        if (!cancelled) setUiHydrated(true)
+      }
+    }
+    void hydrateUiState()
+
     // Labels are app-wide reference data; load once here (not per-view) and
     // refresh on the broadcast event. Each view used to own a copy + listener,
     // which meant whichever view was unmounted at mutation time stayed stale.
@@ -95,6 +145,10 @@ export default function App() {
       toast(`Startup scan: ${listed}${tail} could not be read (corrupted or invalid).`, 'error')
     })
     return () => {
+      cancelled = true
+      cleanupHubPersistence()
+      cleanupLibraryPersistence()
+      cleanupContentPersistence()
       cleanupLabels()
       cleanupPackagesUpdated()
       cleanupContentsUpdated()
@@ -137,6 +191,19 @@ export default function App() {
   }, [showWizard])
 
   const navContextRef = useRef(null)
+  const activateView = useCallback((targetView) => {
+    const safeView = sanitizeLastView(targetView)
+    setVisitedViews((prev) => {
+      if (prev.has(safeView)) return prev
+      const next = new Set(prev)
+      next.add(safeView)
+      return next
+    })
+    setView(safeView)
+    setDlPanelOpen(false)
+    void writeSettingJson(LAST_VIEW_KEY, safeView)
+  }, [])
+
   const onWhatsNewDismiss = useCallback(async () => {
     if (!whatsNew) return
     const v = whatsNew.current
@@ -144,22 +211,22 @@ export default function App() {
     await window.api.settings.set('whats_new_last_seen_version', v)
   }, [whatsNew])
 
-  const navigateTo = useCallback((targetView, context) => {
-    if (targetView === 'hub') {
-      if (context?.openResource) {
-        useHubStore.getState().openDetail(context.openResource)
+  const navigateTo = useCallback(
+    (targetView, context) => {
+      if (targetView === 'hub') {
+        if (context?.openResource) {
+          void useHubStore.getState().openDetail(context.openResource)
+        }
+        navContextRef.current = null
       } else {
-        useHubStore.getState().closeDetail()
+        navContextRef.current = context || null
       }
-      navContextRef.current = null
-    } else {
-      navContextRef.current = context || null
-    }
-    setView(targetView)
-    setDlPanelOpen(false)
-  }, [])
+      activateView(targetView)
+    },
+    [activateView],
+  )
 
-  if (showWizard === null) {
+  if (showWizard === null || !uiHydrated) {
     return <div className="h-full bg-base" />
   }
 
@@ -188,9 +255,7 @@ export default function App() {
                 item={item}
                 active={view === item.id && !dlPanelOpen}
                 onClick={() => {
-                  if (item.id === 'hub') useHubStore.getState().closeDetail()
-                  setView(item.id)
-                  setDlPanelOpen(false)
+                  activateView(item.id)
                 }}
               />
             ))}
@@ -209,8 +274,7 @@ export default function App() {
               item={{ id: 'settings', icon: Settings, label: 'Settings' }}
               active={view === 'settings' && !dlPanelOpen}
               onClick={() => {
-                setView('settings')
-                setDlPanelOpen(false)
+                activateView('settings')
               }}
             />
           </div>
@@ -223,10 +287,26 @@ export default function App() {
         <div className="flex-1 flex flex-col min-w-0">
           <main className="flex-1 overflow-hidden">
             <ErrorBoundary>
-              {view === 'hub' && <HubView onNavigate={navigateTo} />}
-              {view === 'library' && <LibraryView onNavigate={navigateTo} navContext={navContextRef} />}
-              {view === 'content' && <ContentView onNavigate={navigateTo} navContext={navContextRef} />}
-              {view === 'settings' && <SettingsView />}
+              {visitedViews.has('hub') && (
+                <div hidden={view !== 'hub'} className="h-full min-h-0">
+                  <HubView onNavigate={navigateTo} active={view === 'hub'} />
+                </div>
+              )}
+              {visitedViews.has('library') && (
+                <div hidden={view !== 'library'} className="h-full min-h-0">
+                  <LibraryView onNavigate={navigateTo} navContext={navContextRef} active={view === 'library'} />
+                </div>
+              )}
+              {visitedViews.has('content') && (
+                <div hidden={view !== 'content'} className="h-full min-h-0">
+                  <ContentView onNavigate={navigateTo} navContext={navContextRef} active={view === 'content'} />
+                </div>
+              )}
+              {visitedViews.has('settings') && (
+                <div hidden={view !== 'settings'} className="h-full min-h-0">
+                  <SettingsView />
+                </div>
+              )}
             </ErrorBoundary>
           </main>
           <StatusBar />
