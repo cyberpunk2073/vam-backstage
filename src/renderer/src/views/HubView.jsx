@@ -94,6 +94,10 @@ export function shouldRenderHubPageNav(edge, browseMode, maxHubPage, showInfinit
   return false
 }
 
+export function shouldRenderHubPageSummary(browseMode, showInfinitePagerControls = true) {
+  return browseMode !== 'infinite' || showInfinitePagerControls
+}
+
 export default function HubView({ onNavigate, active = true }) {
   const {
     resources,
@@ -740,7 +744,7 @@ export default function HubView({ onNavigate, active = true }) {
           </div>
           {renderPageNav('toolbar')}
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-            {renderPageSummary()}
+            {shouldRenderHubPageSummary(browseMode, showInfinitePagerControls) && renderPageSummary()}
             <ThumbnailSizeSlider
               cardWidth={cardWidth}
               availableWidth={availableWidth}

@@ -5,6 +5,7 @@ import {
   hubPageForVisibleResourceIndex,
   shouldFetchHubResources,
   shouldRenderHubPageNav,
+  shouldRenderHubPageSummary,
 } from './HubView'
 
 describe('HubView resource fetch gate', () => {
@@ -60,5 +61,11 @@ describe('HubView infinite page tracking', () => {
     expect(shouldRenderHubPageNav('bottom', 'infinite', 2)).toBe(false)
     expect(shouldRenderHubPageNav('bottom', 'paged', 2)).toBe(true)
     expect(shouldRenderHubPageNav('toolbar', 'paged', 1)).toBe(false)
+  })
+
+  it('hides infinite page summary with infinite page controls', () => {
+    expect(shouldRenderHubPageSummary('infinite', false)).toBe(false)
+    expect(shouldRenderHubPageSummary('infinite', true)).toBe(true)
+    expect(shouldRenderHubPageSummary('paged', false)).toBe(true)
   })
 })
