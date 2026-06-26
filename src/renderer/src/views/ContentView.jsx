@@ -149,11 +149,12 @@ function applyContentSidebarFilters(baseItems, ctx, omit = {}) {
   return items
 }
 
-export default function ContentView({ onNavigate, navContext }) {
+export default function ContentView({ onNavigate, navContext, active = true }) {
   const {
     contents,
     selectedItem,
     selectedPackage,
+    pendingRestoreItem,
     search,
     authorSearch,
     selectedTypes,
@@ -183,6 +184,7 @@ export default function ContentView({ onNavigate, navContext }) {
     cardWidth,
     setCardWidth,
     selectItem,
+    consumePendingRestoreItem,
     bulkSelectedIds,
     toggleBulkSelect,
     rangeBulkSelect,
@@ -236,13 +238,14 @@ export default function ContentView({ onNavigate, navContext }) {
   }, [])
 
   useEffect(() => {
+    if (!active) return
     const ctx = navContext?.current
     if (!ctx) return
     if (ctx.filterByPackage) {
       useContentStore.getState().showPackageContents(ctx.filterByPackage)
     }
     navContext.current = null
-  }, [navContext])
+  }, [active, navContext])
 
   const resetPackageTypeFilter = useCallback(() => {
     selectSinglePackageType('All')
@@ -663,6 +666,22 @@ export default function ContentView({ onNavigate, navContext }) {
   )
 
   useEffect(() => {
+    if (!active || !pendingRestoreItem || filtered.length === 0) return
+    const selectedId = pendingRestoreItem.selectedItemId
+    const selectedPackageFilename = pendingRestoreItem.selectedPackageFilename
+    const target = filtered.find(
+      (c) =>
+        String(c.id) === String(selectedId) &&
+        (!selectedPackageFilename || c.packageFilename === selectedPackageFilename),
+    )
+    consumePendingRestoreItem()
+    if (!target) return
+    void runSelectItem(target)
+  }, [active, pendingRestoreItem, filtered, consumePendingRestoreItem, runSelectItem])
+
+  useEffect(() => {
+    if (!active) return
+    if (pendingRestoreItem) return
     if (bulkActive || filtered.length === 0) {
       prevScrollResetKeyRef.current = scrollResetKey
       return
@@ -678,7 +697,7 @@ export default function ContentView({ onNavigate, navContext }) {
     const target = filtered[idx]
     if (!target) return
     void runSelectItem(target)
-  }, [bulkActive, filtered, selectedItem, scrollResetKey, runSelectItem])
+  }, [active, pendingRestoreItem, bulkActive, filtered, selectedItem, scrollResetKey, runSelectItem])
 
   const handleContentClick = useCallback(
     (item, e) => {
@@ -727,7 +746,7 @@ export default function ContentView({ onNavigate, navContext }) {
   )
 
   useKeyboardNav({
-    items: bulkActive ? [] : filtered,
+    items: !active || bulkActive ? [] : filtered,
     selectedId: selectedItem?.id,
     onSelect: handleKeyboardSelect,
     onClose: () => {
@@ -737,6 +756,7 @@ export default function ContentView({ onNavigate, navContext }) {
   })
 
   useEffect(() => {
+    if (!active) return
     function onKeyDown(e) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return
       if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
@@ -746,9 +766,10 @@ export default function ContentView({ onNavigate, navContext }) {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [orderedContentIds, selectAllBulk])
+  }, [active, orderedContentIds, selectAllBulk])
 
   useEffect(() => {
+    if (!active) return
     if (!bulkActive) return
     function onSpace(e) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return
@@ -760,7 +781,7 @@ export default function ContentView({ onNavigate, navContext }) {
     }
     window.addEventListener('keydown', onSpace, true)
     return () => window.removeEventListener('keydown', onSpace, true)
-  }, [bulkActive])
+  }, [active, bulkActive])
 
   const selectedBulkSet = useMemo(() => new Set(bulkSelectedIds), [bulkSelectedIds])
 
