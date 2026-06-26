@@ -541,9 +541,9 @@ export default function SettingsView() {
           </label>
           <label className="flex items-center gap-3 cursor-pointer">
             <div className="flex-1 min-w-0">
-              <div className="text-xs text-text-primary font-medium">Remember infinite-scroll page</div>
+              <div className="text-xs text-text-primary font-medium">Restore last scrolled page</div>
               <div className="text-[11px] text-text-tertiary mt-0.5">
-                When Hub uses infinite scrolling, reopen on the page containing the first visible item.
+                Reopen Hub infinite scrolling at the page you last reached.
               </div>
             </div>
             <Switch checked={rememberHubInfinitePage} onCheckedChange={setRememberHubInfinitePage} />
