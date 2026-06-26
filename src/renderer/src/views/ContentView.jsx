@@ -196,6 +196,7 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
   const [gridLayout, setGridLayout] = useState({ cols: 1, availableWidth: 0 })
   const [tagCounts, setTagCounts] = useState({})
   const [authorCounts, setAuthorCounts] = useState({})
+  const [restoreScrollKey, setRestoreScrollKey] = useState('')
   const [detailPanelWidth] = usePersistedPanelWidth('panel_width_detail', { min: 260, max: 500, defaultWidth: 340 })
   const selectingRef = useRef(false)
 
@@ -676,6 +677,7 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
     )
     consumePendingRestoreItem()
     if (!target) return
+    setRestoreScrollKey(String(target.id))
     void runSelectItem(target)
   }, [active, pendingRestoreItem, filtered, consumePendingRestoreItem, runSelectItem])
 
@@ -1102,6 +1104,8 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
             itemHeight={cardWidth}
             className="flex-1"
             scrollResetKey={scrollResetKey}
+            restoreIndex={selectedIdx}
+            restoreKey={restoreScrollKey}
             onLayout={setGridLayout}
             onEmptyAreaPointerDown={bulkActive ? () => clearBulkSelection() : undefined}
             renderItem={(item) => (
@@ -1157,6 +1161,8 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
                 rowHeight={37}
                 className="flex-1"
                 scrollResetKey={scrollResetKey}
+                restoreIndex={selectedIdx}
+                restoreKey={restoreScrollKey}
                 renderRow={(item) => (
                   <ContentItemContextMenu
                     key={item.id}

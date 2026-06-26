@@ -212,6 +212,7 @@ export default function LibraryView({ onNavigate, navContext, active = true }) {
   const [gridLayout, setGridLayout] = useState({ cols: 1, availableWidth: 0 })
   const [tagCounts, setTagCounts] = useState({})
   const [authorCounts, setAuthorCounts] = useState({})
+  const [restoreScrollKey, setRestoreScrollKey] = useState('')
   const [detailPanelWidth] = usePersistedPanelWidth('panel_width_detail', { min: 260, max: 500, defaultWidth: 340 })
   const selectingRef = useRef(false)
 
@@ -605,6 +606,7 @@ export default function LibraryView({ onNavigate, navContext, active = true }) {
     const target = filtered.find((p) => p.filename === pendingRestoreFilename)
     consumePendingRestoreFilename()
     if (!target) return
+    setRestoreScrollKey(target.filename)
     void runSelectPackage(target.filename)
   }, [active, packagesLoaded, pendingRestoreFilename, filtered, consumePendingRestoreFilename, runSelectPackage])
 
@@ -1084,6 +1086,8 @@ export default function LibraryView({ onNavigate, navContext, active = true }) {
             fixedHeight={compactCards ? 0 : 84}
             className="flex-1"
             scrollResetKey={scrollResetKey}
+            restoreIndex={selectedIdx}
+            restoreKey={restoreScrollKey}
             onLayout={setGridLayout}
             onEmptyAreaPointerDown={bulkActive ? () => clearBulkSelection() : undefined}
             renderItem={(pkg) => {
@@ -1139,6 +1143,8 @@ export default function LibraryView({ onNavigate, navContext, active = true }) {
                 rowHeight={37}
                 className="flex-1"
                 scrollResetKey={scrollResetKey}
+                restoreIndex={selectedIdx}
+                restoreKey={restoreScrollKey}
                 renderRow={(pkg) => {
                   const updateInfo = updateCheckResults?.[pkg.filename]
                   const dimUpdateUnavailable =
