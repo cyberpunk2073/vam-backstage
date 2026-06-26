@@ -54,6 +54,8 @@ describe('HubView infinite page tracking', () => {
   it('keeps page controls in the sticky toolbar', () => {
     expect(shouldRenderHubPageNav('toolbar', 'infinite', 2)).toBe(true)
     expect(shouldRenderHubPageNav('toolbar', 'paged', 2)).toBe(true)
+    expect(shouldRenderHubPageNav('toolbar', 'infinite', 2, false)).toBe(false)
+    expect(shouldRenderHubPageNav('toolbar', 'paged', 2, false)).toBe(true)
     expect(shouldRenderHubPageNav('top', 'infinite', 2)).toBe(false)
     expect(shouldRenderHubPageNav('bottom', 'infinite', 2)).toBe(false)
     expect(shouldRenderHubPageNav('bottom', 'paged', 2)).toBe(true)

@@ -63,6 +63,8 @@ export default function SettingsView() {
   const setDimInactive = useLibraryStore((s) => s.setDimInactive)
   const suppressDisablePackageWarning = useLibraryStore((s) => s.suppressDisablePackageWarning)
   const setSuppressDisablePackageWarning = useLibraryStore((s) => s.setSuppressDisablePackageWarning)
+  const showHubInfinitePager = useHubStore((s) => s.showInfinitePagerControls)
+  const setShowHubInfinitePager = useHubStore((s) => s.setShowInfinitePagerControls)
   const rememberHubInfinitePage = useHubStore((s) => s.trackInfiniteRestorePage)
   const setRememberHubInfinitePage = useHubStore((s) => s.setTrackInfiniteRestorePage)
 
@@ -528,6 +530,15 @@ export default function SettingsView() {
 
         {/* Hub */}
         <Section title="Hub" description="Control Hub browsing behavior.">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-text-primary font-medium">Show infinite-scroll page controls</div>
+              <div className="text-[11px] text-text-tertiary mt-0.5">
+                Show page navigation in the Hub toolbar while using infinite scrolling.
+              </div>
+            </div>
+            <Switch checked={showHubInfinitePager} onCheckedChange={setShowHubInfinitePager} />
+          </label>
           <label className="flex items-center gap-3 cursor-pointer">
             <div className="flex-1 min-w-0">
               <div className="text-xs text-text-primary font-medium">Remember infinite-scroll page</div>

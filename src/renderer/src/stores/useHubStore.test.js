@@ -90,6 +90,21 @@ describe('useHubStore', () => {
     expect(window.api.settings.set).toHaveBeenCalledWith('hub_remember_infinite_page', '0')
   })
 
+  it('hydrates the infinite pager controls setting', async () => {
+    window.api.settings.get.mockImplementation((key) => Promise.resolve(key === 'hub_show_infinite_pager' ? '0' : null))
+
+    await useHubStore.getState().hydrateHubFilterPreferences()
+
+    expect(useHubStore.getState().showInfinitePagerControls).toBe(false)
+  })
+
+  it('persists the infinite pager controls setting', () => {
+    useHubStore.getState().setShowInfinitePagerControls(false)
+
+    expect(useHubStore.getState().showInfinitePagerControls).toBe(false)
+    expect(window.api.settings.set).toHaveBeenCalledWith('hub_show_infinite_pager', '0')
+  })
+
   it('normalizes hub sort before exposing loaded filter options', async () => {
     const snapshots = []
     const unsubscribe = useHubStore.subscribe((state) => {

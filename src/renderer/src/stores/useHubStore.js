@@ -4,6 +4,7 @@ import { HUB_PER_PAGE_OPTIONS, sanitizeHubState } from '@/lib/view-state'
 import { useInstalledStore } from './useInstalledStore'
 
 let fetchSeq = 0
+const HUB_SHOW_INFINITE_PAGER_KEY = 'hub_show_infinite_pager'
 const HUB_REMEMBER_INFINITE_PAGE_KEY = 'hub_remember_infinite_page'
 
 function syncInstalledFromResources(resources) {
@@ -29,6 +30,7 @@ export const useHubStore = create((set, get) => ({
   page: 1,
   startPage: 1,
   restorePage: 1,
+  showInfinitePagerControls: true,
   trackInfiniteRestorePage: true,
   perPage: HUB_PER_PAGE_OPTIONS[0],
   browseMode: 'infinite',
@@ -99,6 +101,10 @@ export const useHubStore = create((set, get) => ({
     const max = Math.max(state.totalPages || 1, 1)
     const restorePage = Math.min(Math.max(1, Number(page) || 1), max)
     if (restorePage !== state.restorePage) set({ restorePage })
+  },
+  setShowInfinitePagerControls: (showInfinitePagerControls) => {
+    set({ showInfinitePagerControls })
+    void window.api.settings.set(HUB_SHOW_INFINITE_PAGER_KEY, showInfinitePagerControls ? '1' : '0')
   },
   setTrackInfiniteRestorePage: (trackInfiniteRestorePage) => {
     set({ trackInfiniteRestorePage })
@@ -176,18 +182,22 @@ export const useHubStore = create((set, get) => ({
     }
   },
 
-  /** Restore Hub UI preferences from disk (sort, gallery card size/mode, page memory) */
+  /** Restore Hub UI preferences from disk (sort, gallery card size/mode, page controls/memory) */
   hydrateHubFilterPreferences: async () => {
     try {
-      const [last, mode, widthStr, rememberInfinitePage] = await Promise.all([
+      const [last, mode, widthStr, showInfinitePager, rememberInfinitePage] = await Promise.all([
         window.api.settings.get('hub_last_sort'),
         window.api.settings.get('hub_card_mode'),
         window.api.settings.get('hub_card_width'),
+        window.api.settings.get(HUB_SHOW_INFINITE_PAGER_KEY),
         window.api.settings.get(HUB_REMEMBER_INFINITE_PAGE_KEY),
       ])
       const patch = {}
       if (last) patch.sort = last
       if (mode === 'minimal' || mode === 'medium') patch.cardMode = mode
+      if (showInfinitePager === '0' || showInfinitePager === '1') {
+        patch.showInfinitePagerControls = showInfinitePager === '1'
+      }
       if (rememberInfinitePage === '0' || rememberInfinitePage === '1') {
         patch.trackInfiniteRestorePage = rememberInfinitePage === '1'
       }

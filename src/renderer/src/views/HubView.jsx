@@ -86,8 +86,9 @@ export function hubInfiniteOffsetTitle({ startPage }) {
   return Number.isInteger(n) && n > 1 ? 'Earlier Hub pages are hidden until you start at page 1.' : undefined
 }
 
-export function shouldRenderHubPageNav(edge, browseMode, maxHubPage) {
+export function shouldRenderHubPageNav(edge, browseMode, maxHubPage, showInfinitePagerControls = true) {
   if (maxHubPage <= 1) return false
+  if (browseMode === 'infinite' && !showInfinitePagerControls) return false
   if (edge === 'toolbar') return true
   if (edge === 'bottom') return browseMode === 'paged'
   return false
@@ -101,6 +102,7 @@ export default function HubView({ onNavigate, active = true }) {
     page,
     startPage,
     restorePage,
+    showInfinitePagerControls,
     trackInfiniteRestorePage,
     perPage,
     browseMode,
@@ -359,7 +361,7 @@ export default function HubView({ onNavigate, active = true }) {
   }, [maxHubPage, page])
 
   const renderPageNav = (edge) => {
-    if (!shouldRenderHubPageNav(edge, browseMode, maxHubPage)) return null
+    if (!shouldRenderHubPageNav(edge, browseMode, maxHubPage, showInfinitePagerControls)) return null
     const iconClass =
       'h-8 w-8 rounded flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-elevated disabled:opacity-30 cursor-pointer disabled:cursor-default'
     const pageClass =
