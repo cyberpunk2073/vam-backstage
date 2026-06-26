@@ -17,9 +17,13 @@ const strings = (value) => (Array.isArray(value) ? value.filter((x) => typeof x 
 const ints = (value) => (Array.isArray(value) ? value.filter((x) => Number.isInteger(x)) : [])
 const id = (value) => (typeof value === 'string' || typeof value === 'number' ? String(value) : null)
 
-export function sanitizeLastView(value) {
-  if (value === 'settings') return 'hub'
+export function sanitizeView(value) {
   return VALID_VIEWS.has(value) ? value : 'library'
+}
+
+export function sanitizeLastView(value) {
+  const view = sanitizeView(value)
+  return view === 'settings' ? 'hub' : view
 }
 
 export function sanitizeHubState(raw) {

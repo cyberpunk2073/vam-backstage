@@ -18,6 +18,7 @@ import {
   debounce,
   readSettingJson,
   sanitizeLastView,
+  sanitizeView,
   writeSettingJson,
 } from '@/lib/view-state'
 import HubView from '@/views/HubView'
@@ -192,7 +193,7 @@ export default function App() {
 
   const navContextRef = useRef(null)
   const activateView = useCallback((targetView) => {
-    const safeView = sanitizeLastView(targetView)
+    const safeView = sanitizeView(targetView)
     setVisitedViews((prev) => {
       if (prev.has(safeView)) return prev
       const next = new Set(prev)
