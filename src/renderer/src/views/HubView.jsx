@@ -294,7 +294,7 @@ export default function HubView({ onNavigate, active = true }) {
           edge === 'top' ? 'mb-3' : 'mt-4'
         }`}
       >
-        <div className="min-w-[150px] flex-1 text-center text-[11px] tabular-nums text-text-tertiary">{pageRange}</div>
+        <div className="min-w-[1px] flex-1" />
         <div className="flex min-w-0 max-w-full flex-wrap items-center justify-center gap-1">
           <button
             type="button"
@@ -357,7 +357,8 @@ export default function HubView({ onNavigate, active = true }) {
             <ChevronsRight size={17} />
           </button>
         </div>
-        <div className="flex min-w-[92px] flex-1 justify-end">
+        <div className="flex min-w-[230px] flex-1 items-center justify-end gap-2">
+          <span className="text-right text-[11px] tabular-nums text-text-tertiary">{pageRange}</span>
           <Select value={String(perPage)} onValueChange={setPerPage}>
             <SelectTrigger size="sm" className="h-8 min-w-[92px]" aria-label="Hub items per page">
               <SelectValue />
