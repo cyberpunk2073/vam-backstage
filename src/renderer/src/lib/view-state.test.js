@@ -56,12 +56,30 @@ describe('view-state sanitizers', () => {
 describe('view-state settings helpers', () => {
   it('returns fallback for invalid JSON', async () => {
     const api = { get: vi.fn().mockResolvedValue('{bad') }
-    await expect(readSettingJson(api, 'k', { ok: true })).resolves.toEqual({ ok: true })
+    await expect(readSettingJson('k', { ok: true }, api)).resolves.toEqual({ ok: true })
   })
 
   it('writes compact JSON strings', async () => {
     const api = { set: vi.fn().mockResolvedValue({ ok: true }) }
-    await writeSettingJson(api, 'k', { a: 1 })
+    await writeSettingJson('k', { a: 1 }, api)
     expect(api.set).toHaveBeenCalledWith('k', '{"a":1}')
+  })
+
+  it('defaults to the renderer settings API', async () => {
+    const api = {
+      get: vi.fn().mockResolvedValue('{"hideInstalled":true}'),
+      set: vi.fn().mockResolvedValue({ ok: true }),
+    }
+    vi.stubGlobal('window', { api: { settings: api } })
+
+    try {
+      await expect(readSettingJson('ui:hub_state', null)).resolves.toEqual({ hideInstalled: true })
+      await writeSettingJson('ui:last_view', 'hub')
+
+      expect(api.get).toHaveBeenCalledWith('ui:hub_state')
+      expect(api.set).toHaveBeenCalledWith('ui:last_view', '"hub"')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

@@ -72,8 +72,13 @@ export function sanitizeContentState(raw) {
   }
 }
 
-export async function readSettingJson(settingsApi, key, fallback) {
+function defaultSettingsApi() {
+  return typeof window !== 'undefined' ? window.api?.settings : null
+}
+
+export async function readSettingJson(key, fallback, settingsApi = defaultSettingsApi()) {
   try {
+    if (!settingsApi?.get) return fallback
     const raw = await settingsApi.get(key)
     if (!raw) return fallback
     return JSON.parse(raw)
@@ -82,7 +87,8 @@ export async function readSettingJson(settingsApi, key, fallback) {
   }
 }
 
-export async function writeSettingJson(settingsApi, key, value) {
+export async function writeSettingJson(key, value, settingsApi = defaultSettingsApi()) {
+  if (!settingsApi?.set) return
   await settingsApi.set(key, JSON.stringify(value))
 }
 
