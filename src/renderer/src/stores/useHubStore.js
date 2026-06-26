@@ -26,6 +26,9 @@ export const useHubStore = create((set, get) => ({
   totalFound: 0,
   totalPages: 0,
   page: 1,
+  startPage: 1,
+  restorePage: 1,
+  trackInfiniteRestorePage: true,
   perPage: HUB_PER_PAGE_OPTIONS[0],
   browseMode: 'infinite',
   loading: false,
@@ -77,11 +80,25 @@ export const useHubStore = create((set, get) => ({
     const nextPerPage = HUB_PER_PAGE_OPTIONS.includes(Number(perPage)) ? Number(perPage) : HUB_PER_PAGE_OPTIONS[0]
     const state = get()
     if (nextPerPage === state.perPage) return
-    const nextPage = Math.floor(((state.page - 1) * state.perPage) / nextPerPage) + 1
-    set({ perPage: nextPerPage, page: nextPage })
+    const basePage = state.browseMode === 'infinite' ? state.restorePage : state.page
+    const nextPage = Math.floor(((basePage - 1) * state.perPage) / nextPerPage) + 1
+    set({ perPage: nextPerPage, page: nextPage, startPage: nextPage, restorePage: nextPage })
     void get().fetchResources(true, { page: nextPage })
   },
   goToPage: (page) => get().fetchResources(true, { page }),
+  startInfiniteAtPage: (page) => {
+    const max = Math.max(get().totalPages || 1, 1)
+    const nextPage = Math.min(Math.max(1, Number(page) || 1), max)
+    set({ startPage: nextPage, restorePage: nextPage })
+    return get().fetchResources(true, { page: nextPage })
+  },
+  setInfiniteRestorePage: (page) => {
+    const state = get()
+    if (!state.trackInfiniteRestorePage) return
+    const max = Math.max(state.totalPages || 1, 1)
+    const restorePage = Math.min(Math.max(1, Number(page) || 1), max)
+    if (restorePage !== state.restorePage) set({ restorePage })
+  },
 
   getPersistedState: () => {
     const s = get()
@@ -94,7 +111,7 @@ export const useHubStore = create((set, get) => ({
       sort: s.sort,
       license: s.license,
       browseMode: s.browseMode,
-      page: s.page,
+      page: s.browseMode === 'infinite' ? s.restorePage : s.page,
       perPage: s.perPage,
       detailResourceId: s.detailData?.resource_id ?? s.detailResource?.resource_id ?? s.pendingDetailResourceId ?? null,
     }
@@ -112,6 +129,8 @@ export const useHubStore = create((set, get) => ({
       license: saved.license,
       browseMode: saved.browseMode,
       page: saved.page,
+      startPage: saved.page,
+      restorePage: saved.page,
       perPage: saved.perPage,
       pendingDetailResourceId: saved.detailResourceId,
     })
@@ -141,12 +160,11 @@ export const useHubStore = create((set, get) => ({
     if (!get().resources.length) set({ loading: true })
     try {
       const options = await window.api.hub.filters()
-      set({ filterOptions: options })
       const list = options.sort || []
       let nextSort = get().sort
       if (!nextSort && list.length) nextSort = list[0]
       else if (nextSort && !list.includes(nextSort)) nextSort = list[0] || ''
-      set({ sort: nextSort })
+      set({ filterOptions: options, sort: nextSort })
       if (nextSort) void window.api.settings.set('hub_last_sort', nextSort)
     } catch (err) {
       console.error('Failed to fetch hub filters:', err)
@@ -176,6 +194,12 @@ export const useHubStore = create((set, get) => ({
     const requestedPage = Math.max(1, Number(opts?.page ?? (resetPage ? 1 : state.page)) || 1)
     const append = opts?.append === true
     if (state.page !== requestedPage) set({ page: requestedPage })
+    if (
+      !append &&
+      state.browseMode === 'infinite' &&
+      (state.startPage !== requestedPage || state.restorePage !== requestedPage)
+    )
+      set({ startPage: requestedPage, restorePage: requestedPage })
     set({ loading: true, error: null, ...(append ? {} : { resources: [] }) })
     try {
       if (opts?.forceRefresh) {
@@ -313,6 +337,8 @@ export const useHubStore = create((set, get) => ({
       license: 'Any',
       pendingDetailResourceId: null,
       page: 1,
+      startPage: 1,
+      restorePage: 1,
     })
     if (nextSort) void window.api.settings.set('hub_last_sort', nextSort)
   },
