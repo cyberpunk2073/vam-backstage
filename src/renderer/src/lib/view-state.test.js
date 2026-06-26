@@ -29,7 +29,6 @@ describe('view-state sanitizers', () => {
         selectedHubTags: ['free', 7],
         sort: 'Latest Update',
         license: 'CC BY',
-        hideInstalled: true,
         detailResourceId: 123,
       }),
     ).toEqual({
@@ -40,7 +39,6 @@ describe('view-state sanitizers', () => {
       selectedHubTags: ['free'],
       sort: 'Latest Update',
       license: 'CC BY',
-      hideInstalled: true,
       detailResourceId: '123',
     })
   })

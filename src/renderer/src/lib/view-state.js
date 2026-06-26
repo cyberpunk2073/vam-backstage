@@ -13,7 +13,6 @@ const VALID_PACKAGE_STATUS = new Set(['all', 'enabled', 'disabled', 'offloaded']
 const VALID_VISIBILITY = new Set(['all', 'visible', 'hidden', 'favorites'])
 
 const s = (value, fallback = '') => (typeof value === 'string' ? value : fallback)
-const b = (value) => value === true
 const strings = (value) => (Array.isArray(value) ? value.filter((x) => typeof x === 'string') : [])
 const ints = (value) => (Array.isArray(value) ? value.filter((x) => Number.isInteger(x)) : [])
 const id = (value) => (typeof value === 'string' || typeof value === 'number' ? String(value) : null)
@@ -32,7 +31,6 @@ export function sanitizeHubState(raw) {
     selectedHubTags: strings(r.selectedHubTags),
     sort: s(r.sort),
     license: s(r.license, 'Any') || 'Any',
-    hideInstalled: b(r.hideInstalled),
     detailResourceId: id(r.detailResourceId),
   }
 }

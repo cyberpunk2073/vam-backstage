@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { toast } from '@/components/Toast'
+import { sanitizeContentState } from '@/lib/view-state'
 import { typeFilterSlice } from './typeFilterSlice'
 import { useLibraryStore } from './useLibraryStore'
 
@@ -40,6 +41,7 @@ export const useContentStore = create((set, get) => ({
   contents: [],
   selectedItem: null,
   selectedPackage: null, // package detail for the selected item's owning package
+  pendingRestoreItem: null,
   /** Multi-select: content item ids (same type as item.id) */
   bulkSelectedIds: [],
   bulkAnchorId: null,
@@ -128,6 +130,52 @@ export const useContentStore = create((set, get) => ({
     } catch {}
   },
 
+  getPersistedState: () => {
+    const s = get()
+    return {
+      search: s.search,
+      authorSearch: s.authorSearch,
+      selectedTypes: s.selectedTypes,
+      selectedPackageTypes: s.selectedPackageTypes,
+      selectedTags: s.selectedTags,
+      selectedLabelIds: s.selectedLabelIds,
+      packageFilter: s.packageFilter,
+      packageStatusFilter: s.packageStatusFilter,
+      visibilityFilter: s.visibilityFilter,
+      primarySort: s.primarySort,
+      secondarySort: s.secondarySort,
+      selectedItemId: s.selectedItem?.id ?? s.pendingRestoreItem?.selectedItemId ?? null,
+      selectedPackageFilename: s.selectedItem?.packageFilename ?? s.pendingRestoreItem?.selectedPackageFilename ?? null,
+    }
+  },
+
+  applyPersistedState: (raw) => {
+    const saved = sanitizeContentState(raw)
+    set({
+      search: saved.search,
+      authorSearch: saved.authorSearch,
+      selectedTypes: saved.selectedTypes,
+      selectedPackageTypes: saved.selectedPackageTypes,
+      selectedTags: saved.selectedTags,
+      selectedLabelIds: saved.selectedLabelIds,
+      packageFilter: saved.packageFilter,
+      packageStatusFilter: saved.packageStatusFilter,
+      visibilityFilter: saved.visibilityFilter,
+      primarySort: saved.primarySort,
+      secondarySort: saved.secondarySort,
+      pendingRestoreItem:
+        saved.selectedItemId != null
+          ? { selectedItemId: saved.selectedItemId, selectedPackageFilename: saved.selectedPackageFilename }
+          : null,
+    })
+  },
+
+  consumePendingRestoreItem: () => {
+    const item = get().pendingRestoreItem
+    set({ pendingRestoreItem: null })
+    return item
+  },
+
   fetchContents: async () => {
     try {
       // Block on `fetchPackages` if we haven't loaded packages yet — content
@@ -170,13 +218,25 @@ export const useContentStore = create((set, get) => ({
 
   selectItem: async (item) => {
     if (!item) {
-      set({ selectedItem: null, selectedPackage: null, bulkSelectedIds: [], bulkAnchorId: null })
+      set({
+        selectedItem: null,
+        selectedPackage: null,
+        pendingRestoreItem: null,
+        bulkSelectedIds: [],
+        bulkAnchorId: null,
+      })
       return
     }
     const pkgMap = useLibraryStore.getState().packageByFilename
     const nextPkg = pkgMap.get(item.packageFilename)
     const linkedItem = item.package === nextPkg ? item : { ...item, package: nextPkg }
-    set({ selectedItem: linkedItem, bulkSelectedIds: [], bulkAnchorId: null })
+    set({
+      selectedItem: linkedItem,
+      selectedPackage: null,
+      pendingRestoreItem: null,
+      bulkSelectedIds: [],
+      bulkAnchorId: null,
+    })
     try {
       const pkg = await window.api.packages.detail(item.packageFilename)
       set({ selectedPackage: pkg })
@@ -186,7 +246,7 @@ export const useContentStore = create((set, get) => ({
     }
   },
 
-  clearSelection: () => set({ selectedItem: null, selectedPackage: null }),
+  clearSelection: () => set({ selectedItem: null, selectedPackage: null, pendingRestoreItem: null }),
 
   toggleBulkSelect: (id) =>
     set((s) => {
