@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { hubPageForVisibleResourceIndex, shouldFetchHubResources } from './HubView'
+import {
+  hubInfiniteOffsetLabel,
+  hubPageForVisibleResourceIndex,
+  shouldFetchHubResources,
+  shouldRenderHubPageNav,
+} from './HubView'
 
 describe('HubView resource fetch gate', () => {
   it('waits for filter options before the first resource fetch', () => {
@@ -33,5 +38,19 @@ describe('HubView infinite page tracking', () => {
     expect(hubPageForVisibleResourceIndex(59, 60, 1)).toBe(1)
     expect(hubPageForVisibleResourceIndex(60, 60, 1)).toBe(2)
     expect(hubPageForVisibleResourceIndex(119, 60, 1)).toBe(2)
+  })
+
+  it('labels non-zero infinite offsets', () => {
+    expect(hubInfiniteOffsetLabel(1)).toBeNull()
+    expect(hubInfiniteOffsetLabel(20)).toBe('Earlier results hidden')
+  })
+
+  it('keeps page controls in the sticky toolbar', () => {
+    expect(shouldRenderHubPageNav('toolbar', 'infinite', 2)).toBe(true)
+    expect(shouldRenderHubPageNav('toolbar', 'paged', 2)).toBe(true)
+    expect(shouldRenderHubPageNav('top', 'infinite', 2)).toBe(false)
+    expect(shouldRenderHubPageNav('bottom', 'infinite', 2)).toBe(false)
+    expect(shouldRenderHubPageNav('bottom', 'paged', 2)).toBe(true)
+    expect(shouldRenderHubPageNav('toolbar', 'paged', 1)).toBe(false)
   })
 })

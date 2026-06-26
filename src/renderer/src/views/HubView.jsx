@@ -76,6 +76,18 @@ export function hubPageForVisibleResourceIndex(index, perPage, fallbackPage) {
   return Number.isInteger(index) ? Math.floor(index / Math.max(1, perPage)) + 1 : fallbackPage
 }
 
+export function hubInfiniteOffsetLabel(page) {
+  const n = Number(page)
+  return Number.isInteger(n) && n > 1 ? 'Earlier results hidden' : null
+}
+
+export function shouldRenderHubPageNav(edge, browseMode, maxHubPage) {
+  if (maxHubPage <= 1) return false
+  if (edge === 'toolbar') return true
+  if (edge === 'bottom') return browseMode === 'paged'
+  return false
+}
+
 export default function HubView({ onNavigate, active = true }) {
   const {
     resources,
@@ -342,12 +354,12 @@ export default function HubView({ onNavigate, active = true }) {
   }, [maxHubPage, page])
 
   const renderPageNav = (edge) => {
-    if (maxHubPage <= 1) return null
-    if (edge === 'bottom' && browseMode === 'infinite') return null
+    if (!shouldRenderHubPageNav(edge, browseMode, maxHubPage)) return null
     const iconClass =
       'h-8 w-8 rounded flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-elevated disabled:opacity-30 cursor-pointer disabled:cursor-default'
     const pageClass =
       'h-8 min-w-8 px-2 rounded text-xs tabular-nums hover:bg-elevated disabled:cursor-default cursor-pointer'
+    const infiniteOffsetLabel = hubInfiniteOffsetLabel(restorePage)
     const controls =
       browseMode === 'paged' ? (
         <>
@@ -434,8 +446,15 @@ export default function HubView({ onNavigate, active = true }) {
           >
             <ChevronLeft size={18} />
           </button>
-          <span className="h-8 flex items-center gap-1 text-xs text-text-tertiary">
-            <span>Starting on page</span>
+          <span
+            className={`h-8 flex items-center gap-1 rounded px-2 text-xs ${
+              infiniteOffsetLabel
+                ? 'border border-accent-blue/30 bg-accent-blue/10 text-accent-blue'
+                : 'text-text-tertiary'
+            }`}
+            title={infiniteOffsetLabel ? `Hub is starting at page ${restorePage}` : undefined}
+          >
+            <span>{infiniteOffsetLabel || 'Starting on page'}</span>
             <input
               type="number"
               min="1"
@@ -448,7 +467,7 @@ export default function HubView({ onNavigate, active = true }) {
                 if (e.key === 'Enter') e.currentTarget.blur()
               }}
               aria-label="Hub start page"
-              className="h-8 w-16 rounded border border-input bg-elevated px-2 text-right text-xs tabular-nums text-text-primary outline-none focus:border-ring/50 disabled:opacity-50"
+              className="h-6 w-16 rounded border border-input bg-elevated px-2 text-right text-xs tabular-nums text-text-primary outline-none focus:border-ring/50 disabled:opacity-50"
             />
           </span>
           <button
@@ -463,32 +482,39 @@ export default function HubView({ onNavigate, active = true }) {
           </button>
         </>
       )
+    if (edge === 'toolbar') {
+      return <div className="flex min-w-0 max-w-full flex-wrap items-center justify-center gap-1">{controls}</div>
+    }
     return (
       <div
-        className={`flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-[11px] text-text-tertiary ${
-          edge === 'top' ? 'mb-3' : 'mt-4'
+        className={`flex min-w-0 flex-wrap items-center justify-center gap-x-3 gap-y-2 text-[11px] text-text-tertiary ${
+          edge === 'bottom' ? 'mt-4' : ''
         }`}
       >
-        <div className="min-w-[1px] flex-1" />
+        {edge === 'bottom' && <div className="min-w-[1px] flex-1" />}
         <div className="flex min-w-0 max-w-full flex-wrap items-center justify-center gap-1">{controls}</div>
-        <div className="flex min-w-[230px] flex-1 items-center justify-end gap-2">
-          <span className="text-right text-[11px] tabular-nums text-text-tertiary">{pageRange}</span>
-          <Select value={String(perPage)} onValueChange={setPerPage}>
-            <SelectTrigger size="sm" className="h-8 min-w-[92px]" aria-label="Hub items per page">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent align="end" className="min-w-[92px]">
-              {HUB_PER_PAGE_OPTIONS.map((n) => (
-                <SelectItem key={n} value={String(n)}>
-                  {n} / page
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {renderPageSummary()}
       </div>
     )
   }
+
+  const renderPageSummary = () => (
+    <div className="flex min-w-[230px] flex-1 items-center justify-end gap-2">
+      <span className="text-right text-[11px] tabular-nums text-text-tertiary">{pageRange}</span>
+      <Select value={String(perPage)} onValueChange={setPerPage}>
+        <SelectTrigger size="sm" className="h-8 min-w-[92px]" aria-label="Hub items per page">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent align="end" className="min-w-[92px]">
+          {HUB_PER_PAGE_OPTIONS.map((n) => (
+            <SelectItem key={n} value={String(n)}>
+              {n} / page
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
 
   // Intersection observer sentinel for infinite scroll (root = gallery scroller so rootMargin
   // prefetches below the fold; viewport root + overflow-y ancestor clips the target until late).
@@ -689,46 +715,55 @@ export default function HubView({ onNavigate, active = true }) {
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {/* Toolbar */}
-        <div className="h-10 flex items-center px-4 border-b border-border shrink-0 gap-2">
-          <span className="text-[11px] text-text-tertiary">
-            {loading && resources.length === 0 ? 'Searching…' : `${totalFound.toLocaleString()} packages`}
-          </span>
-          <button
-            type="button"
-            onClick={() => fetchResources(true, { forceRefresh: true, page: browseMode === 'paged' ? page : 1 })}
-            disabled={loading}
-            title="Refresh"
-            className="p-1 rounded text-text-tertiary hover:text-text-secondary disabled:opacity-30 cursor-pointer disabled:cursor-default"
-          >
-            <RefreshCw size={13} className={loading && resources.length === 0 ? 'animate-spin' : ''} />
-          </button>
-          <div className="flex-1" />
-          <ThumbnailSizeSlider cardWidth={cardWidth} availableWidth={availableWidth} onCardWidthChange={setCardWidth} />
-          <button
-            type="button"
-            onClick={toggleBrowseMode}
-            title={browseMode === 'infinite' ? 'Infinite scroll' : 'Paged browsing'}
-            className="p-1.5 rounded cursor-pointer text-text-tertiary hover:text-text-primary hover:bg-elevated"
-          >
-            {browseMode === 'infinite' ? <InfinityIcon size={14} /> : <BookOpen size={14} />}
-          </button>
-          <div className="flex items-center gap-px bg-elevated rounded p-0.5">
+        <div className="min-h-10 grid grid-cols-[minmax(120px,1fr)_auto_minmax(120px,1fr)] items-center px-4 py-1 border-b border-border shrink-0 gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="text-[11px] text-text-tertiary">
+              {loading && resources.length === 0 ? 'Searching…' : `${totalFound.toLocaleString()} packages`}
+            </span>
             <button
               type="button"
-              onClick={() => setCardMode('minimal')}
-              title="Small cards"
-              className={`p-1.5 rounded cursor-pointer ${cardMode === 'minimal' ? 'bg-hover text-text-primary' : 'text-text-tertiary'}`}
+              onClick={() => fetchResources(true, { forceRefresh: true, page: browseMode === 'paged' ? page : 1 })}
+              disabled={loading}
+              title="Refresh"
+              className="p-1 rounded text-text-tertiary hover:text-text-secondary disabled:opacity-30 cursor-pointer disabled:cursor-default"
             >
-              <Grid3x3 size={14} />
+              <RefreshCw size={13} className={loading && resources.length === 0 ? 'animate-spin' : ''} />
             </button>
+          </div>
+          {renderPageNav('toolbar')}
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+            {renderPageSummary()}
+            <ThumbnailSizeSlider
+              cardWidth={cardWidth}
+              availableWidth={availableWidth}
+              onCardWidthChange={setCardWidth}
+            />
             <button
               type="button"
-              onClick={() => setCardMode('medium')}
-              title="Large cards"
-              className={`p-1.5 rounded cursor-pointer ${cardMode === 'medium' ? 'bg-hover text-text-primary' : 'text-text-tertiary'}`}
+              onClick={toggleBrowseMode}
+              title={browseMode === 'infinite' ? 'Infinite scroll' : 'Paged browsing'}
+              className="p-1.5 rounded cursor-pointer text-text-tertiary hover:text-text-primary hover:bg-elevated"
             >
-              <Grid2x2 size={14} />
+              {browseMode === 'infinite' ? <InfinityIcon size={14} /> : <BookOpen size={14} />}
             </button>
+            <div className="flex items-center gap-px bg-elevated rounded p-0.5">
+              <button
+                type="button"
+                onClick={() => setCardMode('minimal')}
+                title="Small cards"
+                className={`p-1.5 rounded cursor-pointer ${cardMode === 'minimal' ? 'bg-hover text-text-primary' : 'text-text-tertiary'}`}
+              >
+                <Grid3x3 size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setCardMode('medium')}
+                title="Large cards"
+                className={`p-1.5 rounded cursor-pointer ${cardMode === 'medium' ? 'bg-hover text-text-primary' : 'text-text-tertiary'}`}
+              >
+                <Grid2x2 size={14} />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -750,7 +785,6 @@ export default function HubView({ onNavigate, active = true }) {
             </div>
           ) : (
             <>
-              {renderPageNav('top')}
               <div
                 className="grid gap-3 content-start"
                 style={{ gridTemplateColumns: `repeat(auto-fill,minmax(min(${cardWidth}px,100%),1fr))` }}
