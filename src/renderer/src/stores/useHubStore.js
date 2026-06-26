@@ -26,6 +26,7 @@ export const useHubStore = create((set, get) => ({
   totalFound: 0,
   totalPages: 0,
   page: 1,
+  browseMode: 'infinite',
   loading: false,
   error: null,
 
@@ -70,6 +71,8 @@ export const useHubStore = create((set, get) => ({
     void window.api.settings.set('hub_card_width', String(cardWidth))
   },
   setPage: (page) => set({ page }),
+  setBrowseMode: (browseMode) => set({ browseMode: browseMode === 'paged' ? 'paged' : 'infinite' }),
+  goToPage: (page) => get().fetchResources(true, { page }),
 
   getPersistedState: () => {
     const s = get()
@@ -81,6 +84,8 @@ export const useHubStore = create((set, get) => ({
       selectedHubTags: s.selectedHubTags,
       sort: s.sort,
       license: s.license,
+      browseMode: s.browseMode,
+      page: s.page,
       detailResourceId: s.detailData?.resource_id ?? s.detailResource?.resource_id ?? s.pendingDetailResourceId ?? null,
     }
   },
@@ -95,6 +100,8 @@ export const useHubStore = create((set, get) => ({
       selectedHubTags: saved.selectedHubTags,
       sort: saved.sort,
       license: saved.license,
+      browseMode: saved.browseMode,
+      page: saved.page,
       pendingDetailResourceId: saved.detailResourceId,
     })
   },
@@ -155,16 +162,17 @@ export const useHubStore = create((set, get) => ({
   fetchResources: async (resetPage, opts) => {
     const seq = ++fetchSeq
     const state = get()
-    const page = resetPage ? 1 : state.page
-    if (resetPage && state.page !== 1) set({ page: 1 })
-    set({ loading: true, error: null, ...(resetPage ? { resources: [] } : {}) })
+    const requestedPage = Math.max(1, Number(opts?.page ?? (resetPage ? 1 : state.page)) || 1)
+    const append = opts?.append === true
+    if (state.page !== requestedPage) set({ page: requestedPage })
+    set({ loading: true, error: null, ...(append ? {} : { resources: [] }) })
     try {
       if (opts?.forceRefresh) {
         await window.api.hub.invalidateCaches()
         await get().fetchFilters(true)
       }
       const q = get()
-      const params = { page, perpage: 30 }
+      const params = { page: requestedPage, perpage: 30 }
       if (q.sort) params.sort = q.sort
       if (q.search) params.search = q.search
       if (q.selectedType !== 'All') params.type = q.selectedType
@@ -179,21 +187,21 @@ export const useHubStore = create((set, get) => ({
       const incoming = result.resources || []
       syncInstalledFromResources(incoming)
       set({
-        resources: resetPage ? incoming : [...q.resources, ...incoming],
+        resources: append ? [...get().resources, ...incoming] : incoming,
         totalFound: result.totalFound || 0,
         totalPages: result.totalPages || 0,
         loading: false,
       })
     } catch (err) {
       if (seq !== fetchSeq) return
-      set({ error: err.message, loading: false, ...(resetPage ? { resources: [] } : {}) })
+      set({ error: err.message, loading: false, ...(append ? {} : { resources: [] }) })
     }
   },
 
   fetchNextPage: () => {
     const { page, totalPages, loading } = get()
     if (loading || page >= totalPages) return
-    set({ page: page + 1, loading: true })
+    void get().fetchResources(false, { page: page + 1, append: true })
   },
 
   openDetail: async (resource) => {
