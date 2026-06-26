@@ -76,9 +76,14 @@ export function hubPageForVisibleResourceIndex(index, perPage, fallbackPage) {
   return Number.isInteger(index) ? Math.floor(index / Math.max(1, perPage)) + 1 : fallbackPage
 }
 
-export function hubInfiniteOffsetLabel(page) {
-  const n = Number(page)
-  return Number.isInteger(n) && n > 1 ? 'Earlier results hidden' : null
+export function hubInfiniteOffsetLabel({ startPage }) {
+  const n = Number(startPage)
+  return Number.isInteger(n) && n > 1 ? 'Earlier results hidden' : 'Page'
+}
+
+export function hubInfiniteOffsetTitle({ startPage }) {
+  const n = Number(startPage)
+  return Number.isInteger(n) && n > 1 ? 'Earlier Hub pages are hidden until you start at page 1.' : undefined
 }
 
 export function shouldRenderHubPageNav(edge, browseMode, maxHubPage) {
@@ -359,7 +364,8 @@ export default function HubView({ onNavigate, active = true }) {
       'h-8 w-8 rounded flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-elevated disabled:opacity-30 cursor-pointer disabled:cursor-default'
     const pageClass =
       'h-8 min-w-8 px-2 rounded text-xs tabular-nums hover:bg-elevated disabled:cursor-default cursor-pointer'
-    const infiniteOffsetLabel = hubInfiniteOffsetLabel(restorePage)
+    const infiniteOffsetLabel = hubInfiniteOffsetLabel({ startPage, restorePage })
+    const infiniteOffsetTitle = hubInfiniteOffsetTitle({ startPage, restorePage })
     const controls =
       browseMode === 'paged' ? (
         <>
@@ -452,9 +458,9 @@ export default function HubView({ onNavigate, active = true }) {
                 ? 'border border-accent-blue/30 bg-accent-blue/10 text-accent-blue'
                 : 'text-text-tertiary'
             }`}
-            title={infiniteOffsetLabel ? `Hub is starting at page ${restorePage}` : undefined}
+            title={infiniteOffsetTitle}
           >
-            <span>{infiniteOffsetLabel || 'Starting on page'}</span>
+            <span>{infiniteOffsetLabel}</span>
             <input
               type="number"
               min="1"

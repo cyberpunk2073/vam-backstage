@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   hubInfiniteOffsetLabel,
+  hubInfiniteOffsetTitle,
   hubPageForVisibleResourceIndex,
   shouldFetchHubResources,
   shouldRenderHubPageNav,
@@ -40,9 +41,14 @@ describe('HubView infinite page tracking', () => {
     expect(hubPageForVisibleResourceIndex(119, 60, 1)).toBe(2)
   })
 
-  it('labels non-zero infinite offsets', () => {
-    expect(hubInfiniteOffsetLabel(1)).toBeNull()
-    expect(hubInfiniteOffsetLabel(20)).toBe('Earlier results hidden')
+  it('labels only loaded infinite offsets, not natural scrolling', () => {
+    expect(hubInfiniteOffsetLabel({ startPage: 1, restorePage: 20 })).toBe('Page')
+    expect(hubInfiniteOffsetLabel({ startPage: 20, restorePage: 20 })).toBe('Earlier results hidden')
+  })
+
+  it('explains hidden earlier results in the offset tooltip', () => {
+    expect(hubInfiniteOffsetTitle({ startPage: 1 })).toBeUndefined()
+    expect(hubInfiniteOffsetTitle({ startPage: 20 })).toBe('Earlier Hub pages are hidden until you start at page 1.')
   })
 
   it('keeps page controls in the sticky toolbar', () => {
