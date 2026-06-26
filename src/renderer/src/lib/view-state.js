@@ -5,6 +5,7 @@ export const LIBRARY_STATE_KEY = 'ui:library_state'
 export const CONTENT_STATE_KEY = 'ui:content_state'
 
 const VALID_VIEWS = new Set(['hub', 'library', 'content', 'settings'])
+const VALID_HUB_BROWSE_MODE = new Set(['infinite', 'paged'])
 const VALID_PAID = new Set(['all', 'free', 'paid'])
 const VALID_LIBRARY_STATUS = new Set(['direct', 'deps', 'missing', 'orphans', 'disabled', 'all', 'updates'])
 const VALID_ENABLED = new Set(['all', 'enabled', 'disabled', 'offloaded'])
@@ -16,6 +17,10 @@ const s = (value, fallback = '') => (typeof value === 'string' ? value : fallbac
 const strings = (value) => (Array.isArray(value) ? value.filter((x) => typeof x === 'string') : [])
 const ints = (value) => (Array.isArray(value) ? value.filter((x) => Number.isInteger(x)) : [])
 const id = (value) => (typeof value === 'string' || typeof value === 'number' ? String(value) : null)
+const page = (value) => {
+  const n = Number(value)
+  return Number.isInteger(n) && n >= 1 ? n : 1
+}
 
 export function sanitizeLastView(value) {
   return VALID_VIEWS.has(value) ? value : 'library'
@@ -32,6 +37,8 @@ export function sanitizeHubState(raw) {
     sort: s(r.sort),
     license: s(r.license, 'Any') || 'Any',
     detailResourceId: id(r.detailResourceId),
+    browseMode: VALID_HUB_BROWSE_MODE.has(r.browseMode) ? r.browseMode : 'infinite',
+    page: page(r.page),
   }
 }
 

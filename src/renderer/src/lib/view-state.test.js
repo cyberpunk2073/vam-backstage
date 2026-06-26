@@ -30,6 +30,8 @@ describe('view-state sanitizers', () => {
         sort: 'Latest Update',
         license: 'CC BY',
         detailResourceId: 123,
+        browseMode: 'paged',
+        page: 7,
       }),
     ).toEqual({
       search: 'alice',
@@ -40,7 +42,10 @@ describe('view-state sanitizers', () => {
       sort: 'Latest Update',
       license: 'CC BY',
       detailResourceId: '123',
+      browseMode: 'paged',
+      page: 7,
     })
+    expect(sanitizeHubState({ browseMode: 'bad', page: -3 })).toMatchObject({ browseMode: 'infinite', page: 1 })
   })
 
   it('normalizes library and content restore ids', () => {
