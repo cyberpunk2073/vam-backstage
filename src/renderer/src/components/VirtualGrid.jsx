@@ -21,6 +21,8 @@ export function VirtualGrid({
   overscan = 3,
   padding = 16,
   scrollResetKey,
+  restoreIndex = null,
+  restoreKey = '',
   onLayout,
   /** When bulk selection is on, clear it on pointer down outside any `[data-grid-card]` (gaps, padding, empty scroll area). */
   onEmptyAreaPointerDown,
@@ -32,6 +34,7 @@ export function VirtualGrid({
   const scrollFixRef = useRef(null)
   const anchorRef = useRef(0)
   const suppressAnchorRef = useRef(false)
+  const consumedRestoreKeyRef = useRef('')
 
   const scalingHeight = itemHeight - fixedHeight
   const calcRowHeight = useCallback(
@@ -64,6 +67,23 @@ export function VirtualGrid({
       suppressAnchorRef.current = false
     })
   }, [scrollResetKey])
+
+  useLayoutEffect(() => {
+    if (!restoreKey || consumedRestoreKeyRef.current === restoreKey) return
+    if (restoreIndex == null || restoreIndex < 0) return
+    const el = scrollRef.current
+    if (!el) return
+    const { cols, cellWidth } = layoutRef.current
+    const rowH = calcRowHeight(cellWidth) + rowGap
+    const row = Math.floor(restoreIndex / Math.max(1, cols))
+    consumedRestoreKeyRef.current = restoreKey
+    suppressAnchorRef.current = true
+    el.scrollTop = padding + row * rowH
+    anchorRef.current = row * cols
+    requestAnimationFrame(() => {
+      suppressAnchorRef.current = false
+    })
+  }, [restoreIndex, restoreKey, calcRowHeight, rowGap, padding])
 
   const measure = useCallback(() => {
     const el = scrollRef.current
@@ -173,8 +193,18 @@ export function VirtualGrid({
  * Virtualised list for table-style layouts. Uses divs with flex for
  * consistent column sizing without nested <table> hacks.
  */
-export function VirtualList({ items, rowHeight = 37, renderRow, className = '', overscan = 5, scrollResetKey }) {
+export function VirtualList({
+  items,
+  rowHeight = 37,
+  renderRow,
+  className = '',
+  overscan = 5,
+  scrollResetKey,
+  restoreIndex = null,
+  restoreKey = '',
+}) {
   const scrollRef = useRef(null)
+  const consumedRestoreKeyRef = useRef('')
 
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -192,6 +222,15 @@ export function VirtualList({ items, rowHeight = 37, renderRow, className = '', 
     if (!el || el.scrollTop === 0) return
     el.scrollTop = 0
   }, [scrollResetKey])
+
+  useLayoutEffect(() => {
+    if (!restoreKey || consumedRestoreKeyRef.current === restoreKey) return
+    if (restoreIndex == null || restoreIndex < 0) return
+    const el = scrollRef.current
+    if (!el) return
+    consumedRestoreKeyRef.current = restoreKey
+    el.scrollTop = restoreIndex * rowHeight
+  }, [restoreIndex, restoreKey, rowHeight])
 
   return (
     <div ref={scrollRef} className={`overflow-y-auto ${className}`}>

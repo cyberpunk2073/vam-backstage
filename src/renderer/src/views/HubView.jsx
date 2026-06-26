@@ -61,7 +61,7 @@ const HUB_GALLERY_GRID_GAP_PX = 12
 /** IntersectionObserver rootMargin (bottom): load next page before user reaches the list end */
 const HUB_LOAD_MORE_MARGIN_BOTTOM_PX = 1600
 
-export default function HubView({ onNavigate }) {
+export default function HubView({ onNavigate, active = true }) {
   const {
     resources,
     totalFound,
@@ -77,6 +77,7 @@ export default function HubView({ onNavigate }) {
     sort,
     license,
     detailResource,
+    pendingDetailResourceId,
     cardMode,
     cardWidth,
     filterOptions,
@@ -92,6 +93,7 @@ export default function HubView({ onNavigate }) {
     fetchResources,
     fetchNextPage,
     openDetail,
+    openDetailById,
     closeDetail,
   } = useHubStore()
 
@@ -154,8 +156,9 @@ export default function HubView({ onNavigate }) {
   }, [filterOptions])
 
   useEffect(() => {
+    if (!active) return
     useHubStore.getState().fetchFilters()
-  }, [])
+  }, [active])
 
   // Track gallery container width for the zoom slider
   const galleryRef = useRef(null)
@@ -189,23 +192,39 @@ export default function HubView({ onNavigate }) {
   }, [resources, page, totalPages, columnCount])
 
   // Filter changes → reset to page 1 and fetch
+  const hubFetchKey = useMemo(
+    () =>
+      `${search}\0${selectedType}\0${paidFilter}\0${authorSearch}\0${selectedHubTags.join(',')}\0${sort}\0${license}`,
+    [search, selectedType, paidFilter, authorSearch, selectedHubTags, sort, license],
+  )
+  const fetchedFilterKeyRef = useRef(null)
   useEffect(() => {
+    if (!active) return
     if (!sort) return // wait for sort options to load
+    if (fetchedFilterKeyRef.current === hubFetchKey) return
+    fetchedFilterKeyRef.current = hubFetchKey
     useHubStore.getState().fetchResources(true)
-  }, [search, selectedType, paidFilter, authorSearch, selectedHubTags, sort, license])
+  }, [active, hubFetchKey, sort])
 
   // Page changes (without filter change) → fetch same filters, new page (append mode)
   const pageRef = useRef(page)
   useEffect(() => {
+    if (!active) return
     if (pageRef.current === page) return
     pageRef.current = page
     useHubStore.getState().fetchResources()
-  }, [page])
+  }, [active, page])
+
+  useEffect(() => {
+    if (!active || !pendingDetailResourceId || detailResource) return
+    void openDetailById(pendingDetailResourceId)
+  }, [active, pendingDetailResourceId, detailResource, openDetailById])
 
   // Intersection observer sentinel for infinite scroll (root = gallery scroller so rootMargin
   // prefetches below the fold; viewport root + overflow-y ancestor clips the target until late).
   const sentinelRef = useRef(null)
   useEffect(() => {
+    if (!active) return
     const root = galleryRef.current
     const el = sentinelRef.current
     if (!root || !el) return
@@ -217,12 +236,13 @@ export default function HubView({ onNavigate }) {
     )
     io.observe(el)
     return () => io.disconnect()
-  }, [fetchNextPage, resources.length])
+  }, [active, fetchNextPage, resources.length])
 
   // The observer only fires on intersection *changes*, so when the sentinel stays visible across
   // a page load (common with cached pages) nothing re-triggers it. After each page settles, probe
   // whether the sentinel is still in the prefetch zone and keep loading if so.
   useEffect(() => {
+    if (!active) return
     if (loading || page >= totalPages) return
     const root = galleryRef.current
     const el = sentinelRef.current
@@ -232,7 +252,7 @@ export default function HubView({ onNavigate }) {
     if (elRect.top < rootRect.bottom + HUB_LOAD_MORE_MARGIN_BOTTOM_PX && elRect.bottom > rootRect.top) {
       fetchNextPage()
     }
-  }, [loading, page, totalPages, resources.length, fetchNextPage])
+  }, [active, loading, page, totalPages, resources.length, fetchNextPage])
 
   // When packages change (promote, download completes, uninstall), resync install status from DB.
   // The hub detail panel is refreshed at App level; here we only patch the

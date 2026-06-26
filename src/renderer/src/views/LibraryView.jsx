@@ -155,10 +155,11 @@ function filterPackagesByEnabledStorage(items, enabledFilter) {
   return items.filter((p) => p.storageState === enabledFilter)
 }
 
-export default function LibraryView({ onNavigate, navContext }) {
+export default function LibraryView({ onNavigate, navContext, active = true }) {
   const {
     packages,
     selectedDetail,
+    pendingRestoreFilename,
     search,
     authorSearch,
     statusFilter,
@@ -199,6 +200,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     fetchMissingDeps,
     refreshUpdateCheck,
     selectPackage,
+    consumePendingRestoreFilename,
     bulkSelectedFilenames,
     toggleBulkSelect,
     rangeBulkSelect,
@@ -210,6 +212,7 @@ export default function LibraryView({ onNavigate, navContext }) {
   const [gridLayout, setGridLayout] = useState({ cols: 1, availableWidth: 0 })
   const [tagCounts, setTagCounts] = useState({})
   const [authorCounts, setAuthorCounts] = useState({})
+  const [restoreScrollKey, setRestoreScrollKey] = useState('')
   const [detailPanelWidth] = usePersistedPanelWidth('panel_width_detail', { min: 260, max: 500, defaultWidth: 340 })
   const selectingRef = useRef(false)
 
@@ -253,6 +256,7 @@ export default function LibraryView({ onNavigate, navContext }) {
   }, [])
 
   useEffect(() => {
+    if (!active) return
     const ctx = navContext?.current
     if (!ctx) return
     if (ctx.selectPackage) {
@@ -262,14 +266,15 @@ export default function LibraryView({ onNavigate, navContext }) {
       })
     }
     navContext.current = null
-  }, [navContext, selectPackage])
+  }, [active, navContext, selectPackage])
 
   // Lazy-load missing deps data + hub availability when missing filter activates (cached)
   useEffect(() => {
+    if (!active) return
     if (statusFilter !== 'missing') return
     const store = useLibraryStore.getState()
     if (!store.missingDeps && !store.missingDepsLoading) store.fetchMissingDeps()
-  }, [statusFilter])
+  }, [active, statusFilter])
 
   const baseFiltered = useMemo(() => {
     let result = packages
@@ -597,6 +602,17 @@ export default function LibraryView({ onNavigate, navContext }) {
   )
 
   useEffect(() => {
+    if (!active || !packagesLoaded || !pendingRestoreFilename || filtered.length === 0) return
+    const target = filtered.find((p) => p.filename === pendingRestoreFilename)
+    consumePendingRestoreFilename()
+    if (!target) return
+    setRestoreScrollKey(target.filename)
+    void runSelectPackage(target.filename)
+  }, [active, packagesLoaded, pendingRestoreFilename, filtered, consumePendingRestoreFilename, runSelectPackage])
+
+  useEffect(() => {
+    if (!active) return
+    if (pendingRestoreFilename) return
     if (bulkActive || statusFilter === 'missing' || filtered.length === 0) {
       prevScrollResetKeyRef.current = scrollResetKey
       return
@@ -614,7 +630,16 @@ export default function LibraryView({ onNavigate, navContext }) {
     const target = filtered[idx]
     if (!target) return
     void runSelectPackage(target.filename)
-  }, [bulkActive, filtered, selectedDetail, statusFilter, scrollResetKey, runSelectPackage])
+  }, [
+    active,
+    pendingRestoreFilename,
+    bulkActive,
+    filtered,
+    selectedDetail,
+    statusFilter,
+    scrollResetKey,
+    runSelectPackage,
+  ])
 
   const handleLibraryClick = useCallback(
     (pkg, e) => {
@@ -794,7 +819,7 @@ export default function LibraryView({ onNavigate, navContext }) {
   )
 
   useKeyboardNav({
-    items: bulkActive ? [] : filtered,
+    items: !active || bulkActive ? [] : filtered,
     selectedId: selectedDetail?.filename,
     onSelect: handleKeyboardSelectLibrary,
     onClose: () => {
@@ -804,6 +829,7 @@ export default function LibraryView({ onNavigate, navContext }) {
   })
 
   useEffect(() => {
+    if (!active) return
     function onKeyDown(e) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return
       if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
@@ -813,9 +839,10 @@ export default function LibraryView({ onNavigate, navContext }) {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [orderedLibraryFilenames, selectAllBulk])
+  }, [active, orderedLibraryFilenames, selectAllBulk])
 
   useEffect(() => {
+    if (!active) return
     if (!bulkActive) return
     function onSpace(e) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return
@@ -827,7 +854,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     }
     window.addEventListener('keydown', onSpace, true)
     return () => window.removeEventListener('keydown', onSpace, true)
-  }, [bulkActive])
+  }, [active, bulkActive])
 
   const libraryTableSelectAllRef = useRef(null)
   useLayoutEffect(() => {
@@ -1059,6 +1086,8 @@ export default function LibraryView({ onNavigate, navContext }) {
             fixedHeight={compactCards ? 0 : 84}
             className="flex-1"
             scrollResetKey={scrollResetKey}
+            restoreIndex={selectedIdx}
+            restoreKey={restoreScrollKey}
             onLayout={setGridLayout}
             onEmptyAreaPointerDown={bulkActive ? () => clearBulkSelection() : undefined}
             renderItem={(pkg) => {
@@ -1114,6 +1143,8 @@ export default function LibraryView({ onNavigate, navContext }) {
                 rowHeight={37}
                 className="flex-1"
                 scrollResetKey={scrollResetKey}
+                restoreIndex={selectedIdx}
+                restoreKey={restoreScrollKey}
                 renderRow={(pkg) => {
                   const updateInfo = updateCheckResults?.[pkg.filename]
                   const dimUpdateUnavailable =
