@@ -743,7 +743,7 @@ export default function HubView({ onNavigate, active = true }) {
             </button>
           </div>
           {renderPageNav('toolbar')}
-          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+          <div className="col-start-3 flex min-w-0 flex-wrap items-center justify-end gap-2">
             {shouldRenderHubPageSummary(browseMode, showInfinitePagerControls) && renderPageSummary()}
             <ThumbnailSizeSlider
               cardWidth={cardWidth}
