@@ -7,6 +7,8 @@ import {
   RotateCw,
   Globe,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   Download,
   Heart,
   Bookmark,
@@ -257,6 +259,96 @@ export default function HubView({ onNavigate, active = true }) {
     [goToPage],
   )
 
+  const maxHubPage = Math.max(totalPages || 1, 1)
+  const pageButtons = useMemo(() => {
+    if (maxHubPage <= 7) return Array.from({ length: maxHubPage }, (_, i) => i + 1)
+    const pages = new Set([1, maxHubPage, page - 1, page, page + 1])
+    if (page <= 4) {
+      for (let p = 2; p <= 5; p += 1) pages.add(p)
+    }
+    if (page >= maxHubPage - 3) {
+      for (let p = maxHubPage - 4; p < maxHubPage; p += 1) pages.add(p)
+    }
+    const sorted = [...pages].filter((p) => p >= 1 && p <= maxHubPage).sort((a, b) => a - b)
+    return sorted.flatMap((p, i) => (i > 0 && p - sorted[i - 1] > 1 ? ['...', p] : [p]))
+  }, [maxHubPage, page])
+
+  const renderPageNav = (edge) => {
+    if (browseMode !== 'paged' || maxHubPage <= 1) return null
+    const iconClass =
+      'h-8 w-8 rounded flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-elevated disabled:opacity-30 cursor-pointer disabled:cursor-default'
+    const pageClass =
+      'h-8 min-w-8 px-2 rounded text-xs tabular-nums hover:bg-elevated disabled:cursor-default cursor-pointer'
+    return (
+      <div
+        className={`flex flex-wrap items-center justify-center gap-1 text-[11px] text-text-tertiary ${
+          edge === 'top' ? 'mb-3' : 'mt-4'
+        }`}
+      >
+        <button
+          type="button"
+          disabled={loading || page <= 1}
+          onClick={() => goPagedPage(1)}
+          title="First Hub page"
+          aria-label="First Hub page"
+          className={iconClass}
+        >
+          <ChevronsLeft size={17} />
+        </button>
+        <button
+          type="button"
+          disabled={loading || page <= 1}
+          onClick={() => goPagedPage(page - 1)}
+          title="Previous Hub page"
+          aria-label="Previous Hub page"
+          className={iconClass}
+        >
+          <ChevronLeft size={18} />
+        </button>
+        {pageButtons.map((p, i) =>
+          p === '...' ? (
+            <span key={`ellipsis-${i}`} className="h-8 px-1 flex items-center text-text-tertiary">
+              ...
+            </span>
+          ) : (
+            <button
+              key={p}
+              type="button"
+              disabled={loading || p === page}
+              onClick={() => goPagedPage(p)}
+              aria-current={p === page ? 'page' : undefined}
+              className={`${pageClass} ${
+                p === page ? 'bg-hover text-text-primary font-medium' : 'text-text-tertiary hover:text-text-primary'
+              }`}
+            >
+              {p}
+            </button>
+          ),
+        )}
+        <button
+          type="button"
+          disabled={loading || page >= maxHubPage}
+          onClick={() => goPagedPage(page + 1)}
+          title="Next Hub page"
+          aria-label="Next Hub page"
+          className={iconClass}
+        >
+          <ChevronRight size={18} />
+        </button>
+        <button
+          type="button"
+          disabled={loading || page >= maxHubPage}
+          onClick={() => goPagedPage(maxHubPage)}
+          title="Last Hub page"
+          aria-label="Last Hub page"
+          className={iconClass}
+        >
+          <ChevronsRight size={17} />
+        </button>
+      </div>
+    )
+  }
+
   // Intersection observer sentinel for infinite scroll (root = gallery scroller so rootMargin
   // prefetches below the fold; viewport root + overflow-y ancestor clips the target until late).
   const sentinelRef = useRef(null)
@@ -479,31 +571,6 @@ export default function HubView({ onNavigate, active = true }) {
           >
             {browseMode === 'infinite' ? <InfinityIcon size={14} /> : <BookOpen size={14} />}
           </button>
-          {browseMode === 'paged' && (
-            <div className="flex items-center gap-1 text-[11px] text-text-tertiary">
-              <button
-                type="button"
-                disabled={loading || page <= 1}
-                onClick={() => goPagedPage(page - 1)}
-                title="Previous Hub page"
-                className="p-1 rounded disabled:opacity-30 hover:bg-elevated cursor-pointer disabled:cursor-default"
-              >
-                <ChevronLeft size={14} />
-              </button>
-              <span className="tabular-nums whitespace-nowrap">
-                {page} / {Math.max(totalPages, 1)}
-              </span>
-              <button
-                type="button"
-                disabled={loading || page >= totalPages}
-                onClick={() => goPagedPage(page + 1)}
-                title="Next Hub page"
-                className="p-1 rounded disabled:opacity-30 hover:bg-elevated cursor-pointer disabled:cursor-default"
-              >
-                <ChevronRight size={14} />
-              </button>
-            </div>
-          )}
           <div className="flex items-center gap-px bg-elevated rounded p-0.5">
             <button
               type="button"
@@ -542,6 +609,7 @@ export default function HubView({ onNavigate, active = true }) {
             </div>
           ) : (
             <>
+              {renderPageNav('top')}
               <div
                 className="grid gap-3 content-start"
                 style={{ gridTemplateColumns: `repeat(auto-fill,minmax(min(${cardWidth}px,100%),1fr))` }}
@@ -564,6 +632,7 @@ export default function HubView({ onNavigate, active = true }) {
                   </div>
                 ))}
               </div>
+              {renderPageNav('bottom')}
               {/* Infinite scroll sentinel */}
               {browseMode === 'infinite' && page < totalPages && <div ref={sentinelRef} className="h-1" />}
               {browseMode === 'infinite' && loading && resources.length > 0 && (
