@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  sanitizeView,
   sanitizeLastView,
   sanitizeHubState,
   sanitizeLibraryState,
@@ -9,6 +10,11 @@ import {
 } from './view-state'
 
 describe('view-state sanitizers', () => {
+  it('accepts settings for active navigation', () => {
+    expect(sanitizeView('settings')).toBe('settings')
+    expect(sanitizeView('downloads')).toBe('library')
+  })
+
   it('accepts known app views only', () => {
     expect(sanitizeLastView('hub')).toBe('hub')
     expect(sanitizeLastView('library')).toBe('library')

@@ -27,9 +27,13 @@ const hubPerPage = (value) => {
   return HUB_PER_PAGE_OPTIONS.includes(n) ? n : HUB_PER_PAGE_OPTIONS[0]
 }
 
-export function sanitizeLastView(value) {
-  if (value === 'settings') return 'hub'
+export function sanitizeView(value) {
   return VALID_VIEWS.has(value) ? value : 'library'
+}
+
+export function sanitizeLastView(value) {
+  const view = sanitizeView(value)
+  return view === 'settings' ? 'hub' : view
 }
 
 export function sanitizeHubState(raw) {
