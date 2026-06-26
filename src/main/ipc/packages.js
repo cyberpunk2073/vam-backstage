@@ -1,5 +1,5 @@
 import { createWriteStream } from 'fs'
-import { ipcMain, net, session } from 'electron'
+import { ipcMain, session } from 'electron'
 import { access, rename, unlink } from 'fs/promises'
 import { dirname, join } from 'path'
 import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
@@ -45,6 +45,7 @@ import {
   enqueueInstallAllMissing,
   enqueueInstallRef,
   enqueueInstallBatch,
+  openDownloadStream,
 } from '../downloads/manager.js'
 import {
   fetchPackagesJson,
@@ -539,18 +540,14 @@ export function registerPackageHandlers() {
       const cookies = await hubSession.cookies.get({ url: 'https://hub.virtamate.com' })
       const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join('; ')
 
-      const res = await net.fetch(downloadUrl, {
+      const res = await openDownloadStream(downloadUrl, {
         headers: { 'User-Agent': HUB_HTTP_USER_AGENT, Cookie: cookieHeader },
-        redirect: 'follow',
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`)
 
       const fileStream = createWriteStream(tempPath)
       const fileError = new Promise((_, reject) => fileStream.on('error', reject))
-      const reader = res.body.getReader()
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
+      for await (const value of res.body) {
         if (!fileStream.write(value)) {
           await new Promise((r) => fileStream.once('drain', r))
         }

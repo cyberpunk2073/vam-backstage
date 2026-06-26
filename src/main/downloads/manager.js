@@ -140,6 +140,38 @@ export function concreteDepFilename(file) {
   return name + '.' + ver + '.var'
 }
 
+export function openDownloadStream(url, { headers = {}, signal } = {}) {
+  return new Promise((resolve, reject) => {
+    const request = net.request({ url, redirect: 'follow' })
+    for (const [name, value] of Object.entries(headers)) {
+      if (value !== undefined && value !== null && value !== '') request.setHeader(name, value)
+    }
+    const abort = () => {
+      const err = new Error('The operation was aborted')
+      err.name = 'AbortError'
+      request.abort()
+      reject(err)
+    }
+    if (signal?.aborted) return abort()
+    signal?.addEventListener('abort', abort, { once: true })
+    request.on('response', (body) => {
+      signal?.removeEventListener('abort', abort)
+      const status = body.statusCode || 0
+      resolve({
+        body,
+        status,
+        statusText: body.statusMessage || '',
+        ok: status >= 200 && status < 300,
+      })
+    })
+    request.on('error', (err) => {
+      signal?.removeEventListener('abort', abort)
+      reject(err)
+    })
+    request.end()
+  })
+}
+
 // --- Public API (called by IPC handlers) ---
 
 export async function enqueueInstall(
@@ -778,10 +810,9 @@ async function startDownload(entry) {
     const headers = { 'User-Agent': HUB_HTTP_USER_AGENT, Cookie: cookieHeader }
     if (existingBytes > 0) headers['Range'] = `bytes=${existingBytes}-`
 
-    const res = await net.fetch(download_url, {
+    const res = await openDownloadStream(download_url, {
       signal: controller.signal,
       headers,
-      redirect: 'follow',
     })
 
     if (existingBytes > 0 && res.status === 200) {
@@ -803,10 +834,7 @@ async function startDownload(entry) {
     const fileStream = createWriteStream(tempPath, existingBytes > 0 ? { flags: 'a' } : undefined)
     const fileError = new Promise((_, reject) => fileStream.on('error', reject))
 
-    const reader = res.body.getReader()
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+    for await (const value of res.body) {
       if (!fileStream.write(value)) {
         await new Promise((r) => fileStream.once('drain', r))
       }
