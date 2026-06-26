@@ -492,6 +492,16 @@ export default function HubView({ onNavigate, active = true }) {
           >
             <ChevronRight size={18} />
           </button>
+          <button
+            type="button"
+            disabled={loading || restorePage >= maxHubPage}
+            onClick={() => goInfiniteStartPage(maxHubPage)}
+            title="Start on last page"
+            aria-label="Start on last page"
+            className={iconClass}
+          >
+            <ChevronsRight size={17} />
+          </button>
         </>
       )
     if (edge === 'toolbar') {

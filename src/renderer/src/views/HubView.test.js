@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'fs'
+import { resolve } from 'path'
 import {
   hubInfiniteOffsetLabel,
   hubInfiniteOffsetTitle,
@@ -7,6 +9,8 @@ import {
   shouldRenderHubPageNav,
   shouldRenderHubPageSummary,
 } from './HubView'
+
+const hubView = readFileSync(resolve(import.meta.dirname, 'HubView.jsx'), 'utf8')
 
 describe('HubView resource fetch gate', () => {
   it('waits for filter options before the first resource fetch', () => {
@@ -67,5 +71,11 @@ describe('HubView infinite page tracking', () => {
     expect(shouldRenderHubPageSummary('infinite', false)).toBe(false)
     expect(shouldRenderHubPageSummary('infinite', true)).toBe(true)
     expect(shouldRenderHubPageSummary('paged', false)).toBe(true)
+  })
+
+  it('wires infinite scrolling to start on the last page', () => {
+    expect(hubView).toContain('onClick={() => goInfiniteStartPage(maxHubPage)}')
+    expect(hubView).toContain('title="Start on last page"')
+    expect(hubView).toContain('aria-label="Start on last page"')
   })
 })
