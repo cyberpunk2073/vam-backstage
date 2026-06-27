@@ -37,6 +37,7 @@ describe('useHubStore', () => {
       perPage: 60,
       browseMode: 'infinite',
       loading: false,
+      loadingPrevious: false,
       error: null,
       search: '',
       selectedType: 'All',
@@ -61,6 +62,31 @@ describe('useHubStore', () => {
     useHubStore.setState({ browseMode: 'infinite', startPage: 1, restorePage: 3, page: 5 })
 
     expect(useHubStore.getState().getPersistedState()).toMatchObject({ browseMode: 'infinite', page: 3 })
+  })
+
+  it('prepends the previous infinite page without changing the loaded tail page', async () => {
+    useHubStore.setState({
+      resources: [resource(3)],
+      page: 3,
+      startPage: 3,
+      restorePage: 3,
+      totalFound: 300,
+      totalPages: 10,
+      sort: 'Latest Update',
+    })
+
+    const loaded = await useHubStore.getState().fetchPreviousPage()
+
+    expect(loaded).toBe(true)
+    expect(window.api.hub.search).toHaveBeenCalledWith(expect.objectContaining({ page: 2, perpage: 60 }))
+    expect(useHubStore.getState()).toMatchObject({
+      resources: [resource(2), resource(3)],
+      page: 3,
+      startPage: 2,
+      restorePage: 3,
+      loading: false,
+      loadingPrevious: false,
+    })
   })
 
   it('resizes infinite start page from the restore page', () => {

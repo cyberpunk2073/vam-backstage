@@ -3,7 +3,6 @@ import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import {
   hubInfiniteOffsetLabel,
-  hubInfiniteOffsetTitle,
   hubPageForVisibleResourceIndex,
   shouldFetchHubResources,
   shouldRenderHubPageNav,
@@ -46,14 +45,9 @@ describe('HubView infinite page tracking', () => {
     expect(hubPageForVisibleResourceIndex(119, 60, 1)).toBe(2)
   })
 
-  it('labels only loaded infinite offsets, not natural scrolling', () => {
+  it('keeps infinite page label neutral', () => {
     expect(hubInfiniteOffsetLabel({ startPage: 1, restorePage: 20 })).toBe('Page')
-    expect(hubInfiniteOffsetLabel({ startPage: 20, restorePage: 20 })).toBe('Earlier results hidden')
-  })
-
-  it('explains hidden earlier results in the offset tooltip', () => {
-    expect(hubInfiniteOffsetTitle({ startPage: 1 })).toBeUndefined()
-    expect(hubInfiniteOffsetTitle({ startPage: 20 })).toBe('Earlier Hub pages are hidden until you start at page 1.')
+    expect(hubInfiniteOffsetLabel({ startPage: 20, restorePage: 20 })).toBe('Page')
   })
 
   it('keeps page controls in the sticky toolbar', () => {
@@ -77,5 +71,11 @@ describe('HubView infinite page tracking', () => {
     expect(hubView).toContain('onClick={() => goInfiniteStartPage(maxHubPage)}')
     expect(hubView).toContain('title="Start on last page"')
     expect(hubView).toContain('aria-label="Start on last page"')
+  })
+
+  it('wires wheel-up loading for earlier infinite pages', () => {
+    expect(hubView).toContain('fetchPreviousPage')
+    expect(hubView).toContain('onWheel={handleGalleryWheel}')
+    expect(hubView).toContain('restoreHubScrollAnchor')
   })
 })

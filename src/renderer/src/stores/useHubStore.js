@@ -27,6 +27,19 @@ function hubResources(result) {
   return Array.isArray(result?.resources) ? result.resources : []
 }
 
+function hubSearchParams(state, page) {
+  const params = { page, perpage: state.perPage }
+  if (state.sort) params.sort = state.sort
+  if (state.search) params.search = state.search
+  if (state.selectedType !== 'All') params.type = state.selectedType
+  if (state.paidFilter === 'free') params.category = 'Free'
+  else if (state.paidFilter === 'paid') params.category = 'Paid'
+  if (state.authorSearch) params.username = state.authorSearch
+  if (state.selectedHubTags?.length) params.tags = state.selectedHubTags.join(',')
+  if (state.license && state.license !== 'Any') params.license = state.license
+  return params
+}
+
 async function resolveEmptyTailPage(params, requestedPage, isCurrent) {
   let emptyUpper = requestedPage
   let lowerPage = 0
@@ -81,6 +94,7 @@ export const useHubStore = create((set, get) => ({
   perPage: HUB_PER_PAGE_OPTIONS[0],
   browseMode: 'infinite',
   loading: false,
+  loadingPrevious: false,
   error: null,
 
   search: '',
@@ -265,22 +279,14 @@ export const useHubStore = create((set, get) => ({
       (state.startPage !== requestedPage || state.restorePage !== requestedPage)
     )
       set({ startPage: requestedPage, restorePage: requestedPage })
-    set({ loading: true, error: null, ...(append ? {} : { resources: [] }) })
+    set({ loading: true, loadingPrevious: false, error: null, ...(append ? {} : { resources: [] }) })
     try {
       if (opts?.forceRefresh) {
         await window.api.hub.invalidateCaches()
         await get().fetchFilters(true)
       }
       const q = get()
-      const params = { page: requestedPage, perpage: q.perPage }
-      if (q.sort) params.sort = q.sort
-      if (q.search) params.search = q.search
-      if (q.selectedType !== 'All') params.type = q.selectedType
-      if (q.paidFilter === 'free') params.category = 'Free'
-      else if (q.paidFilter === 'paid') params.category = 'Paid'
-      if (q.authorSearch) params.username = q.authorSearch
-      if (q.selectedHubTags?.length) params.tags = q.selectedHubTags.join(',')
-      if (q.license && q.license !== 'Any') params.license = q.license
+      const params = hubSearchParams(q, requestedPage)
 
       const result = await window.api.hub.search(params)
       if (seq !== fetchSeq) return
@@ -311,7 +317,7 @@ export const useHubStore = create((set, get) => ({
       set(patch)
     } catch (err) {
       if (seq !== fetchSeq) return
-      set({ error: err.message, loading: false, ...(append ? {} : { resources: [] }) })
+      set({ error: err.message, loading: false, loadingPrevious: false, ...(append ? {} : { resources: [] }) })
     }
   },
 
@@ -319,6 +325,33 @@ export const useHubStore = create((set, get) => ({
     const { page, totalPages, loading } = get()
     if (loading || page >= totalPages) return
     void get().fetchResources(false, { page: page + 1, append: true })
+  },
+
+  fetchPreviousPage: async () => {
+    const state = get()
+    if (state.loading || state.browseMode !== 'infinite' || state.startPage <= 1) return false
+    const seq = ++fetchSeq
+    const requestedPage = state.startPage - 1
+    set({ loading: true, loadingPrevious: true, error: null })
+    try {
+      const result = await window.api.hub.search(hubSearchParams(get(), requestedPage))
+      if (seq !== fetchSeq) return false
+      const incoming = hubResources(result)
+      syncInstalledFromResources(incoming)
+      set({
+        resources: [...incoming, ...get().resources],
+        totalFound: result.totalFound || get().totalFound,
+        totalPages: result.totalPages || get().totalPages,
+        startPage: requestedPage,
+        loading: false,
+        loadingPrevious: false,
+      })
+      return incoming.length > 0
+    } catch (err) {
+      if (seq !== fetchSeq) return false
+      set({ error: err.message, loading: false, loadingPrevious: false })
+      return false
+    }
   },
 
   openDetail: async (resource) => {
