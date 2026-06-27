@@ -92,15 +92,70 @@ export function closeDatabase() {
 /** Pre-release DBs with version 1–15 cannot be upgraded; delete backstage.db and restart. */
 const LEGACY_SCHEMA_CUTOFF = 16
 
+/** Read the on-disk schema version. 0 (the SQLite default) means "brand-new DB". */
+function getSchemaVersion() {
+  return db.pragma('user_version', { simple: true })
+}
+
+/**
+ * Stamp the schema version into the DB header. `PRAGMA user_version` is a
+ * header-field write that participates in the surrounding transaction (it rolls
+ * back with it), so pairing it with each migration step keeps the step atomic.
+ * The value is interpolated because PRAGMA doesn't bind parameters — it's always
+ * our own trusted integer (a MIGRATIONS target or SCHEMA_VERSION), never input.
+ */
+function setSchemaVersion(version) {
+  db.pragma(`user_version = ${version}`)
+}
+
+/**
+ * Older builds tracked the version in a `schema_version` table rather than
+ * `PRAGMA user_version`. On first open under the new scheme such a DB reports
+ * user_version 0 (the default) and would be mistaken for a fresh install, so we
+ * adopt the table's value into user_version and drop the table — once. The
+ * table's presence is the legacy marker; a genuinely fresh DB never has it.
+ */
+function adoptLegacySchemaVersion() {
+  const hasTable = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'`).get()
+  if (!hasTable) return
+  db.transaction(() => {
+    const row = db.prepare('SELECT version FROM schema_version').get()
+    if (row?.version) setSchemaVersion(row.version)
+    db.exec('DROP TABLE schema_version')
+  })()
+}
+
+/**
+ * Ordered incremental migrations: `[targetVersion, apply]`. Each step is run by
+ * migrate() inside its own transaction together with the matching
+ * `setSchemaVersion` bump, so a step is all-or-nothing. A crash mid-step rolls
+ * the whole step back (SQLite DDL is transactional) and the next launch retries
+ * from the same version boundary against an unchanged schema — never a
+ * half-applied step layered on a partially-mutated table. To add a migration,
+ * append a row here and reflect the same shape in createSchema().
+ */
+const MIGRATIONS = [
+  [17, applyV17],
+  [18, applyV18],
+  [19, applyV19],
+  [20, applyV20],
+  [21, applyV21],
+  [22, applyV22],
+  [23, applyV23],
+  [24, applyV24],
+]
+
 function migrate() {
-  db.exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`)
-  const row = db.prepare('SELECT version FROM schema_version').get()
-  const current = row?.version ?? 0
+  if (getSchemaVersion() === 0) adoptLegacySchemaVersion()
+  const current = getSchemaVersion()
 
   if (current === SCHEMA_VERSION) return
 
   if (current === 0) {
-    createSchema()
+    db.transaction(() => {
+      createSchema()
+      setSchemaVersion(SCHEMA_VERSION)
+    })()
   } else {
     if (current < LEGACY_SCHEMA_CUTOFF) {
       throw new Error(
@@ -108,20 +163,17 @@ function migrate() {
           `Delete "${getDatabasePath()}" and restart the app.`,
       )
     }
-    if (current < 17) applyV17()
-    if (current < 18) applyV18()
-    if (current < 19) applyV19()
-    if (current < 20) applyV20()
-    if (current < 21) applyV21()
-    if (current < 22) applyV22()
-    if (current < 23) applyV23()
-    if (current < 24) applyV24()
+    for (const [version, apply] of MIGRATIONS) {
+      if (current < version) {
+        db.transaction(() => {
+          apply()
+          setSchemaVersion(version)
+        })()
+      }
+    }
   }
 
   ensureLocalPackage()
-
-  db.prepare('DELETE FROM schema_version').run()
-  db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION)
 }
 
 function applyV17() {
@@ -243,9 +295,22 @@ function applyV21() {
  * key the `hub_resources` cache on, so this column records "already asked the
  * Hub for this package's name" — stamped on a definitive answer (hit or
  * authoritative not-found) and left NULL on transient errors so they retry.
+ *
+ * The column-existence guard is recovery scaffolding, not a pattern for new
+ * migrations: this step shipped on the dev channel under the old non-atomic
+ * migrate(), which could leave the column added but schema_version stuck below
+ * 22 after a crash. Such a DB re-runs applyV22, so a bare ADD COLUMN would throw
+ * "duplicate column name" and wedge the upgrade forever. Now that migrate() runs
+ * each step atomically with its version bump, fresh migrations don't need this.
  */
 function applyV22() {
-  db.exec(`ALTER TABLE packages ADD COLUMN hub_name_checked_at INTEGER`)
+  const cols = db
+    .prepare(`PRAGMA table_info(packages)`)
+    .all()
+    .map((c) => c.name)
+  if (!cols.includes('hub_name_checked_at')) {
+    db.exec(`ALTER TABLE packages ADD COLUMN hub_name_checked_at INTEGER`)
+  }
 }
 
 /**
@@ -257,51 +322,49 @@ function applyV22() {
  * (b) rebuilds the two cache tables (`hub_resources`, `hub_users`) with a
  * numeric-only PK CHECK, dropping invalid-PK rows (pure cache, regenerable).
  * The cache tables have no foreign keys in either direction, so no FK dance is
- * needed. Wrapped in one transaction so an unexpected failure rolls back clean
- * and retries next launch. Code-side, every DB writer of a hub id now runs it
- * through `toIntString` (the `setHub*` setters, `insertDownload`, and the
- * `upsertHub*` cache writers fed by raw Hub API responses), so junk ids — most
- * often a `String(null)` from an API field — can't be reintroduced.
+ * needed. migrate() runs this (like every step) inside a transaction, so an
+ * unexpected failure rolls back clean and retries next launch. Code-side, every
+ * DB writer of a hub id now runs it through `toIntString` (the `setHub*`
+ * setters, `insertDownload`, and the `upsertHub*` cache writers fed by raw Hub
+ * API responses), so junk ids — most often a `String(null)` from an API field —
+ * can't be reintroduced.
  */
 function applyV23() {
-  const tx = db.transaction(() => {
-    const bad = (col) => `${col} IS NOT NULL AND NOT (${intCheckSql(col)})`
-    const p1 = db.prepare(`UPDATE packages SET hub_resource_id = NULL WHERE ${bad('hub_resource_id')}`).run()
-    const p2 = db.prepare(`UPDATE packages SET hub_user_id = NULL WHERE ${bad('hub_user_id')}`).run()
-    const d1 = db.prepare(`UPDATE downloads SET hub_resource_id = NULL WHERE ${bad('hub_resource_id')}`).run()
+  const bad = (col) => `${col} IS NOT NULL AND NOT (${intCheckSql(col)})`
+  const p1 = db.prepare(`UPDATE packages SET hub_resource_id = NULL WHERE ${bad('hub_resource_id')}`).run()
+  const p2 = db.prepare(`UPDATE packages SET hub_user_id = NULL WHERE ${bad('hub_user_id')}`).run()
+  const d1 = db.prepare(`UPDATE downloads SET hub_resource_id = NULL WHERE ${bad('hub_resource_id')}`).run()
 
-    db.exec(`
-      CREATE TABLE hub_resources_new (
-        resource_id TEXT PRIMARY KEY CHECK (${intCheckSql('resource_id')}),
-        hub_json TEXT,
-        search_json TEXT,
-        find_json TEXT,
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-      INSERT INTO hub_resources_new (resource_id, hub_json, search_json, find_json, updated_at)
-        SELECT resource_id, hub_json, search_json, find_json, updated_at
-        FROM hub_resources WHERE ${intCheckSql('resource_id')};
-      DROP TABLE hub_resources;
-      ALTER TABLE hub_resources_new RENAME TO hub_resources;
+  db.exec(`
+    CREATE TABLE hub_resources_new (
+      resource_id TEXT PRIMARY KEY CHECK (${intCheckSql('resource_id')}),
+      hub_json TEXT,
+      search_json TEXT,
+      find_json TEXT,
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    INSERT INTO hub_resources_new (resource_id, hub_json, search_json, find_json, updated_at)
+      SELECT resource_id, hub_json, search_json, find_json, updated_at
+      FROM hub_resources WHERE ${intCheckSql('resource_id')};
+    DROP TABLE hub_resources;
+    ALTER TABLE hub_resources_new RENAME TO hub_resources;
 
-      CREATE TABLE hub_users_new (
-        user_id TEXT PRIMARY KEY CHECK (${intCheckSql('user_id')}),
-        username TEXT,
-        hub_json TEXT,
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-      INSERT INTO hub_users_new (user_id, username, hub_json, updated_at)
-        SELECT user_id, username, hub_json, updated_at
-        FROM hub_users WHERE ${intCheckSql('user_id')};
-      DROP TABLE hub_users;
-      ALTER TABLE hub_users_new RENAME TO hub_users;
-      CREATE INDEX IF NOT EXISTS idx_hub_users_username ON hub_users(username);
-    `)
+    CREATE TABLE hub_users_new (
+      user_id TEXT PRIMARY KEY CHECK (${intCheckSql('user_id')}),
+      username TEXT,
+      hub_json TEXT,
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    INSERT INTO hub_users_new (user_id, username, hub_json, updated_at)
+      SELECT user_id, username, hub_json, updated_at
+      FROM hub_users WHERE ${intCheckSql('user_id')};
+    DROP TABLE hub_users;
+    ALTER TABLE hub_users_new RENAME TO hub_users;
+    CREATE INDEX IF NOT EXISTS idx_hub_users_username ON hub_users(username);
+  `)
 
-    const scrubbed = p1.changes + p2.changes + d1.changes
-    if (scrubbed > 0) console.info(`[migrate v23] nulled ${scrubbed} non-numeric hub id(s) across packages/downloads`)
-  })
-  tx()
+  const scrubbed = p1.changes + p2.changes + d1.changes
+  if (scrubbed > 0) console.info(`[migrate v23] nulled ${scrubbed} non-numeric hub id(s) across packages/downloads`)
 }
 
 /**

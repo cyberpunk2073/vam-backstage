@@ -41,6 +41,51 @@ describe('toIntString', () => {
   })
 })
 
+// ── v22 migration: hub_name_checked_at (idempotent) ───────────────────────────
+//
+// If applyV22 added the column but crashed before schema_version was bumped, the
+// next launch must not fail on "duplicate column name".
+
+describe('migrate v22 (hub_name_checked_at)', () => {
+  beforeEach(async () => {
+    tmp = await mkTempVamDir()
+    buildV22Database(tmp.dbPath)
+    const raw = new Database(tmp.dbPath)
+    raw.prepare('UPDATE schema_version SET version = 21').run()
+    raw.close()
+    await openTestDatabase(tmp.dbPath)
+  })
+
+  it('retries cleanly when the column exists but schema_version is still 21', () => {
+    expect(getDb().pragma('user_version', { simple: true })).toBe(24)
+  })
+
+  it('adopts the legacy schema_version table into user_version and drops it', () => {
+    expect(
+      getDb().prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'`).get(),
+    ).toBeUndefined()
+  })
+})
+
+// ── fresh install (no legacy table, user_version=0) ────────────────────────────
+
+describe('fresh database', () => {
+  beforeEach(async () => {
+    tmp = await mkTempVamDir()
+    await openTestDatabase(tmp.dbPath)
+  })
+
+  it('builds the latest schema in one step and stamps user_version', () => {
+    expect(getDb().pragma('user_version', { simple: true })).toBe(24)
+  })
+
+  it('never creates the legacy schema_version table', () => {
+    expect(
+      getDb().prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'`).get(),
+    ).toBeUndefined()
+  })
+})
+
 // ── v23 migration: hub-id scrub + cache-table CHECK ────────────────────────────
 //
 // Builds a realistic pre-v23 (schema_version=22) DB by hand with the bogus
@@ -122,7 +167,7 @@ describe('migrate v23 (hub-id cleanup)', () => {
   })
 
   it('bumps schema_version to the latest (24)', () => {
-    expect(getDb().prepare('SELECT version FROM schema_version').get().version).toBe(24)
+    expect(getDb().pragma('user_version', { simple: true })).toBe(24)
   })
 
   it('nulls non-numeric ids in packages without dropping rows', () => {
