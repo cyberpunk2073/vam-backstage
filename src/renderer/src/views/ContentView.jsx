@@ -60,7 +60,7 @@ import { isLocalPackage } from '@shared/local-package.js'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
 import { StorageStateChip } from '@/components/StorageStateChip'
-import { resolveContentRestoreIndex } from '@/lib/view-scroll-anchor'
+import { resolveContentRestoreIndex, shouldIgnoreTransientTop, shouldRestoreOnActivate } from '@/lib/view-scroll-anchor'
 
 const SORT_OPTIONS = ['Recently installed', 'Name A-Z', 'Package', 'Type']
 const isPackageDisabled = (c) => !isPackageActive(c.package?.storageState ?? 'enabled')
@@ -209,6 +209,9 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
   )
   const [detailPanelWidth] = usePersistedPanelWidth('panel_width_detail', { min: 260, max: 500, defaultWidth: 340 })
   const selectingRef = useRef(false)
+  const wasActiveRef = useRef(active)
+  const restoreNonceRef = useRef(0)
+  const ignoreTransientTopRef = useRef(false)
 
   useEffect(() => {
     const load = () => {
@@ -671,14 +674,28 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
     selectedItem?.packageFilename,
   )
   if (selectedIdx >= 0) lastSelectedIdxRef.current = selectedIdx
+  if (shouldRestoreOnActivate(wasActiveRef.current, active, scrollAnchorItemId)) {
+    ignoreTransientTopRef.current = true
+  }
+
+  useLayoutEffect(() => {
+    const wasActive = wasActiveRef.current
+    wasActiveRef.current = active
+    if (!shouldRestoreOnActivate(wasActive, active, scrollAnchorItemId)) return
+    ignoreTransientTopRef.current = true
+    restoreNonceRef.current += 1
+    setRestoreScrollKey(`anchor:${scrollAnchorItemId}:${scrollAnchorPackageFilename ?? ''}:${restoreNonceRef.current}`)
+  }, [active, scrollAnchorItemId, scrollAnchorPackageFilename, restoreIdx])
 
   const handleFirstVisibleIndexChange = useCallback(
     (index) => {
       if (!active) return
+      if (shouldIgnoreTransientTop(ignoreTransientTopRef.current, index, restoreIdx)) return
+      ignoreTransientTopRef.current = false
       const item = filtered[index]
       if (item) setScrollAnchorItem(item)
     },
-    [active, filtered, setScrollAnchorItem],
+    [active, filtered, restoreIdx, setScrollAnchorItem],
   )
 
   const runSelectItem = useCallback(

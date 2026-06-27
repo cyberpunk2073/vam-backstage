@@ -23,3 +23,11 @@ export function resolveContentRestoreIndex(
   const selectedIndex = items.findIndex((item) => matches(item, selectedItemId, selectedPackageFilename))
   return selectedIndex >= 0 ? selectedIndex : 0
 }
+
+export function shouldRestoreOnActivate(wasActive, active, anchor) {
+  return active && !wasActive && anchor != null && anchor !== ''
+}
+
+export function shouldIgnoreTransientTop(isWaitingForRestore, index, restoreIdx) {
+  return isWaitingForRestore && index === 0 && restoreIdx > 0
+}

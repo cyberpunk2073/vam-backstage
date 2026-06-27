@@ -88,7 +88,7 @@ import {
   isCommercialUseAllowed,
   isNonCommercialUseAllowed,
 } from '@/lib/licenses'
-import { resolveLibraryRestoreIndex } from '@/lib/view-scroll-anchor'
+import { resolveLibraryRestoreIndex, shouldIgnoreTransientTop, shouldRestoreOnActivate } from '@/lib/view-scroll-anchor'
 import { haystacksMatchAllTerms, searchAndTerms } from '@shared/search-text.js'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { LicenseTag } from '@/components/LicenseTag'
@@ -224,6 +224,9 @@ export default function LibraryView({ onNavigate, navContext, active = true }) {
   )
   const [detailPanelWidth] = usePersistedPanelWidth('panel_width_detail', { min: 260, max: 500, defaultWidth: 340 })
   const selectingRef = useRef(false)
+  const wasActiveRef = useRef(active)
+  const restoreNonceRef = useRef(0)
+  const ignoreTransientTopRef = useRef(false)
 
   useEffect(() => {
     const getLibraryStore = () => useLibraryStore.getState()
@@ -599,14 +602,28 @@ export default function LibraryView({ onNavigate, navContext, active = true }) {
   const selectedIdx = selectedDetail ? filtered.findIndex((p) => p.filename === selectedDetail.filename) : -1
   const restoreIdx = resolveLibraryRestoreIndex(filtered, scrollAnchorFilename, selectedDetail?.filename)
   if (selectedIdx >= 0) lastSelectedIdxRef.current = selectedIdx
+  if (shouldRestoreOnActivate(wasActiveRef.current, active, scrollAnchorFilename)) {
+    ignoreTransientTopRef.current = true
+  }
+
+  useLayoutEffect(() => {
+    const wasActive = wasActiveRef.current
+    wasActiveRef.current = active
+    if (!shouldRestoreOnActivate(wasActive, active, scrollAnchorFilename)) return
+    ignoreTransientTopRef.current = true
+    restoreNonceRef.current += 1
+    setRestoreScrollKey(`anchor:${scrollAnchorFilename}:${restoreNonceRef.current}`)
+  }, [active, scrollAnchorFilename, restoreIdx])
 
   const handleFirstVisibleIndexChange = useCallback(
     (index) => {
       if (!active) return
+      if (shouldIgnoreTransientTop(ignoreTransientTopRef.current, index, restoreIdx)) return
+      ignoreTransientTopRef.current = false
       const pkg = filtered[index]
       if (pkg) setScrollAnchorFilename(pkg.filename)
     },
-    [active, filtered, setScrollAnchorFilename],
+    [active, filtered, restoreIdx, setScrollAnchorFilename],
   )
 
   const runSelectPackage = useCallback(
