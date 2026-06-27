@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'fs'
+import { resolve } from 'path'
 import { concreteDepFilename, isFlexibleFilename } from './manager.js'
+
+const managerSource = readFileSync(resolve(import.meta.dirname, './manager.js'), 'utf8')
+const downloadsPanelSource = readFileSync(
+  resolve(import.meta.dirname, '../../renderer/src/components/DownloadsPanel.jsx'),
+  'utf8',
+)
 
 // ── concreteDepFilename ────────────────────────────────────────────────────────
 //
@@ -79,5 +87,21 @@ describe('isFlexibleFilename', () => {
   it('does not treat ".var" as a flexible "version" token — needs ≥3 stem segments', () => {
     expect(isFlexibleFilename('File.var')).toBe(false)
     expect(isFlexibleFilename('More.var')).toBe(false)
+  })
+})
+
+describe('download pause state wiring', () => {
+  it('persists global paused state and keeps queued downloads stopped at startup', () => {
+    expect(managerSource).toContain("const DOWNLOADS_PAUSED_SETTING = 'downloads_paused'")
+    expect(managerSource).toContain("paused = getSetting(DOWNLOADS_PAUSED_SETTING) === '1'")
+    expect(managerSource).toContain("setSetting(DOWNLOADS_PAUSED_SETTING, '1')")
+    expect(managerSource).toContain("setSetting(DOWNLOADS_PAUSED_SETTING, '0')")
+    expect(managerSource).toContain('if (paused) {\n    resetActiveDownloads()')
+    expect(managerSource).toContain('function processQueue() {\n  if (paused) return')
+  })
+
+  it('keeps pause controls visible even when the queue is empty', () => {
+    expect(downloadsPanelSource).not.toContain('{hasInFlight && (')
+    expect(downloadsPanelSource).toContain("title={paused ? 'Resume downloads' : 'Pause downloads'}")
   })
 })

@@ -89,7 +89,6 @@ export default function DownloadsPanel({ onClose }) {
   const completed = items.filter((d) => d.status === 'completed').sort(sortCompletedRecentFirst)
   const failed = items.filter((d) => d.status === 'failed')
   const hasAny = active.length + queued.length + completed.length + failed.length > 0
-  const hasInFlight = active.length + queued.length > 0
 
   const { totalSpeed, totalRemaining } = useMemo(() => {
     let speed = 0
@@ -127,47 +126,49 @@ export default function DownloadsPanel({ onClose }) {
         </div>
 
         {/* Aggregate status */}
-        {hasInFlight && (
-          <div className="flex items-center gap-2 px-4 py-2 border-b border-border shrink-0 text-[11px] text-text-secondary">
-            {paused ? (
-              <Pause size={12} className="text-text-tertiary shrink-0" />
-            ) : (
-              <ArrowDown size={12} className="text-text-tertiary shrink-0" />
-            )}
-            <span className="min-w-0 truncate">
-              {paused
-                ? 'Paused'
-                : totalSpeed > 0 || totalRemaining > 0
-                  ? [
-                      totalSpeed > 0 && formatSpeed(totalSpeed),
-                      totalRemaining > 0 && `${formatBytes(totalRemaining)} left`,
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')
-                  : `${active.length} active`}
-            </span>
-            <div className="flex items-center gap-0.5 ml-auto shrink-0">
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                className="text-text-tertiary hover:text-text-secondary"
-                title={paused ? 'Resume downloads' : 'Pause downloads'}
-                onClick={paused ? resumeAll : pauseAll}
-              >
-                {paused ? <Play size={12} /> : <Pause size={12} />}
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                className="text-text-tertiary hover:text-error"
-                title="Cancel all downloads"
-                onClick={() => setConfirmCancelOpen(true)}
-              >
-                <XCircle size={12} />
-              </Button>
-            </div>
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-border shrink-0 text-[11px] text-text-secondary">
+          {paused ? (
+            <Pause size={12} className="text-text-tertiary shrink-0" />
+          ) : (
+            <ArrowDown size={12} className="text-text-tertiary shrink-0" />
+          )}
+          <span className="min-w-0 truncate">
+            {paused
+              ? 'Paused'
+              : totalSpeed > 0 || totalRemaining > 0
+                ? [
+                    totalSpeed > 0 && formatSpeed(totalSpeed),
+                    totalRemaining > 0 && `${formatBytes(totalRemaining)} left`,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')
+                : active.length > 0
+                  ? `${active.length} active`
+                  : queued.length > 0
+                    ? `${queued.length} queued`
+                    : 'Idle'}
+          </span>
+          <div className="flex items-center gap-0.5 ml-auto shrink-0">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="text-text-tertiary hover:text-text-secondary"
+              title={paused ? 'Resume downloads' : 'Pause downloads'}
+              onClick={paused ? resumeAll : pauseAll}
+            >
+              {paused ? <Play size={12} /> : <Pause size={12} />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="text-text-tertiary hover:text-error"
+              title="Cancel all downloads"
+              onClick={() => setConfirmCancelOpen(true)}
+            >
+              <XCircle size={12} />
+            </Button>
           </div>
-        )}
+        </div>
         <AlertDialog open={confirmCancelOpen} onOpenChange={setConfirmCancelOpen}>
           <AlertDialogContent size="sm">
             <AlertDialogHeader>
