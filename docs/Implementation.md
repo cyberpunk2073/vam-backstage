@@ -322,6 +322,7 @@ CREATE TABLE packages (
   is_direct        INTEGER NOT NULL DEFAULT 0,  -- 1=user installed, 0=dependency
   storage_state    TEXT NOT NULL DEFAULT 'enabled',  -- 'enabled' | 'disabled' | 'offloaded'
   library_dir_id   INTEGER REFERENCES library_dirs(id) ON DELETE RESTRICT,  -- NULL = main AddonPackages
+  subpath          TEXT NOT NULL DEFAULT '',  -- POSIX relative dir within the library dir ('' = root)
   hub_resource_id  TEXT,              -- VaM Hub resource ID (learned from Hub API)
   hub_user_id      TEXT,              -- Hub user ID for author avatar
   hub_display_name TEXT,              -- Hub display title (often differs from meta title)
@@ -349,6 +350,8 @@ CREATE INDEX idx_packages_creator ON packages(creator);
 
 For dependency-graph purposes, `disabled` and `offloaded` behave identically (the package is unavailable to VaM at runtime). On-disk names are fully derived from `storage_state`: `disabled` carries the `.var.disabled` suffix; `enabled` and `offloaded` are suffix-less. All app-initiated transitions go through a single `applyStorageState` chokepoint that does `fs.rename`, DB update, in-memory patch, and watcher suppression atomically. Aux dirs must live on the same filesystem as main `AddonPackages` (validated by a probe-rename when the dir is registered), so a plain rename is always sufficient.
 
+A `.var` is valid anywhere under a library root, not only at the top level — VaM loads packages from any subfolder of `AddonPackages`. The `subpath` column records that relative folder (POSIX-style, `''` at the root); `pkgVarPath(pkg)` joins `library dir + subpath + filename(+ suffix)` so every reader/writer/deleter resolves nested files. `applyStorageState` preserves `subpath` across all transitions: an enabled/disabled flip renames in place inside the subfolder, and an offload mirrors the same relative subpath under the aux dir (creating it as needed), so an offload→enable round-trip is lossless. The scanner records `subpath` at discovery and reconciles it on a stat-cache hit (a same-bytes move into/out of a subfolder updates the column without re-reading the archive). The companion thumbnail (`Foo.1.jpg` next to `Foo.1.var`) is found via `dirname(pkgVarPath)`, so it tracks the package into subfolders for free.
+
 ### `library_dirs` — Offload Library Directories
 
 Registered offload directories. Main `AddonPackages` is implicit (derived from `vam_dir`) and represented by `packages.library_dir_id IS NULL`; only aux dirs live in this table.
@@ -361,7 +364,7 @@ CREATE TABLE library_dirs (
 );
 ```
 
-The scanner walks every registered library dir; the watcher monitors all of them; a package moved between dirs by an external tool is reconciled as a move (single update of `storage_state` + `library_dir_id`) rather than uninstall + reinstall. Removing an aux dir is allowed only when no packages still point at it (`ON DELETE RESTRICT`).
+The scanner walks every registered library dir recursively; the watcher monitors all of them; a package moved between dirs (or into a different subfolder) by an external tool is reconciled as a move (single update of `storage_state` + `library_dir_id` + `subpath`) rather than uninstall + reinstall — so labels and other FK-bound settings survive. Removing an aux dir is allowed only when no packages still point at it (`ON DELETE RESTRICT`).
 
 ### `contents` — Content Item Scan Cache
 
@@ -865,7 +868,7 @@ When search results return from the Hub, the client enriches each resource with 
 
 The watcher (`src/main/watcher.js`) runs three sets of `@parcel/watcher` subscriptions, one per concern:
 
-1. **packageWatcher** — one subscription per registered library directory (main `AddonPackages/` plus any registered aux/offload dirs). Watches for `.var` and (in main only) `.var.disabled` files. Restarts whenever the `library_dirs` registry changes. Cross-dir moves are reconciled as a single `setStorageState` UPDATE so package rows and their label FKs are preserved.
+1. **packageWatcher** — one subscription per registered library directory (main `AddonPackages/` plus any registered aux/offload dirs), each recursive so `.var` files in subfolders are seen. Watches for `.var` and (in main only) `.var.disabled` files. Restarts whenever the `library_dirs` registry changes. On an unlink, the canonical is located by a single recursive walk across the library dirs (`locateVars`) before any delete, so a file moved to another dir or subfolder is reconciled as a single `setStorageState` UPDATE (state + `library_dir_id` + `subpath`), preserving package rows and their label FKs; only a truly-gone file is deleted.
 2. **localWatcher** — one subscription per loose-content root (`Saves/`, `Custom/`) for content changes (debounced `runLocalScan`) and sibling `.hide`/`.fav` sidecars.
 3. **prefsWatcher** — single subscription on `AddonPackagesFilePrefs/` for `.hide`/`.fav` sidecar changes.
 

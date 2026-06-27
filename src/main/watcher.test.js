@@ -12,8 +12,8 @@ import {
   withBulkWindow,
   recordOwnedPath,
 } from './watcher.js'
-import { refreshLibraryDirs } from './library-dirs.js'
-import { buildFromDb, getPrefsMap } from './store.js'
+import { refreshLibraryDirs, pkgVarPath } from './library-dirs.js'
+import { buildFromDb, getPackageIndex, getPrefsMap } from './store.js'
 import { applyStorageState } from './storage-state.js'
 import { ADDON_PACKAGES_FILE_PREFS } from '@shared/paths.js'
 
@@ -139,6 +139,106 @@ describe('watcher.processBatch — cross-dir move (single batch)', () => {
     const row = getAllPackages().find((r) => r.filename === 'Back.M.1.var')
     expect(row?.storage_state).toBe('enabled')
     expect(row?.library_dir_id).toBeNull()
+  })
+})
+
+describe('watcher.processBatch — nested .var move recovery', () => {
+  it('move into a different main subfolder (unlink only) keeps the row and updates subpath', async () => {
+    const fromDir = join(tmp.addonPackages, 'A')
+    await mkdir(fromDir, { recursive: true })
+    const buf = await buildVar({
+      meta: { packageName: 'Nest.Mv', creator: 'N' },
+      files: { 'Saves/scene/x.json': '{"atoms":[]}' },
+    })
+    const fromPath = await placeVar(fromDir, 'Nest.Mv.1.var', buf)
+    await runScan(tmp.vamDir)
+    expect(getAllPackages().find((r) => r.filename === 'Nest.Mv.1.var')?.subpath).toBe('A')
+
+    const toDir = join(tmp.addonPackages, 'B', 'C')
+    await mkdir(toDir, { recursive: true })
+    await rename(fromPath, join(toDir, 'Nest.Mv.1.var'))
+    refreshLibraryDirs()
+
+    __setProcessBatchStateForTests({
+      vamDir: tmp.vamDir,
+      packageEvents: [[fromPath, { type: 'unlink', libraryDirId: null }]],
+    })
+    await __processBatchForTests()
+
+    const row = getAllPackages().find((r) => r.filename === 'Nest.Mv.1.var')
+    expect(row).toBeDefined() // not deleted — file found nested elsewhere
+    expect(row.storage_state).toBe('enabled')
+    expect(row.subpath).toBe('B/C')
+  })
+
+  it('move out of a subfolder with no copy anywhere still deletes the row', async () => {
+    const dir = join(tmp.addonPackages, 'Solo')
+    await mkdir(dir, { recursive: true })
+    const buf = await buildVar({
+      meta: { packageName: 'Nest.Gone', creator: 'N' },
+      files: { 'Saves/scene/g.json': '{"atoms":[]}' },
+    })
+    const p = await placeVar(dir, 'Nest.Gone.1.var', buf)
+    await runScan(tmp.vamDir)
+    await import('fs/promises').then((fs) => fs.rm(p))
+    refreshLibraryDirs()
+
+    __setProcessBatchStateForTests({
+      vamDir: tmp.vamDir,
+      packageEvents: [[p, { type: 'unlink', libraryDirId: null }]],
+    })
+    await __processBatchForTests()
+
+    expect(getAllPackages().filter((r) => r.filename === 'Nest.Gone.1.var')).toHaveLength(0)
+  })
+})
+
+describe('applyStorageState — nested .var preserves its subfolder', () => {
+  async function seedNested() {
+    const sub = join(tmp.addonPackages, 'Creator', 'Bundle')
+    await mkdir(sub, { recursive: true })
+    const buf = await buildVar({
+      meta: { packageName: 'Sub.Pkg', creator: 'Sub' },
+      files: { 'Saves/scene/s.json': '{"atoms":[]}' },
+    })
+    await placeVar(sub, 'Sub.Pkg.1.var', buf)
+    await runScan(tmp.vamDir)
+    buildFromDb()
+    return sub
+  }
+
+  it('disable renames in place to .var.disabled within the same subfolder', async () => {
+    const sub = await seedNested()
+    await applyStorageState('Sub.Pkg.1.var', { storageState: 'disabled', libraryDirId: null })
+
+    const row = getAllPackages().find((r) => r.filename === 'Sub.Pkg.1.var')
+    expect(row.storage_state).toBe('disabled')
+    expect(row.subpath).toBe('Creator/Bundle')
+    expect(await readdir(sub)).toContain('Sub.Pkg.1.var.disabled')
+    expect(pkgVarPath(getPackageIndex().get('Sub.Pkg.1.var'))).toBe(join(sub, 'Sub.Pkg.1.var.disabled'))
+  })
+
+  it('offload to an aux dir mirrors the subfolder, and enable restores it', async () => {
+    const sub = await seedNested()
+    const aux = await mkAuxDir(tmp.vamDir)
+    const auxId = insertLibraryDir(aux)
+    refreshLibraryDirs()
+
+    await applyStorageState('Sub.Pkg.1.var', { storageState: 'offloaded', libraryDirId: auxId })
+    let row = getAllPackages().find((r) => r.filename === 'Sub.Pkg.1.var')
+    expect(row.storage_state).toBe('offloaded')
+    expect(row.library_dir_id).toBe(auxId)
+    expect(row.subpath).toBe('Creator/Bundle')
+    // physically moved into the mirrored subfolder under the aux dir
+    expect(await readdir(join(aux, 'Creator', 'Bundle'))).toContain('Sub.Pkg.1.var')
+    expect(await readdir(sub)).not.toContain('Sub.Pkg.1.var')
+
+    await applyStorageState('Sub.Pkg.1.var', { storageState: 'enabled', libraryDirId: null })
+    row = getAllPackages().find((r) => r.filename === 'Sub.Pkg.1.var')
+    expect(row.storage_state).toBe('enabled')
+    expect(row.library_dir_id).toBeNull()
+    expect(row.subpath).toBe('Creator/Bundle')
+    expect(await readdir(sub)).toContain('Sub.Pkg.1.var') // back in the original main subfolder
   })
 })
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { readdir, writeFile, mkdir, rm, utimes } from 'fs/promises'
+import { readdir, writeFile, mkdir, rm, utimes, rename } from 'fs/promises'
 import { join } from 'path'
 import { mkTempVamDir, mkAuxDir, buildVar, placeVar, openTestDatabase } from '../../../test/fixtures/index.js'
 import { runScan } from './index.js'
@@ -194,6 +194,82 @@ describe('runScan — aux library dirs', () => {
     const row = getAllPackages().find((r) => r.filename === 'Aux.Only.1.var')
     expect(row?.storage_state).toBe('offloaded')
     expect(row?.library_dir_id).toBe(auxId)
+  })
+})
+
+describe('runScan — nested .var files in subfolders', () => {
+  it('indexes a .var nested in a main subfolder and records its subpath', async () => {
+    const sub = join(tmp.addonPackages, 'Creator', 'Scenes')
+    await mkdir(sub, { recursive: true })
+    const buf = await buildVar({
+      meta: { packageName: 'Nest.Main', creator: 'Nest' },
+      files: { 'Saves/scene/n.json': '{"atoms":[]}' },
+    })
+    await placeVar(sub, 'Nest.Main.1.var', buf)
+
+    await runScan(tmp.vamDir)
+
+    const row = getAllPackages().find((r) => r.filename === 'Nest.Main.1.var')
+    expect(row).toBeDefined()
+    expect(row.storage_state).toBe('enabled')
+    expect(row.library_dir_id).toBeNull()
+    expect(row.subpath).toBe('Creator/Scenes')
+  })
+
+  it('indexes a nested .var.disabled as disabled with the subpath preserved', async () => {
+    const sub = join(tmp.addonPackages, 'Disabled')
+    await mkdir(sub, { recursive: true })
+    const buf = await buildVar({
+      meta: { packageName: 'Nest.Dis', creator: 'Nest' },
+      files: { 'Saves/scene/d.json': '{"atoms":[]}' },
+    })
+    await placeVar(sub, 'Nest.Dis.1.var', buf, { disabled: true })
+
+    await runScan(tmp.vamDir)
+
+    const row = getAllPackages().find((r) => r.filename === 'Nest.Dis.1.var')
+    expect(row?.storage_state).toBe('disabled')
+    expect(row?.subpath).toBe('Disabled')
+    expect(await readdir(sub)).toContain('Nest.Dis.1.var.disabled')
+  })
+
+  it('indexes a .var nested in an aux dir as offloaded with its subpath', async () => {
+    const aux = await mkAuxDir(tmp.vamDir)
+    const auxId = insertLibraryDir(aux)
+    const sub = join(aux, 'Packed', 'Inner')
+    await mkdir(sub, { recursive: true })
+    const buf = await buildVar({
+      meta: { packageName: 'Nest.Aux', creator: 'Nest' },
+      files: { 'Saves/scene/a.json': '{"atoms":[]}' },
+    })
+    await placeVar(sub, 'Nest.Aux.1.var', buf)
+
+    await runScan(tmp.vamDir)
+
+    const row = getAllPackages().find((r) => r.filename === 'Nest.Aux.1.var')
+    expect(row?.storage_state).toBe('offloaded')
+    expect(row?.library_dir_id).toBe(auxId)
+    expect(row?.subpath).toBe('Packed/Inner')
+  })
+
+  it('reconciles a stale subpath on a same-bytes move into a subfolder (cache hit)', async () => {
+    const buf = await buildVar({
+      meta: { packageName: 'Move.Sub', creator: 'M' },
+      files: { 'Saves/scene/m.json': '{"atoms":[]}' },
+    })
+    const rootPath = await placeVar(tmp.addonPackages, 'Move.Sub.1.var', buf)
+    await runScan(tmp.vamDir)
+    expect(getAllPackages().find((r) => r.filename === 'Move.Sub.1.var')?.subpath).toBe('')
+
+    // Move the file into a subfolder without changing its bytes (rename preserves mtime),
+    // so the scan stat-cache hits and must still correct the recorded subpath.
+    const sub = join(tmp.addonPackages, 'Relocated')
+    await mkdir(sub, { recursive: true })
+    await rename(rootPath, join(sub, 'Move.Sub.1.var'))
+
+    const r = await runScan(tmp.vamDir)
+    expect(r.scanned).toBe(0) // stat cache hit — archive not re-read
+    expect(getAllPackages().find((r) => r.filename === 'Move.Sub.1.var')?.subpath).toBe('Relocated')
   })
 })
 

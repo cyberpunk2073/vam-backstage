@@ -1,6 +1,6 @@
 import parcelWatcher from '@parcel/watcher'
 import { join, extname, basename, relative, sep, dirname } from 'path'
-import { stat, mkdir, rename, unlink } from 'fs/promises'
+import { stat, mkdir, rename, unlink, readdir } from 'fs/promises'
 import { ADDON_PACKAGES_FILE_PREFS } from '@shared/paths.js'
 import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_DIRS } from '@shared/local-package.js'
 import { isVarFilename, canonicalVarFilename } from './scanner/var-reader.js'
@@ -13,7 +13,7 @@ import { buildFromDb, getPrefsMap, setPrefsMap, getPackageIndex, getForwardDeps 
 import { computeCascadeEnable } from './scanner/graph.js'
 import { notify } from './notify.js'
 import { enrichNewPackages } from './hub/scanner.js'
-import { getAllLibraryDirs, refreshLibraryDirs } from './library-dirs.js'
+import { getAllLibraryDirs, refreshLibraryDirs, getLibraryDirPath, libraryRelSubpath } from './library-dirs.js'
 import { applyStorageState } from './storage-state.js'
 import { awaitStable } from './var-stability.js'
 import { hidePackageContent, readAllPrefs } from './vam-prefs.js'
@@ -468,20 +468,30 @@ async function processBatch() {
 
       const allDirs = getAllLibraryDirs()
 
+      // Unlinks: before deleting any row, find the canonical's current home on disk —
+      // it may have moved (cross-dir, or into/out of a subfolder) rather than been
+      // removed. Resolve every unlinked canonical in a single recursive walk per
+      // library dir (`locateVars`) instead of one walk per file. A surviving copy
+      // anywhere under a library root keeps the row (and its label/setting FKs) alive
+      // via setStorageState; only a truly-gone file is deleted. When the batch also has
+      // the matching add (move within one batch), the add is then a no-op because
+      // scanSingleVar's cache check matches mtime+size against the now-current row.
+      // No in-mem patch needed here — the trailing buildFromDb() reloads packageIndex
+      // from DB whenever packagesChanged is set.
+      const unlinkedCanonicals = new Set()
+      for (const [canonical, events] of byCanonical) {
+        if (events.some((e) => e.type === 'unlink')) unlinkedCanonicals.add(canonical)
+      }
+      const relocated = unlinkedCanonicals.size > 0 ? await locateVars(allDirs, unlinkedCanonicals) : new Map()
+
       for (const [canonical, events] of byCanonical) {
         const adds = events.filter((e) => e.type !== 'unlink')
         const unlinks = events.filter((e) => e.type === 'unlink')
 
-        // Unlinks: probe every registered dir for a sibling before deleting. When the
-        // batch also has an add (cross-dir move within one batch), findElsewhere finds
-        // the new location and updates state; the add is then a no-op because
-        // scanSingleVar's cache check matches mtime+size against the now-current row.
-        // No in-mem patch needed here — the trailing buildFromDb() reloads packageIndex
-        // from DB whenever packagesChanged is set.
         if (unlinks.length > 0) {
-          const altLocation = await findElsewhere(canonical, allDirs)
+          const altLocation = relocated.get(canonical)
           if (altLocation) {
-            setStorageState(canonical, altLocation.storageState, altLocation.libraryDirId)
+            setStorageState(canonical, altLocation.storageState, altLocation.libraryDirId, altLocation.subpath)
             packagesChanged = true
           } else {
             deletePackage(canonical)
@@ -694,32 +704,65 @@ export async function __localPrefsEventSyncForTests(fullPath) {
 }
 
 /**
- * Probe every registered dir for the canonical filename. Aux dirs only accept the
- * suffix-less name (we normalize away `.disabled` in aux); main accepts both with
- * their respective enabled/disabled states. Returns the first match's location +
- * resolved storage_state.
+ * Locate the current on-disk home of each wanted canonical `.var` across every
+ * registered library dir, supporting nested placement (a `.var` may live in any
+ * subfolder under a library root). One recursive walk per dir, short-circuiting
+ * as soon as every wanted canonical is found.
+ *
+ * Dir precedence follows `dirs` order (main first), and within the tree a
+ * shallower / earlier match wins. Aux dirs accept only the suffix-less name (we
+ * normalize away `.disabled` in aux); main accepts both, with a bare `.var`
+ * preferred over `.var.disabled` in the same folder.
+ *
+ * @returns {Promise<Map<string, { libraryDirId: number|null, storageState: string, subpath: string }>>}
  */
-async function findElsewhere(canonical, dirs) {
+async function locateVars(dirs, wanted) {
+  const out = new Map()
+  const remaining = new Set(wanted)
   for (const { id, path: dirPath } of dirs) {
+    if (remaining.size === 0) break
     if (!dirPath) continue
-    const enabledPath = join(dirPath, canonical)
-    try {
-      await stat(enabledPath)
-      return { libraryDirId: id, storageState: id == null ? 'enabled' : 'offloaded' }
-    } catch {}
-    if (id == null) {
-      // Main dir: also probe the .disabled variant.
-      try {
-        await stat(enabledPath + '.disabled')
-        return { libraryDirId: null, storageState: 'disabled' }
-      } catch {}
+    await locateWalk(dirPath, dirPath, id, remaining, out)
+  }
+  return out
+}
+
+async function locateWalk(root, dir, libraryDirId, remaining, out) {
+  if (remaining.size === 0) return
+  let entries
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch {
+    return // unreadable subdir — skip, mirrors the scanner's silent-skip
+  }
+  const allowDisabled = libraryDirId == null // aux dirs are suffix-less in our model
+  const subdirs = []
+  const files = new Set()
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue // never follow symlinks (matches the scanner/parcel)
+    if (entry.isDirectory()) subdirs.push(entry.name)
+    else if (entry.isFile()) files.add(entry.name)
+  }
+  const rel = relative(root, dir) // dir's own subpath relative to the library root ('' at root)
+  const subpath = rel ? rel.split(sep).join('/') : ''
+  for (const canonical of [...remaining]) {
+    if (files.has(canonical)) {
+      out.set(canonical, { libraryDirId, storageState: libraryDirId != null ? 'offloaded' : 'enabled', subpath })
+      remaining.delete(canonical)
+    } else if (allowDisabled && files.has(canonical + '.disabled')) {
+      out.set(canonical, { libraryDirId, storageState: 'disabled', subpath })
+      remaining.delete(canonical)
     }
   }
-  return null
+  for (const name of subdirs) {
+    if (remaining.size === 0) return
+    await locateWalk(root, join(dir, name), libraryDirId, remaining, out)
+  }
 }
 
 async function scanSingleVar(fullPath, storageState, libraryDirId) {
   const filename = canonicalVarFilename(basename(fullPath))
+  const subpath = libraryRelSubpath(getLibraryDirPath(libraryDirId), fullPath)
 
   let s
   try {
@@ -733,8 +776,12 @@ async function scanSingleVar(fullPath, storageState, libraryDirId) {
 
   const cached = getPackageCacheInfo(filename)
   if (cached && cached.file_mtime === mtime && cached.size_bytes === size) {
-    if (cached.storage_state !== storageState || (cached.library_dir_id ?? null) !== (libraryDirId ?? null)) {
-      setStorageState(filename, storageState, libraryDirId)
+    if (
+      cached.storage_state !== storageState ||
+      (cached.library_dir_id ?? null) !== (libraryDirId ?? null) ||
+      (cached.subpath ?? '') !== subpath
+    ) {
+      setStorageState(filename, storageState, libraryDirId, subpath)
     }
     return null // no change
   }
@@ -744,6 +791,6 @@ async function scanSingleVar(fullPath, storageState, libraryDirId) {
   // it to decide between inheriting from an older version vs applying default
   // auto-hide rules. Stale-cache rescans (row exists, content changed) are not
   // new installs.
-  const result = await scanAndUpsert(fullPath, { storageState, libraryDirId, isDirect: 1 })
+  const result = await scanAndUpsert(fullPath, { storageState, libraryDirId, subpath, isDirect: 1 })
   return result ? { ...result, isNewInstall: !cached } : null
 }

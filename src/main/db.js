@@ -4,7 +4,7 @@ import { app } from 'electron'
 import { join } from 'path'
 import { LOCAL_PACKAGE_FILENAME } from '@shared/local-package.js'
 
-const SCHEMA_VERSION = 23
+const SCHEMA_VERSION = 24
 
 /**
  * Normalize a value to a non-negative integer string, or null. Hub resource/user
@@ -115,6 +115,7 @@ function migrate() {
     if (current < 21) applyV21()
     if (current < 22) applyV22()
     if (current < 23) applyV23()
+    if (current < 24) applyV24()
   }
 
   ensureLocalPackage()
@@ -304,6 +305,24 @@ function applyV23() {
 }
 
 /**
+ * v24 — track each package's subpath within its library dir. A `.var` is valid
+ * anywhere under a library root (main `AddonPackages` or an aux/offload dir),
+ * not just at the top level. `subpath` is the POSIX-style relative directory
+ * ('' at the root) of the file's containing folder, so `pkgVarPath` can resolve
+ * nested files for enable/disable/offload, thumbnails, integrity, redownload
+ * and uninstall — every operation that previously assumed a flat library dir.
+ *
+ * Existing rows backfill to '' (the historical flat assumption). `needs_rescan`
+ * is set so the next startup scan re-derives the real subpath of any nested file
+ * via runScan's stat-cache reconciliation (a cache hit now also compares
+ * `subpath` and corrects it without re-reading the archive).
+ */
+function applyV24() {
+  db.exec(`ALTER TABLE packages ADD COLUMN subpath TEXT NOT NULL DEFAULT ''`)
+  db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('needs_rescan', '1')`).run()
+}
+
+/**
  * Ensure the synthetic "local content" package row exists. Loose files under
  * `vamDir/Saves` and `vamDir/Custom` are stored as `contents` rows that point
  * at this sentinel so the foreign key holds without nullable columns. The
@@ -344,6 +363,7 @@ function createSchema() {
       is_direct INTEGER NOT NULL DEFAULT 0,
       storage_state TEXT NOT NULL DEFAULT 'enabled',
       library_dir_id INTEGER NULL REFERENCES library_dirs(id) ON DELETE RESTRICT,
+      subpath TEXT NOT NULL DEFAULT '',
       hub_resource_id TEXT,
       dep_refs TEXT NOT NULL DEFAULT '[]',
       first_seen_at INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -456,16 +476,17 @@ function stmt(sql) {
 // Packages
 export function upsertPackage(pkg) {
   stmt(`
-    INSERT INTO packages (filename, creator, package_name, version, type, title, description, license, size_bytes, file_mtime, is_direct, storage_state, library_dir_id, dep_refs, scanned_at)
-    VALUES (@filename, @creator, @packageName, @version, @type, @title, @description, @license, @sizeBytes, @fileMtime, @isDirect, @storageState, @libraryDirId, @depRefs, unixepoch())
+    INSERT INTO packages (filename, creator, package_name, version, type, title, description, license, size_bytes, file_mtime, is_direct, storage_state, library_dir_id, subpath, dep_refs, scanned_at)
+    VALUES (@filename, @creator, @packageName, @version, @type, @title, @description, @license, @sizeBytes, @fileMtime, @isDirect, @storageState, @libraryDirId, @subpath, @depRefs, unixepoch())
     ON CONFLICT(filename) DO UPDATE SET
       creator = excluded.creator, package_name = excluded.package_name, version = excluded.version,
       type = excluded.type, title = excluded.title, description = excluded.description,
       license = excluded.license, size_bytes = excluded.size_bytes, file_mtime = excluded.file_mtime,
       storage_state = excluded.storage_state,
       library_dir_id = excluded.library_dir_id,
+      subpath = excluded.subpath,
       dep_refs = excluded.dep_refs, scanned_at = excluded.scanned_at
-  `).run(pkg)
+  `).run({ subpath: '', ...pkg })
 }
 
 export function deletePackage(filename) {
@@ -497,19 +518,34 @@ export function setPackageTypeFromHub(filename, hubType) {
 /**
  * Update storage_state and library_dir_id for a package. The on-disk suffix is implied by
  * storage_state (`.disabled` only when storage_state==='disabled', and only ever in main).
+ *
+ * `subpath` (the package's relative dir within its library dir) is updated only when
+ * provided — pass it whenever the physical file moved (cross-dir move recovery, or a
+ * scan/watch cache hit that detected a different subfolder). Omit it for in-place
+ * state flips that don't relocate the file (enable/disable/offload preserve subpath
+ * and pass the existing value explicitly).
  */
-export function setStorageState(filename, storageState, libraryDirId) {
-  stmt('UPDATE packages SET storage_state = ?, library_dir_id = ? WHERE filename = ?').run(
-    storageState,
-    libraryDirId ?? null,
-    filename,
-  )
+export function setStorageState(filename, storageState, libraryDirId, subpath) {
+  if (subpath === undefined) {
+    stmt('UPDATE packages SET storage_state = ?, library_dir_id = ? WHERE filename = ?').run(
+      storageState,
+      libraryDirId ?? null,
+      filename,
+    )
+  } else {
+    stmt('UPDATE packages SET storage_state = ?, library_dir_id = ?, subpath = ? WHERE filename = ?').run(
+      storageState,
+      libraryDirId ?? null,
+      subpath,
+      filename,
+    )
+  }
 }
 
 export function getPackageCacheInfo(filename) {
-  return stmt('SELECT file_mtime, size_bytes, storage_state, library_dir_id FROM packages WHERE filename = ?').get(
-    filename,
-  )
+  return stmt(
+    'SELECT file_mtime, size_bytes, storage_state, library_dir_id, subpath FROM packages WHERE filename = ?',
+  ).get(filename)
 }
 
 /**

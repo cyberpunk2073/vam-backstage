@@ -121,8 +121,8 @@ describe('migrate v23 (hub-id cleanup)', () => {
     await openTestDatabase(tmp.dbPath)
   })
 
-  it('bumps schema_version to 23', () => {
-    expect(getDb().prepare('SELECT version FROM schema_version').get().version).toBe(23)
+  it('bumps schema_version to the latest (24)', () => {
+    expect(getDb().prepare('SELECT version FROM schema_version').get().version).toBe(24)
   })
 
   it('nulls non-numeric ids in packages without dropping rows', () => {
@@ -171,6 +171,37 @@ describe('migrate v23 (hub-id cleanup)', () => {
     )
     expect(() => db.prepare(`INSERT INTO hub_users (user_id) VALUES ('')`).run()).toThrow(/CONSTRAINT|constraint/)
     expect(() => db.prepare(`INSERT INTO hub_resources (resource_id) VALUES ('999')`).run()).not.toThrow()
+  })
+})
+
+// ── v24 migration: packages.subpath ───────────────────────────────────────────
+//
+// A pre-v24 DB has no `subpath` column. After migrate(), the column exists and
+// every existing row backfills to '' (the historical flat-library assumption).
+
+describe('migrate v24 (package subpath)', () => {
+  beforeEach(async () => {
+    tmp = await mkTempVamDir()
+    buildV22Database(tmp.dbPath)
+    await openTestDatabase(tmp.dbPath)
+  })
+
+  it('adds a subpath column to packages', () => {
+    const cols = getDb()
+      .prepare(`PRAGMA table_info(packages)`)
+      .all()
+      .map((c) => c.name)
+    expect(cols).toContain('subpath')
+  })
+
+  it('backfills existing rows to an empty subpath', () => {
+    const rows = getDb().prepare('SELECT filename, subpath FROM packages').all()
+    expect(rows.length).toBeGreaterThan(0)
+    for (const r of rows) expect(r.subpath).toBe('')
+  })
+
+  it('sets needs_rescan so the next scan re-derives nested subpaths', () => {
+    expect(getDb().prepare(`SELECT value FROM settings WHERE key = 'needs_rescan'`).get()?.value).toBe('1')
   })
 })
 

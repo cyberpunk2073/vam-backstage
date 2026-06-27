@@ -46,13 +46,14 @@ export function personAtomIdsJsonFromBuffer(buf, packageFilename = null) {
  * @param {object} [opts]
  * @param {'enabled'|'disabled'|'offloaded'} [opts.storageState='enabled']
  * @param {number|null} [opts.libraryDirId=null] - NULL for main, aux dir id otherwise
+ * @param {string}  [opts.subpath=''] - POSIX relative dir within the library dir ('' = root)
  * @param {number}  [opts.isDirect=0] - 0 or 1
  * @param {string}  [opts.typeOverride] - if set, used instead of derived type
  * @returns {Promise<{ filename, contentItems, meta, size, pkgType, packageName } | null>} null if filename unparseable
  */
 export async function scanAndUpsert(
   fullPath,
-  { storageState = 'enabled', libraryDirId = null, isDirect = 0, typeOverride } = {},
+  { storageState = 'enabled', libraryDirId = null, subpath = '', isDirect = 0, typeOverride } = {},
 ) {
   const filename = canonicalVarFilename(basename(fullPath))
   const s = await stat(fullPath)
@@ -77,6 +78,7 @@ export async function scanAndUpsert(
     isDirect: isDirect ? 1 : 0,
     storageState,
     libraryDirId: libraryDirId == null ? null : libraryDirId,
+    subpath: subpath || '',
     depRefs: JSON.stringify(depRefs),
   })
 

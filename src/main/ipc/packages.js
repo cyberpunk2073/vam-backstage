@@ -575,6 +575,7 @@ export function registerPackageHandlers() {
           isDirect: pkg.is_direct ? 1 : 0,
           storageState: pkg.storage_state,
           libraryDirId: pkg.library_dir_id ?? null,
+          subpath: pkg.subpath ?? '',
         })
       } catch (err) {
         console.warn(`Post-redownload rescan failed for ${filename}:`, err.message)

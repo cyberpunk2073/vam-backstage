@@ -27,7 +27,7 @@ import {
   effectivePackageType,
 } from '../store.js'
 import { isLocalPackage } from '@shared/local-package.js'
-import { refreshLibraryDirs, getAllLibraryDirs } from '../library-dirs.js'
+import { refreshLibraryDirs, getAllLibraryDirs, libraryRelSubpath } from '../library-dirs.js'
 import { normalizeAuxDisabled } from '../watcher.js'
 
 /**
@@ -82,19 +82,26 @@ export async function runScan(vamDir, onProgress = () => {}) {
   const newAdditions = new Map()
   const unreadable = []
   for (let i = 0; i < varFiles.length; i++) {
-    const { filename, fullPath, mtime, size, storageState, libraryDirId } = varFiles[i]
+    const { filename, fullPath, mtime, size, storageState, libraryDirId, subpath } = varFiles[i]
     onProgress({ phase: 'reading', step: i + 1, total: varFiles.length, message: filename })
 
     const cached = getPackageCacheInfo(filename)
     if (cached && cached.file_mtime === mtime && cached.size_bytes === size) {
-      if (cached.storage_state !== storageState || (cached.library_dir_id ?? null) !== (libraryDirId ?? null)) {
-        setStorageState(filename, storageState, libraryDirId)
+      // Cache hit (unchanged bytes) still reconciles location: storage_state, the
+      // library dir, and the subfolder the file now lives in (a same-mtime move
+      // into/out of a subdir, or a backfilled v24 row whose subpath is still '').
+      if (
+        cached.storage_state !== storageState ||
+        (cached.library_dir_id ?? null) !== (libraryDirId ?? null) ||
+        (cached.subpath ?? '') !== subpath
+      ) {
+        setStorageState(filename, storageState, libraryDirId, subpath)
       }
       continue // scan cache hit
     }
 
     try {
-      const result = await scanAndUpsert(fullPath, { storageState, libraryDirId, isDirect: 0 })
+      const result = await scanAndUpsert(fullPath, { storageState, libraryDirId, subpath, isDirect: 0 })
       if (!result) continue
       scanned++
       if (!cached) {
@@ -249,6 +256,7 @@ async function walkForVars(dir, libraryDirId) {
             size: s.size,
             storageState,
             libraryDirId,
+            subpath: libraryRelSubpath(dir, fullPath),
           }
         } catch {
           return null

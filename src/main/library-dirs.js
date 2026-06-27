@@ -11,9 +11,15 @@
  * `storage_state`: `.disabled` only when `storage_state === 'disabled'`
  * (which is only ever true in main). Aux dirs are always suffix-less; any
  * stray `.var.disabled` file there is normalized to bare `.var` on scan/add.
+ *
+ * A `.var` may live in a subfolder of its library dir, not only at the root —
+ * VaM loads packages from anywhere under `AddonPackages`. `pkg.subpath` records
+ * that relative folder (POSIX-style, '' at the root); `pkgVarPath` joins it back
+ * in so nested packages resolve correctly. `libraryRelSubpath` is the inverse,
+ * deriving `subpath` from a discovered on-disk path during scan/watch.
  */
 
-import { join } from 'path'
+import { join, relative, dirname, sep, isAbsolute } from 'path'
 import { realpath } from 'fs/promises'
 import { ADDON_PACKAGES, ADDON_PACKAGES_FILE_PREFS } from '@shared/paths.js'
 import { LOCAL_CONTENT_DIRS } from '@shared/local-package.js'
@@ -68,7 +74,24 @@ export function pkgVarPath(pkg) {
   if (!pkg) return null
   const dir = getLibraryDirPath(pkg.library_dir_id)
   if (!dir) return null
-  return join(dir, pkg.filename + (pkg.storage_state === 'disabled' ? '.disabled' : ''))
+  const name = pkg.filename + (pkg.storage_state === 'disabled' ? '.disabled' : '')
+  const sub = pkg.subpath || ''
+  return sub ? join(dir, sub, name) : join(dir, name)
+}
+
+/**
+ * Derive the subpath to store for a `.var` discovered at `fullPath` inside
+ * `libraryDir`: the POSIX-normalized relative directory of the file's parent,
+ * or '' when it sits at the library root. Returns '' defensively when the path
+ * can't be expressed as a descendant of `libraryDir` (no dir, escaping `..`, or
+ * a different drive) so a bad input never yields a traversal subpath.
+ */
+export function libraryRelSubpath(libraryDir, fullPath) {
+  if (!libraryDir || !fullPath) return ''
+  const rel = relative(libraryDir, dirname(fullPath))
+  if (!rel || rel === '.') return ''
+  if (rel.startsWith('..') || isAbsolute(rel)) return ''
+  return rel.split(sep).join('/')
 }
 
 /** True when `child` is the same as or nested inside `parent`. */

@@ -15,8 +15,8 @@
  * `watcher.js` and never go through this function.
  */
 
-import { rename } from 'fs/promises'
-import { join } from 'path'
+import { rename, mkdir } from 'fs/promises'
+import { join, dirname } from 'path'
 import { getPackageIndex, patchStorageState } from './store.js'
 import { setStorageState } from './db.js'
 import { recordOwnedPath } from './watcher.js'
@@ -62,10 +62,16 @@ export async function applyStorageState(filename, target) {
   const targetDir = getLibraryDirPath(target.libraryDirId)
   if (!targetDir) throw new Error(`Library directory not configured for libraryDirId=${target.libraryDirId}`)
 
+  // Preserve the package's subfolder across the move: a `.var` organized under
+  // `<lib>/<subpath>/` stays there when enabled/disabled in place, and keeps the
+  // same relative subpath when offloaded to (or restored from) another library
+  // dir — so toggles never silently flatten a curated folder layout, and an
+  // offload→enable round-trip is lossless.
+  const subpath = pkg.subpath || ''
   // The on-disk suffix is implied by storage_state: `.disabled` only when storage_state
   // is 'disabled' (and only ever in main, since aux dirs are always suffix-less).
   const targetName = target.storageState === 'disabled' ? filename + '.disabled' : filename
-  const toPath = join(targetDir, targetName)
+  const toPath = subpath ? join(targetDir, subpath, targetName) : join(targetDir, targetName)
 
   // Already at target — nothing to do. In practice callers (toggle-enabled,
   // postDownloadIntegrate) short-circuit no-ops upstream via nextStorageStateForIntent /
@@ -76,6 +82,11 @@ export async function applyStorageState(filename, target) {
   recordOwnedPath(fromPath)
   recordOwnedPath(toPath)
 
+  // The destination subfolder may not exist yet when offloading into a fresh aux
+  // dir (or restoring into a main subtree that was never created there). Creating
+  // it is idempotent for the common in-place enable/disable (dir already exists).
+  await mkdir(dirname(toPath), { recursive: true })
+
   try {
     await rename(fromPath, toPath)
   } catch (err) {
@@ -85,7 +96,9 @@ export async function applyStorageState(filename, target) {
     throw err
   }
 
-  setStorageState(filename, target.storageState, target.libraryDirId ?? null)
+  // subpath is unchanged by the move (preserved above), but pass it through so the
+  // column is authoritative even on rows backfilled to '' before their first rescan.
+  setStorageState(filename, target.storageState, target.libraryDirId ?? null, subpath)
   // Patch in-memory `packageIndex` row so the next `packages:list` reads the new
   // state without a full rebuild. Content rows reference the package via
   // `c.package` on the renderer and pick up the patched value on relink.
