@@ -89,6 +89,7 @@ import {
   isNonCommercialUseAllowed,
 } from '@/lib/licenses'
 import { resolveLibraryRestoreIndex, shouldIgnoreTransientTop, shouldRestoreOnActivate } from '@/lib/view-scroll-anchor'
+import { getMousePageDirection, scrollMousePage, shouldIgnoreMousePageTarget } from '@/lib/mouse-page-nav'
 import { haystacksMatchAllTerms, searchAndTerms } from '@shared/search-text.js'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { LicenseTag } from '@/components/LicenseTag'
@@ -202,6 +203,7 @@ export default function LibraryView({ onNavigate, navContext, active = true }) {
     fetchMissingDeps,
     refreshUpdateCheck,
     selectPackage,
+    clearSelection,
     consumePendingRestoreFilename,
     setScrollAnchorFilename,
     bulkSelectedFilenames,
@@ -872,6 +874,24 @@ export default function LibraryView({ onNavigate, navContext, active = true }) {
     getId: (p) => p.filename,
   })
 
+  const handleMousePageButton = useCallback(
+    (e) => {
+      const direction = getMousePageDirection(e.button)
+      if (!direction) return
+      e.preventDefault()
+      e.stopPropagation()
+
+      if (direction < 0 && selectedDetail && !bulkActive) {
+        clearSelection()
+        return
+      }
+
+      if (shouldIgnoreMousePageTarget(e.target)) return
+      scrollMousePage(e.target, e.currentTarget, direction)
+    },
+    [bulkActive, clearSelection, selectedDetail],
+  )
+
   useEffect(() => {
     if (!active) return
     function onKeyDown(e) {
@@ -908,7 +928,7 @@ export default function LibraryView({ onNavigate, navContext, active = true }) {
   }, [bulkSelectedFilenames, filtered.length])
 
   return (
-    <div className="h-full flex">
+    <div className="h-full flex" onMouseUp={handleMousePageButton}>
       <FilterPanel search={search} onSearchChange={setSearch} sections={sections} />
 
       <div className="flex-1 flex flex-col min-w-0">

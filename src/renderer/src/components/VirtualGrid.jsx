@@ -236,7 +236,12 @@ export function VirtualGrid({
   )
 
   return (
-    <div ref={scrollRef} className={`overflow-y-auto ${className}`} onMouseDown={onScrollMouseDown}>
+    <div
+      ref={scrollRef}
+      data-page-nav-scroll
+      className={`overflow-y-auto ${className}`}
+      onMouseDown={onScrollMouseDown}
+    >
       <div style={{ height: virtualizer.getTotalSize() + padding * 2, position: 'relative' }}>
         {virtualizer.getVirtualItems().map((vRow) => {
           const startIdx = vRow.index * cols
@@ -341,7 +346,7 @@ export function VirtualList({
   }, [rowHeight, emitFirstVisibleIndex])
 
   return (
-    <div ref={scrollRef} className={`overflow-y-auto ${className}`}>
+    <div ref={scrollRef} data-page-nav-scroll className={`overflow-y-auto ${className}`}>
       <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
         {virtualizer.getVirtualItems().map((vRow) => (
           <div key={vRow.key} style={{ position: 'absolute', top: vRow.start, left: 0, right: 0, height: rowHeight }}>

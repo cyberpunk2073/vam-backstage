@@ -60,6 +60,7 @@ import { Tag } from '@/components/ui/tag'
 import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { HUB_PER_PAGE_OPTIONS } from '@/lib/view-state'
+import { getMousePageDirection, shouldIgnoreMousePageTarget } from '@/lib/mouse-page-nav'
 
 /** Hub text search: avoid a network request on every keystroke */
 const HUB_SEARCH_DEBOUNCE_MS = 320
@@ -415,6 +416,43 @@ export default function HubView({ onNavigate, active = true }) {
     const sorted = [...pages].filter((p) => p >= 1 && p <= maxHubPage).sort((a, b) => a - b)
     return sorted.flatMap((p, i) => (i > 0 && p - sorted[i - 1] > 1 ? ['...', p] : [p]))
   }, [maxHubPage, page])
+
+  const handleMousePageButton = useCallback(
+    (e) => {
+      const direction = getMousePageDirection(e.button)
+      if (!direction) return
+      e.preventDefault()
+      e.stopPropagation()
+
+      if (detailResource) {
+        if (direction < 0) closeDetail()
+        return
+      }
+
+      if (shouldIgnoreMousePageTarget(e.target)) return
+
+      const currentPage = browseMode === 'infinite' ? restorePage : page
+      if (direction < 0 && currentPage <= 1) return
+      const canRecheckTail = !!resolvedTotalPages && !tailResolving
+      if (direction > 0 && currentPage >= maxHubPage && !canRecheckTail) return
+
+      const nextPage = currentPage + direction
+      if (browseMode === 'infinite') goInfiniteStartPage(nextPage)
+      else goPagedPage(nextPage)
+    },
+    [
+      browseMode,
+      closeDetail,
+      detailResource,
+      goInfiniteStartPage,
+      goPagedPage,
+      maxHubPage,
+      page,
+      resolvedTotalPages,
+      restorePage,
+      tailResolving,
+    ],
+  )
 
   const renderPageNav = (edge) => {
     if (!shouldRenderHubPageNav(edge, browseMode, maxHubPage, showInfinitePagerControls)) return null
@@ -779,7 +817,7 @@ export default function HubView({ onNavigate, active = true }) {
   )
 
   return (
-    <div className="h-full flex min-w-0 relative">
+    <div className="h-full flex min-w-0 relative" onMouseUp={handleMousePageButton}>
       <FilterPanel search={searchDraft} onSearchChange={handleSearchChange} sections={sections} />
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0">

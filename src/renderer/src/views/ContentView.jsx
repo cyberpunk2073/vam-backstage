@@ -61,6 +61,7 @@ import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
 import { StorageStateChip } from '@/components/StorageStateChip'
 import { resolveContentRestoreIndex, shouldIgnoreTransientTop, shouldRestoreOnActivate } from '@/lib/view-scroll-anchor'
+import { getMousePageDirection, scrollMousePage, shouldIgnoreMousePageTarget } from '@/lib/mouse-page-nav'
 
 const SORT_OPTIONS = ['Recently installed', 'Name A-Z', 'Package', 'Type']
 const isPackageDisabled = (c) => !isPackageActive(c.package?.storageState ?? 'enabled')
@@ -187,6 +188,7 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
     cardWidth,
     setCardWidth,
     selectItem,
+    clearSelection,
     consumePendingRestoreItem,
     setScrollAnchorItem,
     bulkSelectedIds,
@@ -800,6 +802,24 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
     getId: (c) => c.id,
   })
 
+  const handleMousePageButton = useCallback(
+    (e) => {
+      const direction = getMousePageDirection(e.button)
+      if (!direction) return
+      e.preventDefault()
+      e.stopPropagation()
+
+      if (direction < 0 && selectedItem && !bulkActive) {
+        clearSelection()
+        return
+      }
+
+      if (shouldIgnoreMousePageTarget(e.target)) return
+      scrollMousePage(e.target, e.currentTarget, direction)
+    },
+    [bulkActive, clearSelection, selectedItem],
+  )
+
   useEffect(() => {
     if (!active) return
     function onKeyDown(e) {
@@ -989,7 +1009,7 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
   }, [bulkSelectedIds, filtered.length])
 
   return (
-    <div className="h-full flex">
+    <div className="h-full flex" onMouseUp={handleMousePageButton}>
       <FilterPanel search={search} onSearchChange={setSearch} sections={sections} />
 
       <div className="flex-1 flex flex-col min-w-0">
