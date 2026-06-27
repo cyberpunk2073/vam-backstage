@@ -37,15 +37,17 @@ export function VirtualGrid({
   const suppressAnchorRef = useRef(false)
   const consumedRestoreKeyRef = useRef('')
   const lastFirstVisibleIndexRef = useRef(null)
+  const onFirstVisibleIndexChangeRef = useRef(onFirstVisibleIndexChange)
 
-  const emitFirstVisibleIndex = useCallback(
-    (index) => {
-      if (lastFirstVisibleIndexRef.current === index) return
-      lastFirstVisibleIndexRef.current = index
-      onFirstVisibleIndexChange?.(index)
-    },
-    [onFirstVisibleIndexChange],
-  )
+  useLayoutEffect(() => {
+    onFirstVisibleIndexChangeRef.current = onFirstVisibleIndexChange
+  }, [onFirstVisibleIndexChange])
+
+  const emitFirstVisibleIndex = useCallback((index) => {
+    if (lastFirstVisibleIndexRef.current === index) return
+    lastFirstVisibleIndexRef.current = index
+    onFirstVisibleIndexChangeRef.current?.(index)
+  }, [])
 
   const scalingHeight = itemHeight - fixedHeight
   const calcRowHeight = useCallback(
@@ -227,15 +229,17 @@ export function VirtualList({
   const scrollRef = useRef(null)
   const consumedRestoreKeyRef = useRef('')
   const lastFirstVisibleIndexRef = useRef(null)
+  const onFirstVisibleIndexChangeRef = useRef(onFirstVisibleIndexChange)
 
-  const emitFirstVisibleIndex = useCallback(
-    (index) => {
-      if (lastFirstVisibleIndexRef.current === index) return
-      lastFirstVisibleIndexRef.current = index
-      onFirstVisibleIndexChange?.(index)
-    },
-    [onFirstVisibleIndexChange],
-  )
+  useLayoutEffect(() => {
+    onFirstVisibleIndexChangeRef.current = onFirstVisibleIndexChange
+  }, [onFirstVisibleIndexChange])
+
+  const emitFirstVisibleIndex = useCallback((index) => {
+    if (lastFirstVisibleIndexRef.current === index) return
+    lastFirstVisibleIndexRef.current = index
+    onFirstVisibleIndexChangeRef.current?.(index)
+  }, [])
 
   const virtualizer = useVirtualizer({
     count: items.length,

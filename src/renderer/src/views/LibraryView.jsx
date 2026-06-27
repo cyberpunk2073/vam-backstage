@@ -216,7 +216,11 @@ export default function LibraryView({ onNavigate, navContext, active = true }) {
   const [tagCounts, setTagCounts] = useState({})
   const [authorCounts, setAuthorCounts] = useState({})
   const [restoreScrollKey, setRestoreScrollKey] = useState(() =>
-    scrollAnchorFilename ? `anchor:${scrollAnchorFilename}` : '',
+    scrollAnchorFilename
+      ? `anchor:${scrollAnchorFilename}`
+      : pendingRestoreFilename
+        ? `selected:${pendingRestoreFilename}`
+        : '',
   )
   const [detailPanelWidth] = usePersistedPanelWidth('panel_width_detail', { min: 260, max: 500, defaultWidth: 340 })
   const selectingRef = useRef(false)
@@ -598,10 +602,11 @@ export default function LibraryView({ onNavigate, navContext, active = true }) {
 
   const handleFirstVisibleIndexChange = useCallback(
     (index) => {
+      if (!active) return
       const pkg = filtered[index]
       if (pkg) setScrollAnchorFilename(pkg.filename)
     },
-    [filtered, setScrollAnchorFilename],
+    [active, filtered, setScrollAnchorFilename],
   )
 
   const runSelectPackage = useCallback(
@@ -620,9 +625,17 @@ export default function LibraryView({ onNavigate, navContext, active = true }) {
     const target = filtered.find((p) => p.filename === pendingRestoreFilename)
     consumePendingRestoreFilename()
     if (!target) return
-    setRestoreScrollKey(target.filename)
+    if (!scrollAnchorFilename) setRestoreScrollKey(`selected:${target.filename}`)
     void runSelectPackage(target.filename)
-  }, [active, packagesLoaded, pendingRestoreFilename, filtered, consumePendingRestoreFilename, runSelectPackage])
+  }, [
+    active,
+    packagesLoaded,
+    pendingRestoreFilename,
+    filtered,
+    scrollAnchorFilename,
+    consumePendingRestoreFilename,
+    runSelectPackage,
+  ])
 
   useEffect(() => {
     if (!active) return

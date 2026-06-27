@@ -201,7 +201,11 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
   const [tagCounts, setTagCounts] = useState({})
   const [authorCounts, setAuthorCounts] = useState({})
   const [restoreScrollKey, setRestoreScrollKey] = useState(() =>
-    scrollAnchorItemId != null ? `anchor:${scrollAnchorItemId}:${scrollAnchorPackageFilename ?? ''}` : '',
+    scrollAnchorItemId != null
+      ? `anchor:${scrollAnchorItemId}:${scrollAnchorPackageFilename ?? ''}`
+      : pendingRestoreItem?.selectedItemId != null
+        ? `selected:${pendingRestoreItem.selectedItemId}:${pendingRestoreItem.selectedPackageFilename ?? ''}`
+        : '',
   )
   const [detailPanelWidth] = usePersistedPanelWidth('panel_width_detail', { min: 260, max: 500, defaultWidth: 340 })
   const selectingRef = useRef(false)
@@ -670,10 +674,11 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
 
   const handleFirstVisibleIndexChange = useCallback(
     (index) => {
+      if (!active) return
       const item = filtered[index]
       if (item) setScrollAnchorItem(item)
     },
-    [filtered, setScrollAnchorItem],
+    [active, filtered, setScrollAnchorItem],
   )
 
   const runSelectItem = useCallback(
@@ -698,9 +703,9 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
     )
     consumePendingRestoreItem()
     if (!target) return
-    setRestoreScrollKey(String(target.id))
+    if (scrollAnchorItemId == null) setRestoreScrollKey(`selected:${target.id}:${target.packageFilename ?? ''}`)
     void runSelectItem(target)
-  }, [active, pendingRestoreItem, filtered, consumePendingRestoreItem, runSelectItem])
+  }, [active, pendingRestoreItem, filtered, scrollAnchorItemId, consumePendingRestoreItem, runSelectItem])
 
   useEffect(() => {
     if (!active) return
