@@ -80,6 +80,11 @@ export function hubInfiniteOffsetLabel() {
   return 'Page'
 }
 
+export function hubPageCountLabel(maxPage) {
+  const n = Math.max(1, Number(maxPage) || 1)
+  return n.toLocaleString()
+}
+
 export function shouldRenderHubPageNav(edge, browseMode, maxHubPage, showInfinitePagerControls = true) {
   if (maxHubPage <= 1) return false
   if (browseMode === 'infinite' && !showInfinitePagerControls) return false
@@ -106,7 +111,9 @@ export default function HubView({ onNavigate, active = true }) {
     browseMode,
     loading,
     loadingPrevious,
+    tailResolving,
     error,
+    resolvedTotalPages,
     search,
     selectedType,
     paidFilter,
@@ -131,6 +138,7 @@ export default function HubView({ onNavigate, active = true }) {
     fetchResources,
     fetchNextPage,
     fetchPreviousPage,
+    resolveTailPages,
     openDetail,
     openDetailById,
     closeDetail,
@@ -267,6 +275,13 @@ export default function HubView({ onNavigate, active = true }) {
   }, [active, filterOptions, hubFetchKey, page, sort])
 
   useEffect(() => {
+    if (!active) return
+    if (loading) return
+    if (tailResolving || resolvedTotalPages || totalPages <= 1) return
+    void resolveTailPages()
+  }, [active, loading, resolvedTotalPages, resolveTailPages, tailResolving, totalPages])
+
+  useEffect(() => {
     if (!active || !pendingDetailResourceId || detailResource) return
     void openDetailById(pendingDetailResourceId)
   }, [active, pendingDetailResourceId, detailResource, openDetailById])
@@ -380,7 +395,8 @@ export default function HubView({ onNavigate, active = true }) {
     [browseMode, fetchPreviousHubPage, loading, startPage],
   )
 
-  const maxHubPage = Math.max(totalPages || 1, 1)
+  const maxHubPage = Math.max(resolvedTotalPages || totalPages || 1, 1)
+  const pageCountLabel = hubPageCountLabel(maxHubPage)
   const rangePage = browseMode === 'infinite' ? startPage : page
   const pageStart = resources.length ? (rangePage - 1) * perPage + 1 : 0
   const pageEnd = resources.length ? Math.min((rangePage - 1) * perPage + resources.length, totalFound) : 0
@@ -407,6 +423,7 @@ export default function HubView({ onNavigate, active = true }) {
     const pageClass =
       'h-8 min-w-8 px-2 rounded text-xs tabular-nums hover:bg-elevated disabled:cursor-default cursor-pointer'
     const infiniteOffsetLabel = hubInfiniteOffsetLabel()
+    const canRecheckTail = !!resolvedTotalPages && !tailResolving
     const controls =
       browseMode === 'paged' ? (
         <>
@@ -446,26 +463,26 @@ export default function HubView({ onNavigate, active = true }) {
                   p === page ? 'bg-hover text-text-primary font-medium' : 'text-text-tertiary hover:text-text-primary'
                 }`}
               >
-                {p}
+                {p.toLocaleString()}
               </button>
             ),
           )}
           <button
             type="button"
-            disabled={loading || page >= maxHubPage}
+            disabled={loading || (page >= maxHubPage && !canRecheckTail)}
             onClick={() => goPagedPage(page + 1)}
-            title="Next Hub page"
-            aria-label="Next Hub page"
+            title={page >= maxHubPage ? 'Check for more Hub pages' : 'Next Hub page'}
+            aria-label={page >= maxHubPage ? 'Check for more Hub pages' : 'Next Hub page'}
             className={iconClass}
           >
             <ChevronRight size={18} />
           </button>
           <button
             type="button"
-            disabled={loading || page >= maxHubPage}
+            disabled={loading || (page >= maxHubPage && !canRecheckTail)}
             onClick={() => goPagedPage(maxHubPage)}
-            title="Last Hub page"
-            aria-label="Last Hub page"
+            title={page >= maxHubPage ? 'Check for last Hub page' : 'Last Hub page'}
+            aria-label={page >= maxHubPage ? 'Check for last Hub page' : 'Last Hub page'}
             className={iconClass}
           >
             <ChevronsRight size={17} />
@@ -509,23 +526,24 @@ export default function HubView({ onNavigate, active = true }) {
               aria-label="Hub start page"
               className="h-6 w-16 rounded border border-input bg-elevated px-2 text-right text-xs tabular-nums text-text-primary outline-none focus:border-ring/50 disabled:opacity-50"
             />
+            <span className="tabular-nums">of {pageCountLabel}</span>
           </span>
           <button
             type="button"
-            disabled={loading || restorePage >= maxHubPage}
+            disabled={loading || (restorePage >= maxHubPage && !canRecheckTail)}
             onClick={() => goInfiniteStartPage(restorePage + 1)}
-            title="Start on next page"
-            aria-label="Start on next page"
+            title={restorePage >= maxHubPage ? 'Check for more Hub pages' : 'Start on next page'}
+            aria-label={restorePage >= maxHubPage ? 'Check for more Hub pages' : 'Start on next page'}
             className={iconClass}
           >
             <ChevronRight size={18} />
           </button>
           <button
             type="button"
-            disabled={loading || restorePage >= maxHubPage}
+            disabled={loading || (restorePage >= maxHubPage && !canRecheckTail)}
             onClick={() => goInfiniteStartPage(maxHubPage)}
-            title="Start on last page"
-            aria-label="Start on last page"
+            title={restorePage >= maxHubPage ? 'Check for last Hub page' : 'Start on last page'}
+            aria-label={restorePage >= maxHubPage ? 'Check for last Hub page' : 'Start on last page'}
             className={iconClass}
           >
             <ChevronsRight size={17} />
@@ -551,14 +569,15 @@ export default function HubView({ onNavigate, active = true }) {
   const renderPageSummary = () => (
     <div className="flex min-w-[230px] flex-1 items-center justify-end gap-2">
       <span className="text-right text-[11px] tabular-nums text-text-tertiary">{pageRange}</span>
+      <span className="text-[11px] text-text-tertiary">Page size</span>
       <Select value={String(perPage)} onValueChange={setPerPage}>
-        <SelectTrigger size="sm" className="h-8 min-w-[92px]" aria-label="Hub items per page">
+        <SelectTrigger size="sm" className="h-8 min-w-[72px]" aria-label="Hub page size">
           <SelectValue />
         </SelectTrigger>
-        <SelectContent align="end" className="min-w-[92px]">
+        <SelectContent align="end" className="min-w-[72px]">
           {HUB_PER_PAGE_OPTIONS.map((n) => (
             <SelectItem key={n} value={String(n)}>
-              {n} / page
+              {n}
             </SelectItem>
           ))}
         </SelectContent>

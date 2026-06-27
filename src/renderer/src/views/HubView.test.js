@@ -3,6 +3,7 @@ import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import {
   hubInfiniteOffsetLabel,
+  hubPageCountLabel,
   hubPageForVisibleResourceIndex,
   shouldFetchHubResources,
   shouldRenderHubPageNav,
@@ -50,6 +51,17 @@ describe('HubView infinite page tracking', () => {
     expect(hubInfiniteOffsetLabel({ startPage: 20, restorePage: 20 })).toBe('Page')
   })
 
+  it('formats reported total pages without approximation', () => {
+    expect(hubPageCountLabel(300)).toBe('300')
+    expect(hubPageCountLabel(190)).toBe('190')
+  })
+
+  it('uses compact page size wording', () => {
+    expect(hubView).toContain('Page size')
+    expect(hubView).toContain('aria-label="Hub page size"')
+    expect(hubView).not.toContain('/ page')
+  })
+
   it('keeps page controls in the sticky toolbar', () => {
     expect(shouldRenderHubPageNav('toolbar', 'infinite', 2)).toBe(true)
     expect(shouldRenderHubPageNav('toolbar', 'paged', 2)).toBe(true)
@@ -69,8 +81,8 @@ describe('HubView infinite page tracking', () => {
 
   it('wires infinite scrolling to start on the last page', () => {
     expect(hubView).toContain('onClick={() => goInfiniteStartPage(maxHubPage)}')
-    expect(hubView).toContain('title="Start on last page"')
-    expect(hubView).toContain('aria-label="Start on last page"')
+    expect(hubView).toContain("'Start on last page'")
+    expect(hubView).toContain("'Check for last Hub page'")
   })
 
   it('wires wheel-up loading for earlier infinite pages', () => {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useHubStore } from './useHubStore'
+import { hubTailCacheKey, useHubStore } from './useHubStore'
 import { useInstalledStore } from './useInstalledStore'
 
 function resource(id) {
@@ -20,7 +20,7 @@ describe('useHubStore', () => {
           filters: vi.fn().mockResolvedValue({ sort: ['Latest Update'] }),
         },
         settings: {
-          get: vi.fn(),
+          get: vi.fn().mockResolvedValue(null),
           set: vi.fn(),
         },
       },
@@ -38,7 +38,12 @@ describe('useHubStore', () => {
       browseMode: 'infinite',
       loading: false,
       loadingPrevious: false,
+      tailResolving: false,
       error: null,
+      tailCache: {},
+      tailCacheLoaded: false,
+      tailCacheKey: '',
+      resolvedTotalPages: null,
       search: '',
       selectedType: 'All',
       paidFilter: 'all',
@@ -62,6 +67,16 @@ describe('useHubStore', () => {
     useHubStore.setState({ browseMode: 'infinite', startPage: 1, restorePage: 3, page: 5 })
 
     expect(useHubStore.getState().getPersistedState()).toMatchObject({ browseMode: 'infinite', page: 3 })
+  })
+
+  it('persists and restores page size', () => {
+    useHubStore.setState({ browseMode: 'paged', page: 4, perPage: 120 })
+
+    expect(useHubStore.getState().getPersistedState()).toMatchObject({ page: 4, perPage: 120 })
+
+    useHubStore.getState().applyPersistedState({ page: 2, perPage: 90 })
+
+    expect(useHubStore.getState()).toMatchObject({ page: 2, startPage: 2, restorePage: 2, perPage: 90 })
   })
 
   it('prepends the previous infinite page without changing the loaded tail page', async () => {
@@ -89,10 +104,10 @@ describe('useHubStore', () => {
     })
   })
 
-  it('resizes infinite start page from the restore page', () => {
+  it('resizes infinite start page from the restore page', async () => {
     useHubStore.setState({ browseMode: 'infinite', startPage: 1, restorePage: 3, page: 5, perPage: 60 })
 
-    useHubStore.getState().setPerPage(120)
+    await useHubStore.getState().setPerPage(120)
 
     expect(window.api.hub.search).toHaveBeenCalledWith(expect.objectContaining({ page: 2, perpage: 120 }))
   })
@@ -200,5 +215,53 @@ describe('useHubStore', () => {
       restorePage: 6,
       totalPages: 6,
     })
+  })
+
+  it('uses a persisted resolved tail page cache', async () => {
+    const key = hubTailCacheKey(useHubStore.getState())
+    window.api.settings.get.mockImplementation((setting) =>
+      Promise.resolve(setting === 'hub_tail_page_cache_v1' ? JSON.stringify({ [key]: { totalPages: 6 } }) : null),
+    )
+
+    await useHubStore.getState().fetchResources(true, { page: 10 })
+
+    expect(window.api.hub.search).toHaveBeenCalledWith(expect.objectContaining({ page: 6, perpage: 60 }))
+    expect(useHubStore.getState()).toMatchObject({ page: 6, totalPages: 6, resolvedTotalPages: 6 })
+  })
+
+  it('resolves and persists the actual tail page', async () => {
+    window.api.hub.search.mockImplementation(({ page }) => {
+      const resources = page <= 6 ? [resource(page)] : []
+      return Promise.resolve({ resources, totalFound: 300, totalPages: 10 })
+    })
+
+    await useHubStore.getState().fetchResources(true, { page: 1 })
+    await useHubStore.getState().resolveTailPages()
+
+    expect(useHubStore.getState()).toMatchObject({ totalPages: 6, resolvedTotalPages: 6 })
+    expect(window.api.settings.set).toHaveBeenCalledWith(
+      'hub_tail_page_cache_v1',
+      expect.stringContaining('"totalPages":6'),
+    )
+  })
+
+  it('force rechecks a cached tail page for newly-added pages', async () => {
+    const key = hubTailCacheKey(useHubStore.getState())
+    useHubStore.setState({
+      tailCacheLoaded: true,
+      tailCache: { [key]: { totalPages: 6 } },
+      resolvedTotalPages: 6,
+      totalPages: 6,
+      page: 6,
+    })
+    window.api.hub.search.mockImplementation(({ page }) => {
+      const resources = page <= 8 ? [resource(page)] : []
+      return Promise.resolve({ resources, totalFound: 480, totalPages: 10 })
+    })
+
+    await useHubStore.getState().resolveTailPages({ force: true })
+
+    expect(window.api.hub.search).toHaveBeenCalledWith(expect.objectContaining({ page: 7 }))
+    expect(useHubStore.getState()).toMatchObject({ totalPages: 8, resolvedTotalPages: 8 })
   })
 })
