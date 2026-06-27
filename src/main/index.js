@@ -70,6 +70,13 @@ import {
 let mainWindow = null
 
 const HUB_ORIGIN = new URL('https://hub.virtamate.com').origin
+const PAGE_APP_COMMANDS = new Set(['browser-backward', 'browser-forward'])
+
+function sendPageAppCommand(command) {
+  if (!PAGE_APP_COMMANDS.has(command) || !mainWindow || mainWindow.isDestroyed()) return false
+  mainWindow.webContents.send('app-command', command)
+  return true
+}
 
 /**
  * Chromium often does not show the native text edit menu in Electron; with a hidden menu bar
@@ -107,6 +114,10 @@ function registerWebviewWindowOpenHandler() {
     if (mainWindow) {
       attachNativeTextContextMenu(contents, mainWindow)
     }
+    contents.on('app-command', (event, command) => {
+      if (!sendPageAppCommand(command)) return
+      event.preventDefault()
+    })
     contents.setWindowOpenHandler(({ url }) => {
       if (url && url !== 'about:blank') {
         try {
@@ -145,9 +156,8 @@ function attachDevToolsHotkeys(window) {
 
 function attachAppCommandBridge(window) {
   window.on('app-command', (event, command) => {
-    if (command !== 'browser-backward' && command !== 'browser-forward') return
+    if (!sendPageAppCommand(command)) return
     event.preventDefault()
-    window.webContents.send('app-command', command)
   })
 }
 

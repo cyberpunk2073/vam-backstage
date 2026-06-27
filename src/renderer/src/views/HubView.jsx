@@ -1017,6 +1017,7 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
   const [canGoBack, setCanGoBack] = useState(false)
   const [canGoForward, setCanGoForward] = useState(false)
   const [urlCopied, setUrlCopied] = useState(false)
+  const [webviewBackCaptureReady, setWebviewBackCaptureReady] = useState(false)
 
   const resourceId = detail?.resource_id || resource.resource_id
   const threadId = detail?.discussion_thread_id
@@ -1077,10 +1078,22 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
     (key) => {
       setBrowserTab(key)
       const url = tabUrls[key] || tabUrls.overview
+      setWebviewBackCaptureReady(false)
       setNavUrl(url)
       setDisplayUrl(url)
     },
     [tabUrls],
+  )
+
+  const handleLoadingWebviewMousePageButton = useCallback(
+    (e) => {
+      const direction = getMousePageDirection(e.button)
+      if (direction >= 0) return
+      e.preventDefault()
+      e.stopPropagation()
+      onBack()
+    },
+    [onBack],
   )
 
   // When navigation swaps the displayed resource, reset the panel's tab highlight
@@ -1210,7 +1223,13 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
           return _open(url)
         }
       })()`,
-      ).catch(() => {})
+      )
+        .then(() => {
+          setWebviewBackCaptureReady(true)
+        })
+        .catch(() => {
+          setWebviewBackCaptureReady(true)
+        })
     }
 
     const EXT_TAG = '__VAM_OPEN_EXT__:'
@@ -1227,15 +1246,20 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
       if (url) void window.api.shell.openExternal(url)
     }
 
+    const onDidStartLoading = () => {
+      setWebviewBackCaptureReady(false)
+    }
     wv.addEventListener('did-navigate', syncNav)
     wv.addEventListener('did-navigate-in-page', syncNav)
     wv.addEventListener('did-fail-load', ignoreAbort)
+    wv.addEventListener('did-start-loading', onDidStartLoading)
     wv.addEventListener('dom-ready', injectLinkHandler)
     wv.addEventListener('console-message', onConsoleMessage)
     return () => {
       wv.removeEventListener('did-navigate', syncNav)
       wv.removeEventListener('did-navigate-in-page', syncNav)
       wv.removeEventListener('did-fail-load', ignoreAbort)
+      wv.removeEventListener('did-start-loading', onDidStartLoading)
       wv.removeEventListener('dom-ready', injectLinkHandler)
       wv.removeEventListener('console-message', onConsoleMessage)
     }
@@ -1817,7 +1841,7 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
           </div>
 
           {/* Webview */}
-          <div className="flex-1 min-h-0">
+          <div className="relative flex-1 min-h-0">
             <webview
               key={browserResourceId}
               ref={webviewRef}
@@ -1827,6 +1851,9 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
               className="w-full h-full"
               style={{ display: 'flex', pointerEvents: hubPanelResizeDrag ? 'none' : 'auto' }}
             />
+            {!webviewBackCaptureReady && (
+              <div className="absolute inset-0 bg-transparent" onMouseUp={handleLoadingWebviewMousePageButton} />
+            )}
           </div>
         </div>
       </div>
