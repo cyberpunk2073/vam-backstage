@@ -88,6 +88,13 @@ import {
   isCommercialUseAllowed,
   isNonCommercialUseAllowed,
 } from '@/lib/licenses'
+import { resolveLibraryRestoreIndex, shouldIgnoreTransientTop, shouldRestoreOnActivate } from '@/lib/view-scroll-anchor'
+import {
+  getAppCommandPageDirection,
+  getMousePageDirection,
+  scrollMousePage,
+  shouldIgnoreMousePageTarget,
+} from '@/lib/mouse-page-nav'
 import { haystacksMatchAllTerms, searchAndTerms } from '@shared/search-text.js'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { LicenseTag } from '@/components/LicenseTag'
@@ -155,10 +162,12 @@ function filterPackagesByEnabledStorage(items, enabledFilter) {
   return items.filter((p) => p.storageState === enabledFilter)
 }
 
-export default function LibraryView({ onNavigate, navContext }) {
+export default function LibraryView({ onNavigate, navContext, active = true }) {
   const {
     packages,
     selectedDetail,
+    pendingRestoreFilename,
+    scrollAnchorFilename,
     search,
     authorSearch,
     statusFilter,
@@ -199,6 +208,9 @@ export default function LibraryView({ onNavigate, navContext }) {
     fetchMissingDeps,
     refreshUpdateCheck,
     selectPackage,
+    clearSelection,
+    consumePendingRestoreFilename,
+    setScrollAnchorFilename,
     bulkSelectedFilenames,
     toggleBulkSelect,
     rangeBulkSelect,
@@ -210,8 +222,18 @@ export default function LibraryView({ onNavigate, navContext }) {
   const [gridLayout, setGridLayout] = useState({ cols: 1, availableWidth: 0 })
   const [tagCounts, setTagCounts] = useState({})
   const [authorCounts, setAuthorCounts] = useState({})
+  const [restoreScrollKey, setRestoreScrollKey] = useState(() =>
+    scrollAnchorFilename
+      ? `anchor:${scrollAnchorFilename}`
+      : pendingRestoreFilename
+        ? `selected:${pendingRestoreFilename}`
+        : '',
+  )
   const [detailPanelWidth] = usePersistedPanelWidth('panel_width_detail', { min: 260, max: 500, defaultWidth: 340 })
   const selectingRef = useRef(false)
+  const wasActiveRef = useRef(active)
+  const restoreNonceRef = useRef(0)
+  const ignoreTransientTopRef = useRef(false)
 
   useEffect(() => {
     const getLibraryStore = () => useLibraryStore.getState()
@@ -253,6 +275,7 @@ export default function LibraryView({ onNavigate, navContext }) {
   }, [])
 
   useEffect(() => {
+    if (!active) return
     const ctx = navContext?.current
     if (!ctx) return
     if (ctx.selectPackage) {
@@ -262,14 +285,15 @@ export default function LibraryView({ onNavigate, navContext }) {
       })
     }
     navContext.current = null
-  }, [navContext, selectPackage])
+  }, [active, navContext, selectPackage])
 
   // Lazy-load missing deps data + hub availability when missing filter activates (cached)
   useEffect(() => {
+    if (!active) return
     if (statusFilter !== 'missing') return
     const store = useLibraryStore.getState()
     if (!store.missingDeps && !store.missingDepsLoading) store.fetchMissingDeps()
-  }, [statusFilter])
+  }, [active, statusFilter])
 
   const baseFiltered = useMemo(() => {
     let result = packages
@@ -583,7 +607,31 @@ export default function LibraryView({ onNavigate, navContext }) {
   const lastSelectedIdxRef = useRef(0)
   const prevScrollResetKeyRef = useRef(scrollResetKey)
   const selectedIdx = selectedDetail ? filtered.findIndex((p) => p.filename === selectedDetail.filename) : -1
+  const restoreIdx = resolveLibraryRestoreIndex(filtered, scrollAnchorFilename, selectedDetail?.filename)
   if (selectedIdx >= 0) lastSelectedIdxRef.current = selectedIdx
+  if (shouldRestoreOnActivate(wasActiveRef.current, active, scrollAnchorFilename)) {
+    ignoreTransientTopRef.current = true
+  }
+
+  useLayoutEffect(() => {
+    const wasActive = wasActiveRef.current
+    wasActiveRef.current = active
+    if (!shouldRestoreOnActivate(wasActive, active, scrollAnchorFilename)) return
+    ignoreTransientTopRef.current = true
+    restoreNonceRef.current += 1
+    setRestoreScrollKey(`anchor:${scrollAnchorFilename}:${restoreNonceRef.current}`)
+  }, [active, scrollAnchorFilename, restoreIdx])
+
+  const handleFirstVisibleIndexChange = useCallback(
+    (index) => {
+      if (!active) return
+      if (shouldIgnoreTransientTop(ignoreTransientTopRef.current, index, restoreIdx)) return
+      ignoreTransientTopRef.current = false
+      const pkg = filtered[index]
+      if (pkg) setScrollAnchorFilename(pkg.filename)
+    },
+    [active, filtered, restoreIdx, setScrollAnchorFilename],
+  )
 
   const runSelectPackage = useCallback(
     (filename) => {
@@ -597,6 +645,25 @@ export default function LibraryView({ onNavigate, navContext }) {
   )
 
   useEffect(() => {
+    if (!active || !packagesLoaded || !pendingRestoreFilename || filtered.length === 0) return
+    const target = filtered.find((p) => p.filename === pendingRestoreFilename)
+    consumePendingRestoreFilename()
+    if (!target) return
+    if (!scrollAnchorFilename) setRestoreScrollKey(`selected:${target.filename}`)
+    void runSelectPackage(target.filename)
+  }, [
+    active,
+    packagesLoaded,
+    pendingRestoreFilename,
+    filtered,
+    scrollAnchorFilename,
+    consumePendingRestoreFilename,
+    runSelectPackage,
+  ])
+
+  useEffect(() => {
+    if (!active) return
+    if (pendingRestoreFilename) return
     if (bulkActive || statusFilter === 'missing' || filtered.length === 0) {
       prevScrollResetKeyRef.current = scrollResetKey
       return
@@ -614,7 +681,16 @@ export default function LibraryView({ onNavigate, navContext }) {
     const target = filtered[idx]
     if (!target) return
     void runSelectPackage(target.filename)
-  }, [bulkActive, filtered, selectedDetail, statusFilter, scrollResetKey, runSelectPackage])
+  }, [
+    active,
+    pendingRestoreFilename,
+    bulkActive,
+    filtered,
+    selectedDetail,
+    statusFilter,
+    scrollResetKey,
+    runSelectPackage,
+  ])
 
   const handleLibraryClick = useCallback(
     (pkg, e) => {
@@ -794,7 +870,7 @@ export default function LibraryView({ onNavigate, navContext }) {
   )
 
   useKeyboardNav({
-    items: bulkActive ? [] : filtered,
+    items: !active || bulkActive ? [] : filtered,
     selectedId: selectedDetail?.filename,
     onSelect: handleKeyboardSelectLibrary,
     onClose: () => {
@@ -803,7 +879,46 @@ export default function LibraryView({ onNavigate, navContext }) {
     getId: (p) => p.filename,
   })
 
+  const pageNavRootRef = useRef(null)
+  const handlePageDirection = useCallback(
+    (direction, target, root) => {
+      if (direction < 0 && selectedDetail && !bulkActive) {
+        clearSelection()
+        return
+      }
+
+      if (target && shouldIgnoreMousePageTarget(target)) return
+      scrollMousePage(target || root, root, direction)
+    },
+    [bulkActive, clearSelection, selectedDetail],
+  )
+
+  const handleMousePageButton = useCallback(
+    (e) => {
+      const direction = getMousePageDirection(e.button)
+      if (!direction) return
+      e.preventDefault()
+      e.stopPropagation()
+      handlePageDirection(direction, e.target, e.currentTarget)
+    },
+    [handlePageDirection],
+  )
+
+  const handleAppCommand = useCallback(
+    (command) => {
+      const direction = getAppCommandPageDirection(command)
+      if (direction) handlePageDirection(direction, pageNavRootRef.current, pageNavRootRef.current)
+    },
+    [handlePageDirection],
+  )
+
   useEffect(() => {
+    if (!active) return undefined
+    return window.api.on('app-command', handleAppCommand)
+  }, [active, handleAppCommand])
+
+  useEffect(() => {
+    if (!active) return
     function onKeyDown(e) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return
       if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
@@ -813,9 +928,10 @@ export default function LibraryView({ onNavigate, navContext }) {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [orderedLibraryFilenames, selectAllBulk])
+  }, [active, orderedLibraryFilenames, selectAllBulk])
 
   useEffect(() => {
+    if (!active) return
     if (!bulkActive) return
     function onSpace(e) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return
@@ -827,7 +943,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     }
     window.addEventListener('keydown', onSpace, true)
     return () => window.removeEventListener('keydown', onSpace, true)
-  }, [bulkActive])
+  }, [active, bulkActive])
 
   const libraryTableSelectAllRef = useRef(null)
   useLayoutEffect(() => {
@@ -837,7 +953,7 @@ export default function LibraryView({ onNavigate, navContext }) {
   }, [bulkSelectedFilenames, filtered.length])
 
   return (
-    <div className="h-full flex">
+    <div ref={pageNavRootRef} className="h-full flex" onMouseUp={handleMousePageButton}>
       <FilterPanel search={search} onSearchChange={setSearch} sections={sections} />
 
       <div className="flex-1 flex flex-col min-w-0">
@@ -1059,7 +1175,10 @@ export default function LibraryView({ onNavigate, navContext }) {
             fixedHeight={compactCards ? 0 : 84}
             className="flex-1"
             scrollResetKey={scrollResetKey}
+            restoreIndex={restoreIdx}
+            restoreKey={restoreScrollKey}
             onLayout={setGridLayout}
+            onFirstVisibleIndexChange={handleFirstVisibleIndexChange}
             onEmptyAreaPointerDown={bulkActive ? () => clearBulkSelection() : undefined}
             renderItem={(pkg) => {
               const updateInfo = updateCheckResults?.[pkg.filename]
@@ -1114,6 +1233,9 @@ export default function LibraryView({ onNavigate, navContext }) {
                 rowHeight={37}
                 className="flex-1"
                 scrollResetKey={scrollResetKey}
+                restoreIndex={restoreIdx}
+                restoreKey={restoreScrollKey}
+                onFirstVisibleIndexChange={handleFirstVisibleIndexChange}
                 renderRow={(pkg) => {
                   const updateInfo = updateCheckResults?.[pkg.filename]
                   const dimUpdateUnavailable =

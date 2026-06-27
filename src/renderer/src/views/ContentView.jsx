@@ -60,6 +60,13 @@ import { isLocalPackage } from '@shared/local-package.js'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
 import { StorageStateChip } from '@/components/StorageStateChip'
+import { resolveContentRestoreIndex, shouldIgnoreTransientTop, shouldRestoreOnActivate } from '@/lib/view-scroll-anchor'
+import {
+  getAppCommandPageDirection,
+  getMousePageDirection,
+  scrollMousePage,
+  shouldIgnoreMousePageTarget,
+} from '@/lib/mouse-page-nav'
 
 const SORT_OPTIONS = ['Recently installed', 'Name A-Z', 'Package', 'Type']
 const isPackageDisabled = (c) => !isPackageActive(c.package?.storageState ?? 'enabled')
@@ -149,11 +156,14 @@ function applyContentSidebarFilters(baseItems, ctx, omit = {}) {
   return items
 }
 
-export default function ContentView({ onNavigate, navContext }) {
+export default function ContentView({ onNavigate, navContext, active = true }) {
   const {
     contents,
     selectedItem,
     selectedPackage,
+    pendingRestoreItem,
+    scrollAnchorItemId,
+    scrollAnchorPackageFilename,
     search,
     authorSearch,
     selectedTypes,
@@ -183,6 +193,9 @@ export default function ContentView({ onNavigate, navContext }) {
     cardWidth,
     setCardWidth,
     selectItem,
+    clearSelection,
+    consumePendingRestoreItem,
+    setScrollAnchorItem,
     bulkSelectedIds,
     toggleBulkSelect,
     rangeBulkSelect,
@@ -194,8 +207,18 @@ export default function ContentView({ onNavigate, navContext }) {
   const [gridLayout, setGridLayout] = useState({ cols: 1, availableWidth: 0 })
   const [tagCounts, setTagCounts] = useState({})
   const [authorCounts, setAuthorCounts] = useState({})
+  const [restoreScrollKey, setRestoreScrollKey] = useState(() =>
+    scrollAnchorItemId != null
+      ? `anchor:${scrollAnchorItemId}:${scrollAnchorPackageFilename ?? ''}`
+      : pendingRestoreItem?.selectedItemId != null
+        ? `selected:${pendingRestoreItem.selectedItemId}:${pendingRestoreItem.selectedPackageFilename ?? ''}`
+        : '',
+  )
   const [detailPanelWidth] = usePersistedPanelWidth('panel_width_detail', { min: 260, max: 500, defaultWidth: 340 })
   const selectingRef = useRef(false)
+  const wasActiveRef = useRef(active)
+  const restoreNonceRef = useRef(0)
+  const ignoreTransientTopRef = useRef(false)
 
   useEffect(() => {
     const load = () => {
@@ -236,13 +259,14 @@ export default function ContentView({ onNavigate, navContext }) {
   }, [])
 
   useEffect(() => {
+    if (!active) return
     const ctx = navContext?.current
     if (!ctx) return
     if (ctx.filterByPackage) {
       useContentStore.getState().showPackageContents(ctx.filterByPackage)
     }
     navContext.current = null
-  }, [navContext])
+  }, [active, navContext])
 
   const resetPackageTypeFilter = useCallback(() => {
     selectSinglePackageType('All')
@@ -649,7 +673,37 @@ export default function ContentView({ onNavigate, navContext }) {
   const lastSelectedIdxRef = useRef(0)
   const prevScrollResetKeyRef = useRef(scrollResetKey)
   const selectedIdx = selectedItem ? filtered.findIndex((c) => c.id === selectedItem.id) : -1
+  const restoreIdx = resolveContentRestoreIndex(
+    filtered,
+    scrollAnchorItemId,
+    scrollAnchorPackageFilename,
+    selectedItem?.id,
+    selectedItem?.packageFilename,
+  )
   if (selectedIdx >= 0) lastSelectedIdxRef.current = selectedIdx
+  if (shouldRestoreOnActivate(wasActiveRef.current, active, scrollAnchorItemId)) {
+    ignoreTransientTopRef.current = true
+  }
+
+  useLayoutEffect(() => {
+    const wasActive = wasActiveRef.current
+    wasActiveRef.current = active
+    if (!shouldRestoreOnActivate(wasActive, active, scrollAnchorItemId)) return
+    ignoreTransientTopRef.current = true
+    restoreNonceRef.current += 1
+    setRestoreScrollKey(`anchor:${scrollAnchorItemId}:${scrollAnchorPackageFilename ?? ''}:${restoreNonceRef.current}`)
+  }, [active, scrollAnchorItemId, scrollAnchorPackageFilename, restoreIdx])
+
+  const handleFirstVisibleIndexChange = useCallback(
+    (index) => {
+      if (!active) return
+      if (shouldIgnoreTransientTop(ignoreTransientTopRef.current, index, restoreIdx)) return
+      ignoreTransientTopRef.current = false
+      const item = filtered[index]
+      if (item) setScrollAnchorItem(item)
+    },
+    [active, filtered, restoreIdx, setScrollAnchorItem],
+  )
 
   const runSelectItem = useCallback(
     (item) => {
@@ -663,6 +717,23 @@ export default function ContentView({ onNavigate, navContext }) {
   )
 
   useEffect(() => {
+    if (!active || !pendingRestoreItem || filtered.length === 0) return
+    const selectedId = pendingRestoreItem.selectedItemId
+    const selectedPackageFilename = pendingRestoreItem.selectedPackageFilename
+    const target = filtered.find(
+      (c) =>
+        String(c.id) === String(selectedId) &&
+        (!selectedPackageFilename || c.packageFilename === selectedPackageFilename),
+    )
+    consumePendingRestoreItem()
+    if (!target) return
+    if (scrollAnchorItemId == null) setRestoreScrollKey(`selected:${target.id}:${target.packageFilename ?? ''}`)
+    void runSelectItem(target)
+  }, [active, pendingRestoreItem, filtered, scrollAnchorItemId, consumePendingRestoreItem, runSelectItem])
+
+  useEffect(() => {
+    if (!active) return
+    if (pendingRestoreItem) return
     if (bulkActive || filtered.length === 0) {
       prevScrollResetKeyRef.current = scrollResetKey
       return
@@ -678,7 +749,7 @@ export default function ContentView({ onNavigate, navContext }) {
     const target = filtered[idx]
     if (!target) return
     void runSelectItem(target)
-  }, [bulkActive, filtered, selectedItem, scrollResetKey, runSelectItem])
+  }, [active, pendingRestoreItem, bulkActive, filtered, selectedItem, scrollResetKey, runSelectItem])
 
   const handleContentClick = useCallback(
     (item, e) => {
@@ -727,7 +798,7 @@ export default function ContentView({ onNavigate, navContext }) {
   )
 
   useKeyboardNav({
-    items: bulkActive ? [] : filtered,
+    items: !active || bulkActive ? [] : filtered,
     selectedId: selectedItem?.id,
     onSelect: handleKeyboardSelect,
     onClose: () => {
@@ -736,7 +807,46 @@ export default function ContentView({ onNavigate, navContext }) {
     getId: (c) => c.id,
   })
 
+  const pageNavRootRef = useRef(null)
+  const handlePageDirection = useCallback(
+    (direction, target, root) => {
+      if (direction < 0 && selectedItem && !bulkActive) {
+        clearSelection()
+        return
+      }
+
+      if (target && shouldIgnoreMousePageTarget(target)) return
+      scrollMousePage(target || root, root, direction)
+    },
+    [bulkActive, clearSelection, selectedItem],
+  )
+
+  const handleMousePageButton = useCallback(
+    (e) => {
+      const direction = getMousePageDirection(e.button)
+      if (!direction) return
+      e.preventDefault()
+      e.stopPropagation()
+      handlePageDirection(direction, e.target, e.currentTarget)
+    },
+    [handlePageDirection],
+  )
+
+  const handleAppCommand = useCallback(
+    (command) => {
+      const direction = getAppCommandPageDirection(command)
+      if (direction) handlePageDirection(direction, pageNavRootRef.current, pageNavRootRef.current)
+    },
+    [handlePageDirection],
+  )
+
   useEffect(() => {
+    if (!active) return undefined
+    return window.api.on('app-command', handleAppCommand)
+  }, [active, handleAppCommand])
+
+  useEffect(() => {
+    if (!active) return
     function onKeyDown(e) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return
       if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
@@ -746,9 +856,10 @@ export default function ContentView({ onNavigate, navContext }) {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [orderedContentIds, selectAllBulk])
+  }, [active, orderedContentIds, selectAllBulk])
 
   useEffect(() => {
+    if (!active) return
     if (!bulkActive) return
     function onSpace(e) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return
@@ -760,7 +871,7 @@ export default function ContentView({ onNavigate, navContext }) {
     }
     window.addEventListener('keydown', onSpace, true)
     return () => window.removeEventListener('keydown', onSpace, true)
-  }, [bulkActive])
+  }, [active, bulkActive])
 
   const selectedBulkSet = useMemo(() => new Set(bulkSelectedIds), [bulkSelectedIds])
 
@@ -923,7 +1034,7 @@ export default function ContentView({ onNavigate, navContext }) {
   }, [bulkSelectedIds, filtered.length])
 
   return (
-    <div className="h-full flex">
+    <div ref={pageNavRootRef} className="h-full flex" onMouseUp={handleMousePageButton}>
       <FilterPanel search={search} onSearchChange={setSearch} sections={sections} />
 
       <div className="flex-1 flex flex-col min-w-0">
@@ -1081,7 +1192,10 @@ export default function ContentView({ onNavigate, navContext }) {
             itemHeight={cardWidth}
             className="flex-1"
             scrollResetKey={scrollResetKey}
+            restoreIndex={restoreIdx}
+            restoreKey={restoreScrollKey}
             onLayout={setGridLayout}
+            onFirstVisibleIndexChange={handleFirstVisibleIndexChange}
             onEmptyAreaPointerDown={bulkActive ? () => clearBulkSelection() : undefined}
             renderItem={(item) => (
               <ContentItemContextMenu
@@ -1136,6 +1250,9 @@ export default function ContentView({ onNavigate, navContext }) {
                 rowHeight={37}
                 className="flex-1"
                 scrollResetKey={scrollResetKey}
+                restoreIndex={restoreIdx}
+                restoreKey={restoreScrollKey}
+                onFirstVisibleIndexChange={handleFirstVisibleIndexChange}
                 renderRow={(item) => (
                   <ContentItemContextMenu
                     key={item.id}

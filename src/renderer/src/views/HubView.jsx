@@ -2,9 +2,13 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
+  BookOpen,
+  ChevronLeft,
   RotateCw,
   Globe,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   Download,
   Heart,
   Bookmark,
@@ -18,6 +22,7 @@ import {
   Library as LibraryIcon,
   Grid2x2,
   Grid3x3,
+  Infinity as InfinityIcon,
   Calendar,
   Clock,
   Plus,
@@ -53,6 +58,9 @@ import { LICENSE_FILTER_OPTIONS, getHubResourceLicense } from '@/lib/licenses'
 import { LicenseTag } from '@/components/LicenseTag'
 import { Tag } from '@/components/ui/tag'
 import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { HUB_PER_PAGE_OPTIONS } from '@/lib/view-state'
+import { getAppCommandPageDirection, getMousePageDirection, shouldIgnoreMousePageTarget } from '@/lib/mouse-page-nav'
 
 /** Hub text search: avoid a network request on every keystroke */
 const HUB_SEARCH_DEBOUNCE_MS = 320
@@ -61,14 +69,52 @@ const HUB_GALLERY_GRID_GAP_PX = 12
 /** IntersectionObserver rootMargin (bottom): load next page before user reaches the list end */
 const HUB_LOAD_MORE_MARGIN_BOTTOM_PX = 1600
 
-export default function HubView({ onNavigate }) {
+export function shouldFetchHubResources({ active, sort, filterOptions, fetchedFilterKey, hubFetchKey }) {
+  return !!active && !!sort && !!filterOptions && fetchedFilterKey !== hubFetchKey
+}
+
+export function hubPageForVisibleResourceIndex(index, perPage, fallbackPage) {
+  return Number.isInteger(index) ? Math.floor(index / Math.max(1, perPage)) + 1 : fallbackPage
+}
+
+export function hubInfiniteOffsetLabel() {
+  return 'Page'
+}
+
+export function hubPageCountLabel(maxPage) {
+  const n = Math.max(1, Number(maxPage) || 1)
+  return n.toLocaleString()
+}
+
+export function shouldRenderHubPageNav(edge, browseMode, maxHubPage, showInfinitePagerControls = true) {
+  if (maxHubPage <= 1) return false
+  if (browseMode === 'infinite' && !showInfinitePagerControls) return false
+  if (edge === 'toolbar') return true
+  if (edge === 'bottom') return browseMode === 'paged'
+  return false
+}
+
+export function shouldRenderHubPageSummary(browseMode, showInfinitePagerControls = true) {
+  return browseMode !== 'infinite' || showInfinitePagerControls
+}
+
+export default function HubView({ onNavigate, active = true }) {
   const {
     resources,
     totalFound,
     totalPages,
     page,
+    startPage,
+    restorePage,
+    showInfinitePagerControls,
+    trackInfiniteRestorePage,
+    perPage,
+    browseMode,
     loading,
+    loadingPrevious,
+    tailResolving,
     error,
+    resolvedTotalPages,
     search,
     selectedType,
     paidFilter,
@@ -77,6 +123,7 @@ export default function HubView({ onNavigate }) {
     sort,
     license,
     detailResource,
+    pendingDetailResourceId,
     cardMode,
     cardWidth,
     filterOptions,
@@ -91,17 +138,29 @@ export default function HubView({ onNavigate }) {
     setCardWidth,
     fetchResources,
     fetchNextPage,
+    fetchPreviousPage,
+    resolveTailPages,
     openDetail,
+    openDetailById,
     closeDetail,
+    setBrowseMode,
+    setPerPage,
+    goToPage,
+    startInfiniteAtPage,
+    setInfiniteRestorePage,
   } = useHubStore()
 
   const [searchDraft, setSearchDraft] = useState(search)
+  const [startPageDraft, setStartPageDraft] = useState(String(restorePage))
   const searchDraftRef = useRef(search)
   const searchDebounceRef = useRef(null)
   useEffect(() => {
     setSearchDraft(search)
     searchDraftRef.current = search
   }, [search])
+  useEffect(() => {
+    setStartPageDraft(String(restorePage))
+  }, [restorePage])
   useEffect(
     () => () => {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
@@ -154,8 +213,9 @@ export default function HubView({ onNavigate }) {
   }, [filterOptions])
 
   useEffect(() => {
+    if (!active) return
     useHubStore.getState().fetchFilters()
-  }, [])
+  }, [active])
 
   // Track gallery container width for the zoom slider
   const galleryRef = useRef(null)
@@ -182,30 +242,406 @@ export default function HubView({ onNavigate }) {
 
   /** While more pages exist, hide the trailing partial row so the bottom is always full rows */
   const visibleResources = useMemo(() => {
+    if (browseMode === 'paged') return resources
     if (page >= totalPages) return resources
     const fullRowCount = Math.floor(resources.length / columnCount) * columnCount
     if (fullRowCount === 0) return resources
     return resources.slice(0, fullRowCount)
-  }, [resources, page, totalPages, columnCount])
+  }, [browseMode, resources, page, totalPages, columnCount])
 
   // Filter changes → reset to page 1 and fetch
+  const firstFetchRef = useRef(true)
+  const hubFetchKey = useMemo(
+    () =>
+      `${search}\0${selectedType}\0${paidFilter}\0${authorSearch}\0${selectedHubTags.join(',')}\0${sort}\0${license}`,
+    [search, selectedType, paidFilter, authorSearch, selectedHubTags, sort, license],
+  )
+  const fetchedFilterKeyRef = useRef(null)
   useEffect(() => {
-    if (!sort) return // wait for sort options to load
-    useHubStore.getState().fetchResources(true)
-  }, [search, selectedType, paidFilter, authorSearch, selectedHubTags, sort, license])
+    if (
+      !shouldFetchHubResources({
+        active,
+        sort,
+        filterOptions,
+        fetchedFilterKey: fetchedFilterKeyRef.current,
+        hubFetchKey,
+      })
+    )
+      return
+    const firstFetch = firstFetchRef.current
+    firstFetchRef.current = false
+    fetchedFilterKeyRef.current = hubFetchKey
+    const targetPage = firstFetch ? page : 1
+    useHubStore.getState().fetchResources(true, { page: targetPage })
+  }, [active, filterOptions, hubFetchKey, page, sort])
 
-  // Page changes (without filter change) → fetch same filters, new page (append mode)
-  const pageRef = useRef(page)
   useEffect(() => {
-    if (pageRef.current === page) return
-    pageRef.current = page
-    useHubStore.getState().fetchResources()
-  }, [page])
+    if (!active) return
+    if (loading) return
+    if (tailResolving || resolvedTotalPages || totalPages <= 1) return
+    void resolveTailPages()
+  }, [active, loading, resolvedTotalPages, resolveTailPages, tailResolving, totalPages])
+
+  useEffect(() => {
+    if (!active || !pendingDetailResourceId || detailResource) return
+    void openDetailById(pendingDetailResourceId)
+  }, [active, pendingDetailResourceId, detailResource, openDetailById])
+
+  const topVisiblePage = useCallback(() => {
+    const fallbackPage = browseMode === 'infinite' ? restorePage : page
+    const root = galleryRef.current
+    if (!root) return fallbackPage
+    const rootTop = root.getBoundingClientRect().top
+    const cards = root.querySelectorAll('[data-hub-resource-index]')
+    for (const card of cards) {
+      if (card.getBoundingClientRect().bottom <= rootTop + 8) continue
+      const index = Number(card.dataset.hubResourceIndex)
+      return hubPageForVisibleResourceIndex(index, perPage, fallbackPage)
+    }
+    return fallbackPage
+  }, [browseMode, page, perPage, restorePage])
+
+  useEffect(() => {
+    if (!active) return
+    if (browseMode !== 'infinite') return
+    if (!trackInfiniteRestorePage) return
+    const root = galleryRef.current
+    if (!root) return
+    let frame = 0
+    const updateRestorePage = () => {
+      frame = 0
+      setInfiniteRestorePage(topVisiblePage())
+    }
+    const onScroll = () => {
+      if (frame) return
+      frame = requestAnimationFrame(updateRestorePage)
+    }
+    updateRestorePage()
+    root.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      root.removeEventListener('scroll', onScroll)
+      if (frame) cancelAnimationFrame(frame)
+    }
+  }, [active, browseMode, resources.length, setInfiniteRestorePage, topVisiblePage, trackInfiniteRestorePage])
+
+  const toggleBrowseMode = useCallback(() => {
+    const store = useHubStore.getState()
+    if (browseMode === 'infinite') {
+      const nextPage = topVisiblePage()
+      setBrowseMode('paged')
+      galleryRef.current?.scrollTo({ top: 0 })
+      void store.fetchResources(true, { page: nextPage })
+    } else {
+      setBrowseMode('infinite')
+      galleryRef.current?.scrollTo({ top: 0 })
+      void store.fetchResources(true, { page: 1 })
+    }
+  }, [browseMode, setBrowseMode, topVisiblePage])
+
+  const goPagedPage = useCallback(
+    (nextPage) => {
+      galleryRef.current?.scrollTo({ top: 0 })
+      goToPage(nextPage)
+    },
+    [goToPage],
+  )
+  const goInfiniteStartPage = useCallback(
+    (nextPage) => {
+      galleryRef.current?.scrollTo({ top: 0 })
+      void startInfiniteAtPage(nextPage)
+    },
+    [startInfiniteAtPage],
+  )
+  const commitInfiniteStartDraft = useCallback(() => {
+    goInfiniteStartPage(startPageDraft)
+  }, [goInfiniteStartPage, startPageDraft])
+
+  const captureHubScrollAnchor = useCallback(() => {
+    const root = galleryRef.current
+    if (!root) return null
+    const rootTop = root.getBoundingClientRect().top
+    const cards = root.querySelectorAll('[data-hub-resource-id]')
+    for (const card of cards) {
+      const rect = card.getBoundingClientRect()
+      if (rect.bottom <= rootTop + 8) continue
+      return { id: card.dataset.hubResourceId, top: rect.top }
+    }
+    return null
+  }, [])
+
+  const restoreHubScrollAnchor = useCallback((anchor) => {
+    if (!anchor) return
+    requestAnimationFrame(() => {
+      const root = galleryRef.current
+      if (!root) return
+      const cards = root.querySelectorAll('[data-hub-resource-id]')
+      const card = [...cards].find((node) => node.dataset.hubResourceId === anchor.id)
+      if (!card) return
+      root.scrollTop += card.getBoundingClientRect().top - anchor.top
+    })
+  }, [])
+
+  const fetchPreviousHubPage = useCallback(async () => {
+    const anchor = captureHubScrollAnchor()
+    const prepended = await fetchPreviousPage()
+    if (prepended) restoreHubScrollAnchor(anchor)
+  }, [captureHubScrollAnchor, fetchPreviousPage, restoreHubScrollAnchor])
+
+  const handleGalleryWheel = useCallback(
+    (e) => {
+      if (browseMode !== 'infinite' || loading || startPage <= 1 || e.deltaY >= 0) return
+      if (galleryRef.current?.scrollTop > 8) return
+      void fetchPreviousHubPage()
+    },
+    [browseMode, fetchPreviousHubPage, loading, startPage],
+  )
+
+  const maxHubPage = Math.max(resolvedTotalPages || totalPages || 1, 1)
+  const pageCountLabel = hubPageCountLabel(maxHubPage)
+  const rangePage = browseMode === 'infinite' ? startPage : page
+  const pageStart = resources.length ? (rangePage - 1) * perPage + 1 : 0
+  const pageEnd = resources.length ? Math.min((rangePage - 1) * perPage + resources.length, totalFound) : 0
+  const pageRange = resources.length
+    ? `Showing ${pageStart.toLocaleString()}-${pageEnd.toLocaleString()} of ${totalFound.toLocaleString()}`
+    : `Showing 0 of ${totalFound.toLocaleString()}`
+  const pageButtons = useMemo(() => {
+    if (maxHubPage <= 7) return Array.from({ length: maxHubPage }, (_, i) => i + 1)
+    const pages = new Set([1, maxHubPage, page - 1, page, page + 1])
+    if (page <= 4) {
+      for (let p = 2; p <= 5; p += 1) pages.add(p)
+    }
+    if (page >= maxHubPage - 3) {
+      for (let p = maxHubPage - 4; p < maxHubPage; p += 1) pages.add(p)
+    }
+    const sorted = [...pages].filter((p) => p >= 1 && p <= maxHubPage).sort((a, b) => a - b)
+    return sorted.flatMap((p, i) => (i > 0 && p - sorted[i - 1] > 1 ? ['...', p] : [p]))
+  }, [maxHubPage, page])
+
+  const goPageDirection = useCallback(
+    (direction) => {
+      const currentPage = browseMode === 'infinite' ? restorePage : page
+      if (direction < 0 && currentPage <= 1) return
+      const canRecheckTail = !!resolvedTotalPages && !tailResolving
+      if (direction > 0 && currentPage >= maxHubPage && !canRecheckTail) return
+
+      const nextPage = currentPage + direction
+      if (browseMode === 'infinite') goInfiniteStartPage(nextPage)
+      else goPagedPage(nextPage)
+    },
+    [browseMode, goInfiniteStartPage, goPagedPage, maxHubPage, page, resolvedTotalPages, restorePage, tailResolving],
+  )
+
+  const handlePageDirection = useCallback(
+    (direction) => {
+      if (detailResource) {
+        if (direction < 0) closeDetail()
+        return
+      }
+      goPageDirection(direction)
+    },
+    [closeDetail, detailResource, goPageDirection],
+  )
+
+  const handleMousePageButton = useCallback(
+    (e) => {
+      const direction = getMousePageDirection(e.button)
+      if (!direction) return
+      e.preventDefault()
+      e.stopPropagation()
+      if (!detailResource && shouldIgnoreMousePageTarget(e.target)) return
+      handlePageDirection(direction)
+    },
+    [detailResource, handlePageDirection],
+  )
+
+  const handleAppCommand = useCallback(
+    (command) => {
+      const direction = getAppCommandPageDirection(command)
+      if (direction) handlePageDirection(direction)
+    },
+    [handlePageDirection],
+  )
+
+  useEffect(() => {
+    if (!active) return undefined
+    return window.api.on('app-command', handleAppCommand)
+  }, [active, handleAppCommand])
+
+  const renderPageNav = (edge) => {
+    if (!shouldRenderHubPageNav(edge, browseMode, maxHubPage, showInfinitePagerControls)) return null
+    const iconClass =
+      'h-8 w-8 rounded flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-elevated disabled:opacity-30 cursor-pointer disabled:cursor-default'
+    const pageClass =
+      'h-8 min-w-8 px-2 rounded text-xs tabular-nums hover:bg-elevated disabled:cursor-default cursor-pointer'
+    const infiniteOffsetLabel = hubInfiniteOffsetLabel()
+    const canRecheckTail = !!resolvedTotalPages && !tailResolving
+    const controls =
+      browseMode === 'paged' ? (
+        <>
+          <button
+            type="button"
+            disabled={loading || page <= 1}
+            onClick={() => goPagedPage(1)}
+            title="First Hub page"
+            aria-label="First Hub page"
+            className={iconClass}
+          >
+            <ChevronsLeft size={17} />
+          </button>
+          <button
+            type="button"
+            disabled={loading || page <= 1}
+            onClick={() => goPagedPage(page - 1)}
+            title="Previous Hub page"
+            aria-label="Previous Hub page"
+            className={iconClass}
+          >
+            <ChevronLeft size={18} />
+          </button>
+          {pageButtons.map((p, i) =>
+            p === '...' ? (
+              <span key={`ellipsis-${i}`} className="h-8 px-1 flex items-center text-text-tertiary">
+                ...
+              </span>
+            ) : (
+              <button
+                key={p}
+                type="button"
+                disabled={loading || p === page}
+                onClick={() => goPagedPage(p)}
+                aria-current={p === page ? 'page' : undefined}
+                className={`${pageClass} ${
+                  p === page ? 'bg-hover text-text-primary font-medium' : 'text-text-tertiary hover:text-text-primary'
+                }`}
+              >
+                {p.toLocaleString()}
+              </button>
+            ),
+          )}
+          <button
+            type="button"
+            disabled={loading || (page >= maxHubPage && !canRecheckTail)}
+            onClick={() => goPagedPage(page + 1)}
+            title={page >= maxHubPage ? 'Check for more Hub pages' : 'Next Hub page'}
+            aria-label={page >= maxHubPage ? 'Check for more Hub pages' : 'Next Hub page'}
+            className={iconClass}
+          >
+            <ChevronRight size={18} />
+          </button>
+          <button
+            type="button"
+            disabled={loading || (page >= maxHubPage && !canRecheckTail)}
+            onClick={() => goPagedPage(maxHubPage)}
+            title={page >= maxHubPage ? 'Check for last Hub page' : 'Last Hub page'}
+            aria-label={page >= maxHubPage ? 'Check for last Hub page' : 'Last Hub page'}
+            className={iconClass}
+          >
+            <ChevronsRight size={17} />
+          </button>
+        </>
+      ) : (
+        <>
+          <button
+            type="button"
+            disabled={loading || restorePage <= 1}
+            onClick={() => goInfiniteStartPage(1)}
+            title="Start on page 1"
+            aria-label="Start on page 1"
+            className={iconClass}
+          >
+            <ChevronsLeft size={17} />
+          </button>
+          <button
+            type="button"
+            disabled={loading || restorePage <= 1}
+            onClick={() => goInfiniteStartPage(restorePage - 1)}
+            title="Start on previous page"
+            aria-label="Start on previous page"
+            className={iconClass}
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <span className="h-8 flex items-center gap-1 rounded px-2 text-xs text-text-tertiary">
+            <span>{infiniteOffsetLabel}</span>
+            <input
+              type="number"
+              min="1"
+              max={maxHubPage}
+              value={startPageDraft}
+              disabled={loading}
+              onChange={(e) => setStartPageDraft(e.target.value)}
+              onBlur={commitInfiniteStartDraft}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur()
+              }}
+              aria-label="Hub start page"
+              className="h-6 w-16 rounded border border-input bg-elevated px-2 text-right text-xs tabular-nums text-text-primary outline-none focus:border-ring/50 disabled:opacity-50"
+            />
+            <span className="tabular-nums">of {pageCountLabel}</span>
+          </span>
+          <button
+            type="button"
+            disabled={loading || (restorePage >= maxHubPage && !canRecheckTail)}
+            onClick={() => goInfiniteStartPage(restorePage + 1)}
+            title={restorePage >= maxHubPage ? 'Check for more Hub pages' : 'Start on next page'}
+            aria-label={restorePage >= maxHubPage ? 'Check for more Hub pages' : 'Start on next page'}
+            className={iconClass}
+          >
+            <ChevronRight size={18} />
+          </button>
+          <button
+            type="button"
+            disabled={loading || (restorePage >= maxHubPage && !canRecheckTail)}
+            onClick={() => goInfiniteStartPage(maxHubPage)}
+            title={restorePage >= maxHubPage ? 'Check for last Hub page' : 'Start on last page'}
+            aria-label={restorePage >= maxHubPage ? 'Check for last Hub page' : 'Start on last page'}
+            className={iconClass}
+          >
+            <ChevronsRight size={17} />
+          </button>
+        </>
+      )
+    if (edge === 'toolbar') {
+      return <div className="flex min-w-0 max-w-full flex-wrap items-center justify-center gap-1">{controls}</div>
+    }
+    return (
+      <div
+        className={`flex min-w-0 flex-wrap items-center justify-center gap-x-3 gap-y-2 text-[11px] text-text-tertiary ${
+          edge === 'bottom' ? 'mt-4' : ''
+        }`}
+      >
+        {edge === 'bottom' && <div className="min-w-[1px] flex-1" />}
+        <div className="flex min-w-0 max-w-full flex-wrap items-center justify-center gap-1">{controls}</div>
+        {renderPageSummary()}
+      </div>
+    )
+  }
+
+  const renderPageSummary = () => (
+    <div className="flex min-w-[230px] flex-1 items-center justify-end gap-2">
+      <span className="text-right text-[11px] tabular-nums text-text-tertiary">{pageRange}</span>
+      <span className="text-[11px] text-text-tertiary">Page size</span>
+      <Select value={String(perPage)} onValueChange={setPerPage}>
+        <SelectTrigger size="sm" className="h-8 min-w-[72px]" aria-label="Hub page size">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent align="end" className="min-w-[72px]">
+          {HUB_PER_PAGE_OPTIONS.map((n) => (
+            <SelectItem key={n} value={String(n)}>
+              {n}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
 
   // Intersection observer sentinel for infinite scroll (root = gallery scroller so rootMargin
   // prefetches below the fold; viewport root + overflow-y ancestor clips the target until late).
   const sentinelRef = useRef(null)
   useEffect(() => {
+    if (!active) return
+    if (browseMode !== 'infinite') return
     const root = galleryRef.current
     const el = sentinelRef.current
     if (!root || !el) return
@@ -217,12 +653,14 @@ export default function HubView({ onNavigate }) {
     )
     io.observe(el)
     return () => io.disconnect()
-  }, [fetchNextPage, resources.length])
+  }, [active, browseMode, fetchNextPage, resources.length])
 
   // The observer only fires on intersection *changes*, so when the sentinel stays visible across
   // a page load (common with cached pages) nothing re-triggers it. After each page settles, probe
   // whether the sentinel is still in the prefetch zone and keep loading if so.
   useEffect(() => {
+    if (!active) return
+    if (browseMode !== 'infinite') return
     if (loading || page >= totalPages) return
     const root = galleryRef.current
     const el = sentinelRef.current
@@ -232,7 +670,7 @@ export default function HubView({ onNavigate }) {
     if (elRect.top < rootRect.bottom + HUB_LOAD_MORE_MARGIN_BOTTOM_PX && elRect.bottom > rootRect.top) {
       fetchNextPage()
     }
-  }, [loading, page, totalPages, resources.length, fetchNextPage])
+  }, [active, browseMode, loading, page, totalPages, resources.length, fetchNextPage])
 
   // When packages change (promote, download completes, uninstall), resync install status from DB.
   // The hub detail panel is refreshed at App level; here we only patch the
@@ -392,48 +830,65 @@ export default function HubView({ onNavigate }) {
   )
 
   return (
-    <div className="h-full flex min-w-0 relative">
+    <div className="h-full flex min-w-0 relative" onMouseUp={handleMousePageButton}>
       <FilterPanel search={searchDraft} onSearchChange={handleSearchChange} sections={sections} />
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {/* Toolbar */}
-        <div className="h-10 flex items-center px-4 border-b border-border shrink-0 gap-2">
-          <span className="text-[11px] text-text-tertiary">
-            {loading && resources.length === 0 ? 'Searching…' : `${totalFound.toLocaleString()} packages`}
-          </span>
-          <button
-            type="button"
-            onClick={() => fetchResources(true, { forceRefresh: true })}
-            disabled={loading}
-            title="Refresh"
-            className="p-1 rounded text-text-tertiary hover:text-text-secondary disabled:opacity-30 cursor-pointer disabled:cursor-default"
-          >
-            <RefreshCw size={13} className={loading && resources.length === 0 ? 'animate-spin' : ''} />
-          </button>
-          <div className="flex-1" />
-          <ThumbnailSizeSlider cardWidth={cardWidth} availableWidth={availableWidth} onCardWidthChange={setCardWidth} />
-          <div className="flex items-center gap-px bg-elevated rounded p-0.5">
+        <div className="min-h-10 grid grid-cols-[minmax(120px,1fr)_auto_minmax(120px,1fr)] items-center px-4 py-1 border-b border-border shrink-0 gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="text-[11px] text-text-tertiary">
+              {loading && resources.length === 0 ? 'Searching…' : `${totalFound.toLocaleString()} packages`}
+            </span>
             <button
               type="button"
-              onClick={() => setCardMode('minimal')}
-              title="Small cards"
-              className={`p-1.5 rounded cursor-pointer ${cardMode === 'minimal' ? 'bg-hover text-text-primary' : 'text-text-tertiary'}`}
+              onClick={() => fetchResources(true, { forceRefresh: true, page: browseMode === 'paged' ? page : 1 })}
+              disabled={loading}
+              title="Refresh"
+              className="p-1 rounded text-text-tertiary hover:text-text-secondary disabled:opacity-30 cursor-pointer disabled:cursor-default"
             >
-              <Grid3x3 size={14} />
+              <RefreshCw size={13} className={loading && resources.length === 0 ? 'animate-spin' : ''} />
             </button>
+          </div>
+          {renderPageNav('toolbar')}
+          <div className="col-start-3 flex min-w-0 flex-wrap items-center justify-end gap-2">
+            {shouldRenderHubPageSummary(browseMode, showInfinitePagerControls) && renderPageSummary()}
+            <ThumbnailSizeSlider
+              cardWidth={cardWidth}
+              availableWidth={availableWidth}
+              onCardWidthChange={setCardWidth}
+            />
             <button
               type="button"
-              onClick={() => setCardMode('medium')}
-              title="Large cards"
-              className={`p-1.5 rounded cursor-pointer ${cardMode === 'medium' ? 'bg-hover text-text-primary' : 'text-text-tertiary'}`}
+              onClick={toggleBrowseMode}
+              title={browseMode === 'infinite' ? 'Infinite scroll' : 'Paged browsing'}
+              className="p-1.5 rounded cursor-pointer text-text-tertiary hover:text-text-primary hover:bg-elevated"
             >
-              <Grid2x2 size={14} />
+              {browseMode === 'infinite' ? <InfinityIcon size={14} /> : <BookOpen size={14} />}
             </button>
+            <div className="flex items-center gap-px bg-elevated rounded p-0.5">
+              <button
+                type="button"
+                onClick={() => setCardMode('minimal')}
+                title="Small cards"
+                className={`p-1.5 rounded cursor-pointer ${cardMode === 'minimal' ? 'bg-hover text-text-primary' : 'text-text-tertiary'}`}
+              >
+                <Grid3x3 size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setCardMode('medium')}
+                title="Large cards"
+                className={`p-1.5 rounded cursor-pointer ${cardMode === 'medium' ? 'bg-hover text-text-primary' : 'text-text-tertiary'}`}
+              >
+                <Grid2x2 size={14} />
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Gallery */}
-        <div ref={galleryRef} className="flex-1 overflow-y-auto p-4 relative">
+        <div ref={galleryRef} className="flex-1 overflow-y-auto p-4 relative" onWheel={handleGalleryWheel}>
           {error && (
             <div className="mb-4 px-4 py-3 rounded-lg bg-error/10 border border-error/20 text-error text-xs select-text cursor-text">
               {error}
@@ -450,27 +905,45 @@ export default function HubView({ onNavigate }) {
             </div>
           ) : (
             <>
+              {browseMode === 'infinite' && loadingPrevious && resources.length > 0 && (
+                <div
+                  className="grid gap-3 content-start mb-3"
+                  style={{ gridTemplateColumns: `repeat(auto-fill,minmax(min(${cardWidth}px,100%),1fr))` }}
+                >
+                  {Array.from({ length: perPage }, (_, i) => (
+                    <SkeletonCard key={i} mode={cardMode} />
+                  ))}
+                </div>
+              )}
               <div
                 className="grid gap-3 content-start"
                 style={{ gridTemplateColumns: `repeat(auto-fill,minmax(min(${cardWidth}px,100%),1fr))` }}
               >
-                {visibleResources.map((r) => (
-                  <HubCard
+                {visibleResources.map((r, i) => (
+                  <div
                     key={r.resource_id}
-                    resource={r}
-                    onClick={openDetail}
-                    onViewInLibrary={handleViewInLibrary}
-                    onInstall={handleInstall}
-                    onPromote={handlePromote}
-                    onFilterAuthor={handleFilterAuthor}
-                    mode={cardMode}
-                    hideType={selectedType !== 'All'}
-                  />
+                    data-hub-resource-id={r.resource_id}
+                    data-hub-resource-index={
+                      browseMode === 'infinite' ? (startPage - 1) * perPage + i : (page - 1) * perPage + i
+                    }
+                  >
+                    <HubCard
+                      resource={r}
+                      onClick={openDetail}
+                      onViewInLibrary={handleViewInLibrary}
+                      onInstall={handleInstall}
+                      onPromote={handlePromote}
+                      onFilterAuthor={handleFilterAuthor}
+                      mode={cardMode}
+                      hideType={selectedType !== 'All'}
+                    />
+                  </div>
                 ))}
               </div>
+              {renderPageNav('bottom')}
               {/* Infinite scroll sentinel */}
-              {page < totalPages && <div ref={sentinelRef} className="h-1" />}
-              {loading && resources.length > 0 && (
+              {browseMode === 'infinite' && page < totalPages && <div ref={sentinelRef} className="h-1" />}
+              {browseMode === 'infinite' && loading && !loadingPrevious && resources.length > 0 && (
                 <div className="flex items-center justify-center py-6">
                   <Loader2 size={20} className="animate-spin text-accent-blue" />
                   <span className="text-[11px] text-text-tertiary ml-2">Loading more…</span>
@@ -544,6 +1017,7 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
   const [canGoBack, setCanGoBack] = useState(false)
   const [canGoForward, setCanGoForward] = useState(false)
   const [urlCopied, setUrlCopied] = useState(false)
+  const [webviewBackCaptureReady, setWebviewBackCaptureReady] = useState(false)
 
   const resourceId = detail?.resource_id || resource.resource_id
   const threadId = detail?.discussion_thread_id
@@ -604,10 +1078,22 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
     (key) => {
       setBrowserTab(key)
       const url = tabUrls[key] || tabUrls.overview
+      setWebviewBackCaptureReady(false)
       setNavUrl(url)
       setDisplayUrl(url)
     },
     [tabUrls],
+  )
+
+  const handleLoadingWebviewMousePageButton = useCallback(
+    (e) => {
+      const direction = getMousePageDirection(e.button)
+      if (direction >= 0) return
+      e.preventDefault()
+      e.stopPropagation()
+      onBack()
+    },
+    [onBack],
   )
 
   // When navigation swaps the displayed resource, reset the panel's tab highlight
@@ -668,7 +1154,22 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
         window.__hubNavPatched = true
         var hubOrigin = location.origin
         var EXT_TAG = '__VAM_OPEN_EXT__:'
+        var MOUSE_PAGE_BACK_TAG = '__VAM_MOUSE_PAGE_BACK__:'
         var openExternal = function(url) { console.warn(EXT_TAG + url) }
+        var lastMousePageBackAt = 0
+
+        var sendMousePageBack = function(e) {
+          if (e.button !== 3) return
+          e.preventDefault()
+          e.stopImmediatePropagation()
+          var now = Date.now()
+          if (now - lastMousePageBackAt < 250) return
+          lastMousePageBackAt = now
+          console.warn(MOUSE_PAGE_BACK_TAG)
+        }
+        document.addEventListener('mousedown', sendMousePageBack, true)
+        document.addEventListener('mouseup', sendMousePageBack, true)
+        document.addEventListener('auxclick', sendMousePageBack, true)
 
         // Capture phase — external links: claim the click before XenForo's link-confirm handler.
         document.addEventListener('click', function(e) {
@@ -722,31 +1223,47 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
           return _open(url)
         }
       })()`,
-      ).catch(() => {})
+      )
+        .then(() => {
+          setWebviewBackCaptureReady(true)
+        })
+        .catch(() => {
+          setWebviewBackCaptureReady(true)
+        })
     }
 
     const EXT_TAG = '__VAM_OPEN_EXT__:'
+    const MOUSE_PAGE_BACK_TAG = '__VAM_MOUSE_PAGE_BACK__:'
     const onConsoleMessage = (e) => {
       if (typeof e.message !== 'string') return
+      if (e.message.includes(MOUSE_PAGE_BACK_TAG)) {
+        onBack()
+        return
+      }
       const i = e.message.indexOf(EXT_TAG)
       if (i < 0) return
       const url = e.message.slice(i + EXT_TAG.length).trim()
       if (url) void window.api.shell.openExternal(url)
     }
 
+    const onDidStartLoading = () => {
+      setWebviewBackCaptureReady(false)
+    }
     wv.addEventListener('did-navigate', syncNav)
     wv.addEventListener('did-navigate-in-page', syncNav)
     wv.addEventListener('did-fail-load', ignoreAbort)
+    wv.addEventListener('did-start-loading', onDidStartLoading)
     wv.addEventListener('dom-ready', injectLinkHandler)
     wv.addEventListener('console-message', onConsoleMessage)
     return () => {
       wv.removeEventListener('did-navigate', syncNav)
       wv.removeEventListener('did-navigate-in-page', syncNav)
       wv.removeEventListener('did-fail-load', ignoreAbort)
+      wv.removeEventListener('did-start-loading', onDidStartLoading)
       wv.removeEventListener('dom-ready', injectLinkHandler)
       wv.removeEventListener('console-message', onConsoleMessage)
     }
-  }, [resourceId, tabUrls, tabs])
+  }, [onBack, resourceId, tabUrls, tabs])
 
   const goBack = useCallback(() => webviewRef.current?.goBack(), [])
   const goForward = useCallback(() => webviewRef.current?.goForward(), [])
@@ -1324,7 +1841,7 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
           </div>
 
           {/* Webview */}
-          <div className="flex-1 min-h-0">
+          <div className="relative flex-1 min-h-0">
             <webview
               key={browserResourceId}
               ref={webviewRef}
@@ -1334,6 +1851,9 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
               className="w-full h-full"
               style={{ display: 'flex', pointerEvents: hubPanelResizeDrag ? 'none' : 'auto' }}
             />
+            {!webviewBackCaptureReady && (
+              <div className="absolute inset-0 bg-transparent" onMouseUp={handleLoadingWebviewMousePageButton} />
+            )}
           </div>
         </div>
       </div>

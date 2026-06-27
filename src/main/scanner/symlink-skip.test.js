@@ -77,10 +77,11 @@ describe('collectVarCandidates — symlink skip', () => {
 
   it('recurses into a real subdirectory (not a symlink)', async () => {
     readdir.mockImplementation(async (dir) => {
-      if (dir === '/root') {
+      const normalizedDir = dir.replace(/\\/g, '/')
+      if (normalizedDir === '/root') {
         return [dirent({ name: 'sub', isDir: true, isFile: false, isSymlink: false })]
       }
-      if (dir === '/root/sub') {
+      if (normalizedDir === '/root/sub') {
         return [dirent({ name: 'Nest.Author.1.var', isFile: true })]
       }
       throw new Error(`Unexpected ${dir}`)

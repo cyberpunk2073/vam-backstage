@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { toast } from '@/components/Toast'
+import { sanitizeLibraryState } from '@/lib/view-state'
 import { typeFilterSlice } from './typeFilterSlice'
 import { useContentStore } from './useContentStore'
 
@@ -63,6 +64,8 @@ export const useLibraryStore = create((set, get) => ({
    *  so content rows can attach a `c.package` reference for read-time joins. */
   packageByFilename: new Map(),
   selectedDetail: null,
+  pendingRestoreFilename: null,
+  scrollAnchorFilename: null,
   /** Multi-select: package filenames */
   bulkSelectedFilenames: [],
   bulkAnchorFilename: null,
@@ -128,6 +131,11 @@ export const useLibraryStore = create((set, get) => ({
     set({ compactCards })
     void window.api.settings.set('library_compact_cards', compactCards ? '1' : '0')
   },
+  setScrollAnchorFilename: (scrollAnchorFilename) =>
+    set((s) => {
+      const next = scrollAnchorFilename || null
+      return s.scrollAnchorFilename === next ? s : { scrollAnchorFilename: next }
+    }),
   setDimInactive: (dimInactive) => {
     set({ dimInactive })
     void window.api.settings.set('dim_inactive_packages', dimInactive ? '1' : '0')
@@ -156,6 +164,48 @@ export const useLibraryStore = create((set, get) => ({
       if (suppressDisableStr === '1') patch.suppressDisablePackageWarning = true
       if (Object.keys(patch).length) set(patch)
     } catch {}
+  },
+
+  getPersistedState: () => {
+    const s = get()
+    return {
+      search: s.search,
+      authorSearch: s.authorSearch,
+      statusFilter: s.statusFilter,
+      enabledFilter: s.enabledFilter,
+      selectedTypes: s.selectedTypes,
+      selectedTags: s.selectedTags,
+      selectedLabelIds: s.selectedLabelIds,
+      primarySort: s.primarySort,
+      secondarySort: s.secondarySort,
+      license: s.license,
+      selectedFilename: s.selectedDetail?.filename ?? s.pendingRestoreFilename ?? null,
+      scrollAnchorFilename: s.scrollAnchorFilename,
+    }
+  },
+
+  applyPersistedState: (raw) => {
+    const saved = sanitizeLibraryState(raw)
+    set({
+      search: saved.search,
+      authorSearch: saved.authorSearch,
+      statusFilter: saved.statusFilter,
+      enabledFilter: saved.enabledFilter,
+      selectedTypes: saved.selectedTypes,
+      selectedTags: saved.selectedTags,
+      selectedLabelIds: saved.selectedLabelIds,
+      primarySort: saved.primarySort,
+      secondarySort: saved.secondarySort,
+      license: saved.license,
+      pendingRestoreFilename: saved.selectedFilename,
+      scrollAnchorFilename: saved.scrollAnchorFilename,
+    })
+  },
+
+  consumePendingRestoreFilename: () => {
+    const filename = get().pendingRestoreFilename
+    set({ pendingRestoreFilename: null })
+    return filename
   },
 
   fetchPackages: async () => {
@@ -313,18 +363,18 @@ export const useLibraryStore = create((set, get) => ({
 
   selectPackage: async (filename) => {
     if (!filename) {
-      set({ selectedDetail: null, bulkSelectedFilenames: [], bulkAnchorFilename: null })
+      set({ selectedDetail: null, pendingRestoreFilename: null, bulkSelectedFilenames: [], bulkAnchorFilename: null })
       return
     }
     try {
       const detail = await window.api.packages.detail(filename)
-      set({ selectedDetail: detail, bulkSelectedFilenames: [], bulkAnchorFilename: null })
+      set({ selectedDetail: detail, pendingRestoreFilename: null, bulkSelectedFilenames: [], bulkAnchorFilename: null })
     } catch (err) {
       toast(`Failed to load package detail: ${err.message}`)
     }
   },
 
-  clearSelection: () => set({ selectedDetail: null }),
+  clearSelection: () => set({ selectedDetail: null, pendingRestoreFilename: null }),
 
   toggleBulkSelect: (filename) =>
     set((s) => {

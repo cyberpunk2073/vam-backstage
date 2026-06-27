@@ -18,6 +18,7 @@ import { parseDisableBehavior, disableBehaviorMoveTo } from '@shared/disable-beh
 import { toast } from '@/components/Toast'
 import { useStatusStore } from '@/stores/useStatusStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
+import { useHubStore } from '@/stores/useHubStore'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -62,6 +63,10 @@ export default function SettingsView() {
   const setDimInactive = useLibraryStore((s) => s.setDimInactive)
   const suppressDisablePackageWarning = useLibraryStore((s) => s.suppressDisablePackageWarning)
   const setSuppressDisablePackageWarning = useLibraryStore((s) => s.setSuppressDisablePackageWarning)
+  const showHubInfinitePager = useHubStore((s) => s.showInfinitePagerControls)
+  const setShowHubInfinitePager = useHubStore((s) => s.setShowInfinitePagerControls)
+  const rememberHubInfinitePage = useHubStore((s) => s.trackInfiniteRestorePage)
+  const setRememberHubInfinitePage = useHubStore((s) => s.setTrackInfiniteRestorePage)
 
   const refreshLibDirs = useCallback(async () => {
     try {
@@ -521,6 +526,28 @@ export default function SettingsView() {
               </div>
             )}
           </div>
+        </Section>
+
+        {/* Hub */}
+        <Section title="Hub" description="Control Hub browsing behavior.">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-text-primary font-medium">Show infinite-scroll page controls</div>
+              <div className="text-[11px] text-text-tertiary mt-0.5">
+                Show page navigation in the Hub toolbar while using infinite scrolling.
+              </div>
+            </div>
+            <Switch checked={showHubInfinitePager} onCheckedChange={setShowHubInfinitePager} />
+          </label>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-text-primary font-medium">Restore last scrolled page</div>
+              <div className="text-[11px] text-text-tertiary mt-0.5">
+                Reopen Hub infinite scrolling at the page you last reached.
+              </div>
+            </div>
+            <Switch checked={rememberHubInfinitePage} onCheckedChange={setRememberHubInfinitePage} />
+          </label>
         </Section>
 
         {/* Display */}
