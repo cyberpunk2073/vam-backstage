@@ -143,6 +143,14 @@ function attachDevToolsHotkeys(window) {
   })
 }
 
+function attachAppCommandBridge(window) {
+  window.on('app-command', (event, command) => {
+    if (command !== 'browser-backward' && command !== 'browser-forward') return
+    event.preventDefault()
+    window.webContents.send('app-command', command)
+  })
+}
+
 function createWindow() {
   const saved = loadMainWindowState()
   mainWindow = new BrowserWindow({
@@ -176,6 +184,7 @@ function createWindow() {
 
   attachNativeTextContextMenu(mainWindow.webContents, mainWindow)
   attachDevToolsHotkeys(mainWindow)
+  attachAppCommandBridge(mainWindow)
 
   mainWindow.webContents.on('did-finish-load', () => flushBufferedLogs())
 

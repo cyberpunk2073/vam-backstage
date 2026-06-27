@@ -60,7 +60,7 @@ import { Tag } from '@/components/ui/tag'
 import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { HUB_PER_PAGE_OPTIONS } from '@/lib/view-state'
-import { getMousePageDirection, shouldIgnoreMousePageTarget } from '@/lib/mouse-page-nav'
+import { getAppCommandPageDirection, getMousePageDirection, shouldIgnoreMousePageTarget } from '@/lib/mouse-page-nav'
 
 /** Hub text search: avoid a network request on every keystroke */
 const HUB_SEARCH_DEBOUNCE_MS = 320
@@ -417,20 +417,8 @@ export default function HubView({ onNavigate, active = true }) {
     return sorted.flatMap((p, i) => (i > 0 && p - sorted[i - 1] > 1 ? ['...', p] : [p]))
   }, [maxHubPage, page])
 
-  const handleMousePageButton = useCallback(
-    (e) => {
-      const direction = getMousePageDirection(e.button)
-      if (!direction) return
-      e.preventDefault()
-      e.stopPropagation()
-
-      if (detailResource) {
-        if (direction < 0) closeDetail()
-        return
-      }
-
-      if (shouldIgnoreMousePageTarget(e.target)) return
-
+  const goPageDirection = useCallback(
+    (direction) => {
       const currentPage = browseMode === 'infinite' ? restorePage : page
       if (direction < 0 && currentPage <= 1) return
       const canRecheckTail = !!resolvedTotalPages && !tailResolving
@@ -440,19 +428,44 @@ export default function HubView({ onNavigate, active = true }) {
       if (browseMode === 'infinite') goInfiniteStartPage(nextPage)
       else goPagedPage(nextPage)
     },
-    [
-      browseMode,
-      closeDetail,
-      detailResource,
-      goInfiniteStartPage,
-      goPagedPage,
-      maxHubPage,
-      page,
-      resolvedTotalPages,
-      restorePage,
-      tailResolving,
-    ],
+    [browseMode, goInfiniteStartPage, goPagedPage, maxHubPage, page, resolvedTotalPages, restorePage, tailResolving],
   )
+
+  const handlePageDirection = useCallback(
+    (direction) => {
+      if (detailResource) {
+        if (direction < 0) closeDetail()
+        return
+      }
+      goPageDirection(direction)
+    },
+    [closeDetail, detailResource, goPageDirection],
+  )
+
+  const handleMousePageButton = useCallback(
+    (e) => {
+      const direction = getMousePageDirection(e.button)
+      if (!direction) return
+      e.preventDefault()
+      e.stopPropagation()
+      if (!detailResource && shouldIgnoreMousePageTarget(e.target)) return
+      handlePageDirection(direction)
+    },
+    [detailResource, handlePageDirection],
+  )
+
+  const handleAppCommand = useCallback(
+    (command) => {
+      const direction = getAppCommandPageDirection(command)
+      if (direction) handlePageDirection(direction)
+    },
+    [handlePageDirection],
+  )
+
+  useEffect(() => {
+    if (!active) return undefined
+    return window.api.on('app-command', handleAppCommand)
+  }, [active, handleAppCommand])
 
   const renderPageNav = (edge) => {
     if (!shouldRenderHubPageNav(edge, browseMode, maxHubPage, showInfinitePagerControls)) return null
@@ -1128,7 +1141,22 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
         window.__hubNavPatched = true
         var hubOrigin = location.origin
         var EXT_TAG = '__VAM_OPEN_EXT__:'
+        var MOUSE_PAGE_BACK_TAG = '__VAM_MOUSE_PAGE_BACK__:'
         var openExternal = function(url) { console.warn(EXT_TAG + url) }
+        var lastMousePageBackAt = 0
+
+        var sendMousePageBack = function(e) {
+          if (e.button !== 3) return
+          e.preventDefault()
+          e.stopImmediatePropagation()
+          var now = Date.now()
+          if (now - lastMousePageBackAt < 250) return
+          lastMousePageBackAt = now
+          console.warn(MOUSE_PAGE_BACK_TAG)
+        }
+        document.addEventListener('mousedown', sendMousePageBack, true)
+        document.addEventListener('mouseup', sendMousePageBack, true)
+        document.addEventListener('auxclick', sendMousePageBack, true)
 
         // Capture phase — external links: claim the click before XenForo's link-confirm handler.
         document.addEventListener('click', function(e) {
@@ -1186,8 +1214,13 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
     }
 
     const EXT_TAG = '__VAM_OPEN_EXT__:'
+    const MOUSE_PAGE_BACK_TAG = '__VAM_MOUSE_PAGE_BACK__:'
     const onConsoleMessage = (e) => {
       if (typeof e.message !== 'string') return
+      if (e.message.includes(MOUSE_PAGE_BACK_TAG)) {
+        onBack()
+        return
+      }
       const i = e.message.indexOf(EXT_TAG)
       if (i < 0) return
       const url = e.message.slice(i + EXT_TAG.length).trim()
@@ -1206,7 +1239,7 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
       wv.removeEventListener('dom-ready', injectLinkHandler)
       wv.removeEventListener('console-message', onConsoleMessage)
     }
-  }, [resourceId, tabUrls, tabs])
+  }, [onBack, resourceId, tabUrls, tabs])
 
   const goBack = useCallback(() => webviewRef.current?.goBack(), [])
   const goForward = useCallback(() => webviewRef.current?.goForward(), [])

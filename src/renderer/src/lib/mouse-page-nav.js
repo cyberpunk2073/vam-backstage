@@ -1,7 +1,7 @@
 export const MOUSE_PAGE_BACK_BUTTON = 3
 export const MOUSE_PAGE_FORWARD_BUTTON = 4
 
-const IGNORED_TARGETS = new Set(['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'])
+const IGNORED_TARGETS = new Set(['INPUT', 'TEXTAREA', 'SELECT', 'A'])
 
 function isElement(value) {
   return typeof Element !== 'undefined' && value instanceof Element
@@ -21,13 +21,19 @@ export function getMousePageDirection(button) {
   return 0
 }
 
+export function getAppCommandPageDirection(command) {
+  if (command === 'browser-backward') return -1
+  if (command === 'browser-forward') return 1
+  return 0
+}
+
 export function shouldIgnoreMousePageTargetName(tagName) {
   return IGNORED_TARGETS.has(String(tagName || '').toUpperCase())
 }
 
 export function shouldIgnoreMousePageTarget(target) {
   if (!isElement(target)) return false
-  const el = target.closest('input, textarea, select, button, a, [role="button"], [contenteditable="true"]')
+  const el = target.closest('input, textarea, select, a, [contenteditable="true"]')
   return !!el
 }
 

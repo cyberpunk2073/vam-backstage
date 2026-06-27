@@ -61,7 +61,12 @@ import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
 import { StorageStateChip } from '@/components/StorageStateChip'
 import { resolveContentRestoreIndex, shouldIgnoreTransientTop, shouldRestoreOnActivate } from '@/lib/view-scroll-anchor'
-import { getMousePageDirection, scrollMousePage, shouldIgnoreMousePageTarget } from '@/lib/mouse-page-nav'
+import {
+  getAppCommandPageDirection,
+  getMousePageDirection,
+  scrollMousePage,
+  shouldIgnoreMousePageTarget,
+} from '@/lib/mouse-page-nav'
 
 const SORT_OPTIONS = ['Recently installed', 'Name A-Z', 'Package', 'Type']
 const isPackageDisabled = (c) => !isPackageActive(c.package?.storageState ?? 'enabled')
@@ -802,23 +807,43 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
     getId: (c) => c.id,
   })
 
+  const pageNavRootRef = useRef(null)
+  const handlePageDirection = useCallback(
+    (direction, target, root) => {
+      if (direction < 0 && selectedItem && !bulkActive) {
+        clearSelection()
+        return
+      }
+
+      if (target && shouldIgnoreMousePageTarget(target)) return
+      scrollMousePage(target || root, root, direction)
+    },
+    [bulkActive, clearSelection, selectedItem],
+  )
+
   const handleMousePageButton = useCallback(
     (e) => {
       const direction = getMousePageDirection(e.button)
       if (!direction) return
       e.preventDefault()
       e.stopPropagation()
-
-      if (direction < 0 && selectedItem && !bulkActive) {
-        clearSelection()
-        return
-      }
-
-      if (shouldIgnoreMousePageTarget(e.target)) return
-      scrollMousePage(e.target, e.currentTarget, direction)
+      handlePageDirection(direction, e.target, e.currentTarget)
     },
-    [bulkActive, clearSelection, selectedItem],
+    [handlePageDirection],
   )
+
+  const handleAppCommand = useCallback(
+    (command) => {
+      const direction = getAppCommandPageDirection(command)
+      if (direction) handlePageDirection(direction, pageNavRootRef.current, pageNavRootRef.current)
+    },
+    [handlePageDirection],
+  )
+
+  useEffect(() => {
+    if (!active) return undefined
+    return window.api.on('app-command', handleAppCommand)
+  }, [active, handleAppCommand])
 
   useEffect(() => {
     if (!active) return
@@ -1009,7 +1034,7 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
   }, [bulkSelectedIds, filtered.length])
 
   return (
-    <div className="h-full flex" onMouseUp={handleMousePageButton}>
+    <div ref={pageNavRootRef} className="h-full flex" onMouseUp={handleMousePageButton}>
       <FilterPanel search={search} onSearchChange={setSearch} sections={sections} />
 
       <div className="flex-1 flex flex-col min-w-0">
