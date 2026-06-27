@@ -31,7 +31,9 @@ export function VirtualGrid({
   const rowGap = gapY ?? gap
   const scrollRef = useRef(null)
   const [layout, setLayout] = useState({ cols: 1, cellWidth: itemWidth })
+  const [layoutReady, setLayoutReady] = useState(false)
   const layoutRef = useRef(layout)
+  const layoutReadyRef = useRef(false)
   const scrollFixRef = useRef(null)
   const anchorRef = useRef(0)
   const suppressAnchorRef = useRef(false)
@@ -48,6 +50,30 @@ export function VirtualGrid({
     lastFirstVisibleIndexRef.current = index
     onFirstVisibleIndexChangeRef.current?.(index)
   }, [])
+
+  const markLayoutReady = useCallback(() => {
+    if (layoutReadyRef.current) return
+    layoutReadyRef.current = true
+    setLayoutReady(true)
+  }, [])
+
+  const markLayoutNotReady = useCallback(() => {
+    if (!layoutReadyRef.current) return
+    layoutReadyRef.current = false
+    setLayoutReady(false)
+  }, [])
+
+  const measureLayout = useCallback(
+    (el) => {
+      const avail = el.clientWidth - padding * 2
+      if (avail <= 0) return null
+      const cols = Math.max(1, Math.floor((avail + gap) / (itemWidth + gap)))
+      const cellWidth = (avail - (cols - 1) * gap) / cols
+      if (cellWidth <= 0) return null
+      return { cols, cellWidth, availableWidth: avail }
+    },
+    [gap, itemWidth, padding],
+  )
 
   const scalingHeight = itemHeight - fixedHeight
   const calcRowHeight = useCallback(
@@ -90,29 +116,57 @@ export function VirtualGrid({
   }, [scrollResetKey, restoreKey, emitFirstVisibleIndex])
 
   useLayoutEffect(() => {
-    if (!restoreKey || consumedRestoreKeyRef.current === restoreKey) return
+    if (!layoutReady || !restoreKey || consumedRestoreKeyRef.current === restoreKey) return
     if (restoreIndex == null || restoreIndex < 0) return
     const el = scrollRef.current
     if (!el) return
-    const { cols, cellWidth } = layoutRef.current
+    const measured = measureLayout(el)
+    if (!measured) {
+      markLayoutNotReady()
+      return
+    }
+    const prev = layoutRef.current
+    const layoutChanged = prev.cols !== measured.cols || Math.abs(prev.cellWidth - measured.cellWidth) >= 0.5
+    if (layoutChanged) {
+      const next = { cols: measured.cols, cellWidth: measured.cellWidth }
+      layoutRef.current = next
+      setLayout(next)
+      onLayout?.(measured)
+    }
+    const { cols, cellWidth } = measured
     const rowH = calcRowHeight(cellWidth) + rowGap
     const row = Math.floor(restoreIndex / Math.max(1, cols))
+    const targetTop = padding + row * rowH
     consumedRestoreKeyRef.current = restoreKey
     suppressAnchorRef.current = true
-    el.scrollTop = padding + row * rowH
+    el.scrollTop = targetTop
     anchorRef.current = row * cols
     emitFirstVisibleIndex(anchorRef.current)
     requestAnimationFrame(() => {
       suppressAnchorRef.current = false
     })
-  }, [restoreIndex, restoreKey, calcRowHeight, rowGap, padding, emitFirstVisibleIndex])
+  }, [
+    layoutReady,
+    restoreIndex,
+    restoreKey,
+    calcRowHeight,
+    rowGap,
+    padding,
+    emitFirstVisibleIndex,
+    measureLayout,
+    markLayoutNotReady,
+    onLayout,
+  ])
 
   const measure = useCallback(() => {
     const el = scrollRef.current
     if (!el) return
-    const avail = el.clientWidth - padding * 2
-    const newCols = Math.max(1, Math.floor((avail + gap) / (itemWidth + gap)))
-    const newCellWidth = (avail - (newCols - 1) * gap) / newCols
+    const measured = measureLayout(el)
+    if (!measured) {
+      markLayoutNotReady()
+      return
+    }
+    const { cols: newCols, cellWidth: newCellWidth, availableWidth: avail } = measured
 
     const prev = layoutRef.current
     const colsChanged = prev.cols !== newCols || Math.abs(prev.cellWidth - newCellWidth) >= 0.5
@@ -120,6 +174,7 @@ export function VirtualGrid({
     // but only update internal layout state (and fix scroll) when columns actually change.
     if (!colsChanged) {
       onLayout?.({ cols: newCols, cellWidth: newCellWidth, availableWidth: avail })
+      markLayoutReady()
       return
     }
 
@@ -133,7 +188,8 @@ export function VirtualGrid({
     layoutRef.current = next
     setLayout(next)
     onLayout?.({ cols: newCols, cellWidth: newCellWidth, availableWidth: avail })
-  }, [itemWidth, calcRowHeight, gap, rowGap, padding, onLayout])
+    markLayoutReady()
+  }, [calcRowHeight, rowGap, padding, onLayout, markLayoutReady, markLayoutNotReady, measureLayout])
 
   useEffect(() => {
     measure()

@@ -460,7 +460,7 @@ export default function HubView({ onNavigate, active = true }) {
           </button>
           <span
             className={`h-8 flex items-center gap-1 rounded px-2 text-xs ${
-              infiniteOffsetLabel
+              infiniteOffsetTitle
                 ? 'border border-accent-blue/30 bg-accent-blue/10 text-accent-blue'
                 : 'text-text-tertiary'
             }`}
