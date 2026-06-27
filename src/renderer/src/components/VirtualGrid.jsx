@@ -24,6 +24,7 @@ export function VirtualGrid({
   restoreIndex = null,
   restoreKey = '',
   onLayout,
+  onFirstVisibleIndexChange,
   /** When bulk selection is on, clear it on pointer down outside any `[data-grid-card]` (gaps, padding, empty scroll area). */
   onEmptyAreaPointerDown,
 }) {
@@ -35,6 +36,16 @@ export function VirtualGrid({
   const anchorRef = useRef(0)
   const suppressAnchorRef = useRef(false)
   const consumedRestoreKeyRef = useRef('')
+  const lastFirstVisibleIndexRef = useRef(null)
+
+  const emitFirstVisibleIndex = useCallback(
+    (index) => {
+      if (lastFirstVisibleIndexRef.current === index) return
+      lastFirstVisibleIndexRef.current = index
+      onFirstVisibleIndexChange?.(index)
+    },
+    [onFirstVisibleIndexChange],
+  )
 
   const scalingHeight = itemHeight - fixedHeight
   const calcRowHeight = useCallback(
@@ -52,21 +63,29 @@ export function VirtualGrid({
       const rowH = calcRowHeight(cellWidth) + rowGap
       const topRow = Math.max(0, Math.floor((el.scrollTop - padding) / rowH))
       anchorRef.current = topRow * cols
+      emitFirstVisibleIndex(anchorRef.current)
     }
     el.addEventListener('scroll', onScroll, { passive: true })
     return () => el.removeEventListener('scroll', onScroll)
-  }, [calcRowHeight, rowGap, padding])
+  }, [calcRowHeight, rowGap, padding, emitFirstVisibleIndex])
 
   useLayoutEffect(() => {
     const el = scrollRef.current
-    if (!el || el.scrollTop === 0) return
+    if (!el) return
+    if (restoreKey && consumedRestoreKeyRef.current !== restoreKey) return
+    if (el.scrollTop === 0) {
+      anchorRef.current = 0
+      emitFirstVisibleIndex(0)
+      return
+    }
     suppressAnchorRef.current = true
     el.scrollTop = 0
     anchorRef.current = 0
+    emitFirstVisibleIndex(0)
     requestAnimationFrame(() => {
       suppressAnchorRef.current = false
     })
-  }, [scrollResetKey])
+  }, [scrollResetKey, restoreKey, emitFirstVisibleIndex])
 
   useLayoutEffect(() => {
     if (!restoreKey || consumedRestoreKeyRef.current === restoreKey) return
@@ -80,10 +99,11 @@ export function VirtualGrid({
     suppressAnchorRef.current = true
     el.scrollTop = padding + row * rowH
     anchorRef.current = row * cols
+    emitFirstVisibleIndex(anchorRef.current)
     requestAnimationFrame(() => {
       suppressAnchorRef.current = false
     })
-  }, [restoreIndex, restoreKey, calcRowHeight, rowGap, padding])
+  }, [restoreIndex, restoreKey, calcRowHeight, rowGap, padding, emitFirstVisibleIndex])
 
   const measure = useCallback(() => {
     const el = scrollRef.current
@@ -202,9 +222,20 @@ export function VirtualList({
   scrollResetKey,
   restoreIndex = null,
   restoreKey = '',
+  onFirstVisibleIndexChange,
 }) {
   const scrollRef = useRef(null)
   const consumedRestoreKeyRef = useRef('')
+  const lastFirstVisibleIndexRef = useRef(null)
+
+  const emitFirstVisibleIndex = useCallback(
+    (index) => {
+      if (lastFirstVisibleIndexRef.current === index) return
+      lastFirstVisibleIndexRef.current = index
+      onFirstVisibleIndexChange?.(index)
+    },
+    [onFirstVisibleIndexChange],
+  )
 
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -219,9 +250,15 @@ export function VirtualList({
 
   useLayoutEffect(() => {
     const el = scrollRef.current
-    if (!el || el.scrollTop === 0) return
+    if (!el) return
+    if (restoreKey && consumedRestoreKeyRef.current !== restoreKey) return
+    if (el.scrollTop === 0) {
+      emitFirstVisibleIndex(0)
+      return
+    }
     el.scrollTop = 0
-  }, [scrollResetKey])
+    emitFirstVisibleIndex(0)
+  }, [scrollResetKey, restoreKey, emitFirstVisibleIndex])
 
   useLayoutEffect(() => {
     if (!restoreKey || consumedRestoreKeyRef.current === restoreKey) return
@@ -230,7 +267,18 @@ export function VirtualList({
     if (!el) return
     consumedRestoreKeyRef.current = restoreKey
     el.scrollTop = restoreIndex * rowHeight
-  }, [restoreIndex, restoreKey, rowHeight])
+    emitFirstVisibleIndex(restoreIndex)
+  }, [restoreIndex, restoreKey, rowHeight, emitFirstVisibleIndex])
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const onScroll = () => {
+      emitFirstVisibleIndex(Math.max(0, Math.floor(el.scrollTop / rowHeight)))
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [rowHeight, emitFirstVisibleIndex])
 
   return (
     <div ref={scrollRef} className={`overflow-y-auto ${className}`}>

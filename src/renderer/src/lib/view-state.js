@@ -67,6 +67,7 @@ export function sanitizeLibraryState(raw) {
     secondarySort: s(r.secondarySort, 'Recently installed') || 'Recently installed',
     license: s(r.license, 'Any') || 'Any',
     selectedFilename: s(r.selectedFilename, null),
+    scrollAnchorFilename: s(r.scrollAnchorFilename, null),
   }
 }
 
@@ -87,6 +88,11 @@ export function sanitizeContentState(raw) {
     selectedItemId:
       typeof r.selectedItemId === 'number' || typeof r.selectedItemId === 'string' ? r.selectedItemId : null,
     selectedPackageFilename: s(r.selectedPackageFilename, null),
+    scrollAnchorItemId:
+      typeof r.scrollAnchorItemId === 'number' || typeof r.scrollAnchorItemId === 'string'
+        ? r.scrollAnchorItemId
+        : null,
+    scrollAnchorPackageFilename: s(r.scrollAnchorPackageFilename, null),
   }
 }
 

@@ -65,6 +65,7 @@ export const useLibraryStore = create((set, get) => ({
   packageByFilename: new Map(),
   selectedDetail: null,
   pendingRestoreFilename: null,
+  scrollAnchorFilename: null,
   /** Multi-select: package filenames */
   bulkSelectedFilenames: [],
   bulkAnchorFilename: null,
@@ -130,6 +131,11 @@ export const useLibraryStore = create((set, get) => ({
     set({ compactCards })
     void window.api.settings.set('library_compact_cards', compactCards ? '1' : '0')
   },
+  setScrollAnchorFilename: (scrollAnchorFilename) =>
+    set((s) => {
+      const next = scrollAnchorFilename || null
+      return s.scrollAnchorFilename === next ? s : { scrollAnchorFilename: next }
+    }),
   setDimInactive: (dimInactive) => {
     set({ dimInactive })
     void window.api.settings.set('dim_inactive_packages', dimInactive ? '1' : '0')
@@ -174,6 +180,7 @@ export const useLibraryStore = create((set, get) => ({
       secondarySort: s.secondarySort,
       license: s.license,
       selectedFilename: s.selectedDetail?.filename ?? s.pendingRestoreFilename ?? null,
+      scrollAnchorFilename: s.scrollAnchorFilename,
     }
   },
 
@@ -191,6 +198,7 @@ export const useLibraryStore = create((set, get) => ({
       secondarySort: saved.secondarySort,
       license: saved.license,
       pendingRestoreFilename: saved.selectedFilename,
+      scrollAnchorFilename: saved.scrollAnchorFilename,
     })
   },
 

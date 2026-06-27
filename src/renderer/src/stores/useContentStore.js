@@ -42,6 +42,8 @@ export const useContentStore = create((set, get) => ({
   selectedItem: null,
   selectedPackage: null, // package detail for the selected item's owning package
   pendingRestoreItem: null,
+  scrollAnchorItemId: null,
+  scrollAnchorPackageFilename: null,
   /** Multi-select: content item ids (same type as item.id) */
   bulkSelectedIds: [],
   bulkAnchorId: null,
@@ -111,6 +113,14 @@ export const useContentStore = create((set, get) => ({
     set({ viewMode })
     void window.api.settings.set('content_view_mode', viewMode)
   },
+  setScrollAnchorItem: (item) =>
+    set((s) => {
+      const nextId = item?.id ?? null
+      const nextPackageFilename = item?.packageFilename ?? null
+      return s.scrollAnchorItemId === nextId && s.scrollAnchorPackageFilename === nextPackageFilename
+        ? s
+        : { scrollAnchorItemId: nextId, scrollAnchorPackageFilename: nextPackageFilename }
+    }),
   setCardWidth: (cardWidth) => {
     set({ cardWidth })
     void window.api.settings.set('content_card_width', String(cardWidth))
@@ -146,6 +156,8 @@ export const useContentStore = create((set, get) => ({
       secondarySort: s.secondarySort,
       selectedItemId: s.selectedItem?.id ?? s.pendingRestoreItem?.selectedItemId ?? null,
       selectedPackageFilename: s.selectedItem?.packageFilename ?? s.pendingRestoreItem?.selectedPackageFilename ?? null,
+      scrollAnchorItemId: s.scrollAnchorItemId,
+      scrollAnchorPackageFilename: s.scrollAnchorPackageFilename,
     }
   },
 
@@ -167,6 +179,8 @@ export const useContentStore = create((set, get) => ({
         saved.selectedItemId != null
           ? { selectedItemId: saved.selectedItemId, selectedPackageFilename: saved.selectedPackageFilename }
           : null,
+      scrollAnchorItemId: saved.scrollAnchorItemId,
+      scrollAnchorPackageFilename: saved.scrollAnchorPackageFilename,
     })
   },
 

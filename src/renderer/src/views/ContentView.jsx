@@ -60,6 +60,7 @@ import { isLocalPackage } from '@shared/local-package.js'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
 import { StorageStateChip } from '@/components/StorageStateChip'
+import { resolveContentRestoreIndex } from '@/lib/view-scroll-anchor'
 
 const SORT_OPTIONS = ['Recently installed', 'Name A-Z', 'Package', 'Type']
 const isPackageDisabled = (c) => !isPackageActive(c.package?.storageState ?? 'enabled')
@@ -155,6 +156,8 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
     selectedItem,
     selectedPackage,
     pendingRestoreItem,
+    scrollAnchorItemId,
+    scrollAnchorPackageFilename,
     search,
     authorSearch,
     selectedTypes,
@@ -185,6 +188,7 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
     setCardWidth,
     selectItem,
     consumePendingRestoreItem,
+    setScrollAnchorItem,
     bulkSelectedIds,
     toggleBulkSelect,
     rangeBulkSelect,
@@ -196,7 +200,9 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
   const [gridLayout, setGridLayout] = useState({ cols: 1, availableWidth: 0 })
   const [tagCounts, setTagCounts] = useState({})
   const [authorCounts, setAuthorCounts] = useState({})
-  const [restoreScrollKey, setRestoreScrollKey] = useState('')
+  const [restoreScrollKey, setRestoreScrollKey] = useState(() =>
+    scrollAnchorItemId != null ? `anchor:${scrollAnchorItemId}:${scrollAnchorPackageFilename ?? ''}` : '',
+  )
   const [detailPanelWidth] = usePersistedPanelWidth('panel_width_detail', { min: 260, max: 500, defaultWidth: 340 })
   const selectingRef = useRef(false)
 
@@ -653,7 +659,22 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
   const lastSelectedIdxRef = useRef(0)
   const prevScrollResetKeyRef = useRef(scrollResetKey)
   const selectedIdx = selectedItem ? filtered.findIndex((c) => c.id === selectedItem.id) : -1
+  const restoreIdx = resolveContentRestoreIndex(
+    filtered,
+    scrollAnchorItemId,
+    scrollAnchorPackageFilename,
+    selectedItem?.id,
+    selectedItem?.packageFilename,
+  )
   if (selectedIdx >= 0) lastSelectedIdxRef.current = selectedIdx
+
+  const handleFirstVisibleIndexChange = useCallback(
+    (index) => {
+      const item = filtered[index]
+      if (item) setScrollAnchorItem(item)
+    },
+    [filtered, setScrollAnchorItem],
+  )
 
   const runSelectItem = useCallback(
     (item) => {
@@ -1104,9 +1125,10 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
             itemHeight={cardWidth}
             className="flex-1"
             scrollResetKey={scrollResetKey}
-            restoreIndex={selectedIdx}
+            restoreIndex={restoreIdx}
             restoreKey={restoreScrollKey}
             onLayout={setGridLayout}
+            onFirstVisibleIndexChange={handleFirstVisibleIndexChange}
             onEmptyAreaPointerDown={bulkActive ? () => clearBulkSelection() : undefined}
             renderItem={(item) => (
               <ContentItemContextMenu
@@ -1161,8 +1183,9 @@ export default function ContentView({ onNavigate, navContext, active = true }) {
                 rowHeight={37}
                 className="flex-1"
                 scrollResetKey={scrollResetKey}
-                restoreIndex={selectedIdx}
+                restoreIndex={restoreIdx}
                 restoreKey={restoreScrollKey}
+                onFirstVisibleIndexChange={handleFirstVisibleIndexChange}
                 renderRow={(item) => (
                   <ContentItemContextMenu
                     key={item.id}

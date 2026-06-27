@@ -62,11 +62,33 @@ describe('view-state sanitizers', () => {
 
   it('normalizes library and content restore ids', () => {
     expect(
-      sanitizeLibraryState({ selectedFilename: 'A.B.1.var', selectedTypes: ['Looks'], selectedLabelIds: [1, 'x'] }),
-    ).toMatchObject({ selectedFilename: 'A.B.1.var', selectedTypes: ['Looks'], selectedLabelIds: [1] })
+      sanitizeLibraryState({
+        selectedFilename: 'A.B.1.var',
+        scrollAnchorFilename: 'C.D.1.var',
+        selectedTypes: ['Looks'],
+        selectedLabelIds: [1, 'x'],
+      }),
+    ).toMatchObject({
+      selectedFilename: 'A.B.1.var',
+      scrollAnchorFilename: 'C.D.1.var',
+      selectedTypes: ['Looks'],
+      selectedLabelIds: [1],
+    })
     expect(
-      sanitizeContentState({ selectedItemId: 42, selectedPackageFilename: 'A.B.1.var', visibilityFilter: 'hidden' }),
-    ).toMatchObject({ selectedItemId: 42, selectedPackageFilename: 'A.B.1.var', visibilityFilter: 'hidden' })
+      sanitizeContentState({
+        selectedItemId: 42,
+        selectedPackageFilename: 'A.B.1.var',
+        scrollAnchorItemId: 43,
+        scrollAnchorPackageFilename: 'C.D.1.var',
+        visibilityFilter: 'hidden',
+      }),
+    ).toMatchObject({
+      selectedItemId: 42,
+      selectedPackageFilename: 'A.B.1.var',
+      scrollAnchorItemId: 43,
+      scrollAnchorPackageFilename: 'C.D.1.var',
+      visibilityFilter: 'hidden',
+    })
   })
 })
 

@@ -88,6 +88,7 @@ import {
   isCommercialUseAllowed,
   isNonCommercialUseAllowed,
 } from '@/lib/licenses'
+import { resolveLibraryRestoreIndex } from '@/lib/view-scroll-anchor'
 import { haystacksMatchAllTerms, searchAndTerms } from '@shared/search-text.js'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { LicenseTag } from '@/components/LicenseTag'
@@ -160,6 +161,7 @@ export default function LibraryView({ onNavigate, navContext, active = true }) {
     packages,
     selectedDetail,
     pendingRestoreFilename,
+    scrollAnchorFilename,
     search,
     authorSearch,
     statusFilter,
@@ -201,6 +203,7 @@ export default function LibraryView({ onNavigate, navContext, active = true }) {
     refreshUpdateCheck,
     selectPackage,
     consumePendingRestoreFilename,
+    setScrollAnchorFilename,
     bulkSelectedFilenames,
     toggleBulkSelect,
     rangeBulkSelect,
@@ -212,7 +215,9 @@ export default function LibraryView({ onNavigate, navContext, active = true }) {
   const [gridLayout, setGridLayout] = useState({ cols: 1, availableWidth: 0 })
   const [tagCounts, setTagCounts] = useState({})
   const [authorCounts, setAuthorCounts] = useState({})
-  const [restoreScrollKey, setRestoreScrollKey] = useState('')
+  const [restoreScrollKey, setRestoreScrollKey] = useState(() =>
+    scrollAnchorFilename ? `anchor:${scrollAnchorFilename}` : '',
+  )
   const [detailPanelWidth] = usePersistedPanelWidth('panel_width_detail', { min: 260, max: 500, defaultWidth: 340 })
   const selectingRef = useRef(false)
 
@@ -588,7 +593,16 @@ export default function LibraryView({ onNavigate, navContext, active = true }) {
   const lastSelectedIdxRef = useRef(0)
   const prevScrollResetKeyRef = useRef(scrollResetKey)
   const selectedIdx = selectedDetail ? filtered.findIndex((p) => p.filename === selectedDetail.filename) : -1
+  const restoreIdx = resolveLibraryRestoreIndex(filtered, scrollAnchorFilename, selectedDetail?.filename)
   if (selectedIdx >= 0) lastSelectedIdxRef.current = selectedIdx
+
+  const handleFirstVisibleIndexChange = useCallback(
+    (index) => {
+      const pkg = filtered[index]
+      if (pkg) setScrollAnchorFilename(pkg.filename)
+    },
+    [filtered, setScrollAnchorFilename],
+  )
 
   const runSelectPackage = useCallback(
     (filename) => {
@@ -1086,9 +1100,10 @@ export default function LibraryView({ onNavigate, navContext, active = true }) {
             fixedHeight={compactCards ? 0 : 84}
             className="flex-1"
             scrollResetKey={scrollResetKey}
-            restoreIndex={selectedIdx}
+            restoreIndex={restoreIdx}
             restoreKey={restoreScrollKey}
             onLayout={setGridLayout}
+            onFirstVisibleIndexChange={handleFirstVisibleIndexChange}
             onEmptyAreaPointerDown={bulkActive ? () => clearBulkSelection() : undefined}
             renderItem={(pkg) => {
               const updateInfo = updateCheckResults?.[pkg.filename]
@@ -1143,8 +1158,9 @@ export default function LibraryView({ onNavigate, navContext, active = true }) {
                 rowHeight={37}
                 className="flex-1"
                 scrollResetKey={scrollResetKey}
-                restoreIndex={selectedIdx}
+                restoreIndex={restoreIdx}
                 restoreKey={restoreScrollKey}
+                onFirstVisibleIndexChange={handleFirstVisibleIndexChange}
                 renderRow={(pkg) => {
                   const updateInfo = updateCheckResults?.[pkg.filename]
                   const dimUpdateUnavailable =
