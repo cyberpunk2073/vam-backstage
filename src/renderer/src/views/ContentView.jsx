@@ -434,7 +434,8 @@ export default function ContentView({ onNavigate, navContext }) {
       selectedLabelIds,
     })
     const sortFns = {
-      'Recently installed': (a, b) => (b.package?.firstSeenAt || 0) - (a.package?.firstSeenAt || 0),
+      'Recently installed': (a, b) =>
+        (b.package?.fileMtime || b.package?.firstSeenAt || 0) - (a.package?.fileMtime || a.package?.firstSeenAt || 0),
       'Name A-Z': (a, b) => (a.displayName || '').localeCompare(b.displayName || ''),
       Package: (a, b) => contentPackageLabel(a).localeCompare(contentPackageLabel(b)),
       Type: (a, b) => compareContentTypes(a.category, b.category),

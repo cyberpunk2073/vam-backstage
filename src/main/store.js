@@ -606,6 +606,7 @@ function enrichPackageSummary(pkg) {
     missingDeps,
     morphCount: aggregateMorphCountMap.get(pkg.filename) || 0,
     firstSeenAt: pkg.first_seen_at,
+    fileMtime: pkg.file_mtime,
     isCorrupted: !!pkg.is_corrupted,
     isOrphan: orphanSet.has(pkg.filename),
     isCascadeOrphan: orphanSet.has(pkg.filename) && !directOrphanSet.has(pkg.filename),
