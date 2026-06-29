@@ -4,6 +4,7 @@ import {
   ArrowRight,
   RotateCw,
   Globe,
+  ChevronLeft,
   ChevronRight,
   Download,
   Heart,
@@ -77,6 +78,8 @@ export default function HubView({ onNavigate }) {
     sort,
     license,
     detailResource,
+    detailData,
+    detailNonce,
     cardMode,
     cardWidth,
     filterOptions,
@@ -318,6 +321,73 @@ export default function HubView({ onNavigate }) {
     }))
   }, [])
 
+  // --- Prev/Next navigation through the search results list ---
+  // The currently shown package: detailData once loaded, else the opening stub.
+  // Only meaningful while a detail opened from Hub search is on screen.
+  const currentDetailId = detailResource ? String(detailData?.resource_id ?? detailResource.resource_id ?? '') : ''
+  const detailIdx = currentDetailId ? resources.findIndex((r) => String(r.resource_id) === currentDetailId) : -1
+  const canPrevDetail = detailIdx > 0
+  const canNextDetail = detailIdx >= 0 && (detailIdx < resources.length - 1 || (page < totalPages && !loading))
+  // null → pager hidden (we did not arrive from Hub search, or neighbor unknown)
+  const detailPosition = detailIdx >= 0 ? { n: detailIdx + 1, total: totalFound || resources.length } : null
+
+  const handleDetailPrev = useCallback(() => {
+    const { resources, detailResource, detailData } = useHubStore.getState()
+    const cur = detailResource ? String(detailData?.resource_id ?? detailResource.resource_id ?? '') : ''
+    const idx = cur ? resources.findIndex((r) => String(r.resource_id) === cur) : -1
+    if (idx > 0) openDetail(resources[idx - 1])
+  }, [openDetail])
+
+  // Enabled after the first Next within a panel-open session; gates neighbor detail
+  // prefetch so users who never step through don't pay extra `hub:detail` requests.
+  const detailPrefetchRef = useRef(false)
+  useEffect(() => {
+    if (!detailResource) detailPrefetchRef.current = false
+  }, [detailResource])
+
+  // When Next is pressed on the last loaded item, remember which item we advanced
+  // from and load the next page; the effect below jumps once that page arrives.
+  const pendingNextFromRef = useRef(null)
+  const handleDetailNext = useCallback(() => {
+    detailPrefetchRef.current = true
+    const { resources, detailResource, detailData, page, totalPages } = useHubStore.getState()
+    const cur = detailResource ? String(detailData?.resource_id ?? detailResource.resource_id ?? '') : ''
+    const idx = cur ? resources.findIndex((r) => String(r.resource_id) === cur) : -1
+    if (idx < 0) return
+    if (idx < resources.length - 1) {
+      openDetail(resources[idx + 1])
+    } else if (page < totalPages) {
+      pendingNextFromRef.current = cur
+      fetchNextPage()
+    }
+  }, [openDetail, fetchNextPage])
+
+  useEffect(() => {
+    const fromId = pendingNextFromRef.current
+    if (!fromId) return
+    const idx = resources.findIndex((r) => String(r.resource_id) === fromId)
+    if (idx >= 0 && idx < resources.length - 1) {
+      pendingNextFromRef.current = null
+      openDetail(resources[idx + 1])
+    }
+  }, [resources, openDetail])
+
+  // Proactively load the next search page when the shown item nears the end of the
+  // loaded list, so Next is rarely a dead wait.
+  useEffect(() => {
+    if (detailIdx < 0 || loading) return
+    if (detailIdx >= resources.length - 2 && page < totalPages) fetchNextPage()
+  }, [detailIdx, resources.length, page, totalPages, loading, fetchNextPage])
+
+  // Once stepping through, warm the next item's detail into the main-process LRU
+  // cache so the upcoming Next resolves without a network round-trip. The previous
+  // item is already cached from having been viewed.
+  useEffect(() => {
+    if (!detailPrefetchRef.current || detailIdx < 0) return
+    const next = resources[detailIdx + 1]
+    if (next?.resource_id) useHubStore.getState().prefetchDetail(next.resource_id)
+  }, [detailIdx, resources])
+
   const sections = useMemo(
     () => [
       {
@@ -485,11 +555,17 @@ export default function HubView({ onNavigate }) {
       </div>
       {detailResource && (
         <HubDetail
+          key={detailNonce}
           resource={detailResource}
           onBack={closeDetail}
           onNavigate={onNavigate}
           onInstall={handleInstall}
           onFilterAuthor={handleFilterAuthor}
+          onPrev={handleDetailPrev}
+          onNext={handleDetailNext}
+          canPrev={canPrevDetail}
+          canNext={canNextDetail}
+          position={detailPosition}
         />
       )}
     </div>
@@ -536,7 +612,18 @@ function parseHubResourceId(urlString) {
 
 // --- Hub Detail ---
 
-function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) {
+function HubDetail({
+  resource,
+  onBack,
+  onNavigate,
+  onInstall,
+  onFilterAuthor,
+  onPrev,
+  onNext,
+  canPrev,
+  canNext,
+  position,
+}) {
   const { detailData, detailLoading } = useHubStore()
   const detail = detailData
   const [browserTab, setBrowserTab] = useState('overview')
@@ -609,6 +696,29 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
     },
     [tabUrls],
   )
+
+  // Left/Right arrow keys step through results when the pager is active. Ignored
+  // while typing in a field, with modifiers, or when focus is inside the webview
+  // (guest keystrokes don't reach the host document anyway).
+  const hasPager = !!position
+  useEffect(() => {
+    if (!hasPager) return
+    const onKey = (e) => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
+      const t = e.target
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable))
+        return
+      if (e.key === 'ArrowLeft' && canPrev) {
+        e.preventDefault()
+        onPrev?.()
+      } else if (e.key === 'ArrowRight' && canNext) {
+        e.preventDefault()
+        onNext?.()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [hasPager, canPrev, canNext, onPrev, onNext])
 
   // When navigation swaps the displayed resource, reset the panel's tab highlight
   // to Overview (highlight only — `setBrowserTab` no longer drives the webview).
@@ -918,19 +1028,55 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
   return (
     <div className="absolute inset-0 z-20 flex flex-col min-w-0 bg-base overflow-hidden">
       {/* Back bar */}
-      <div className="h-10 flex items-center px-4 border-b border-border shrink-0 gap-2">
-        <Button variant="ghost" size="sm" onClick={onBack} className="text-text-secondary hover:text-text-primary">
-          <ArrowLeft size={14} /> Back
-        </Button>
-        <ChevronRight size={12} className="text-text-tertiary shrink-0" />
-        <span className="text-xs text-text-primary font-medium truncate flex-1 min-w-0">{title}</span>
+      <div className="relative h-10 flex items-center justify-between px-4 border-b border-border shrink-0">
+        {/* Back + pager, flat on the bar line (the bar is the container) */}
+        <div className="flex items-center gap-1 shrink-0">
+          <Button variant="ghost" size="sm" onClick={onBack} className="text-text-secondary hover:text-text-primary">
+            <ArrowLeft size={14} /> Back
+          </Button>
+          {position && (
+            <div className="flex items-center gap-0.5 ml-1 pl-1.5 border-l border-border/60">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={onPrev}
+                disabled={!canPrev}
+                aria-label="Previous package"
+                title="Previous package (←)"
+                className="text-text-secondary hover:text-text-primary"
+              >
+                <ChevronLeft size={14} />
+              </Button>
+              <span className="text-[11px] text-text-tertiary tabular-nums min-w-[42px] text-center select-none">
+                {position.n} / {position.total}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={onNext}
+                disabled={!canNext}
+                aria-label="Next package"
+                title="Next package (→)"
+                className="text-text-secondary hover:text-text-primary"
+              >
+                <ChevronRight size={14} />
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {/* Centered title — labels the whole view, independent of side widths */}
+        <span className="absolute left-1/2 -translate-x-1/2 max-w-[42%] truncate text-xs text-text-primary font-medium pointer-events-none select-none">
+          {title}
+        </span>
+
         <Button
           type="button"
           variant="ghost"
           size="icon-xs"
           onClick={onBack}
           aria-label="Close detail"
-          className="shrink-0 text-text-tertiary/45 hover:text-text-tertiary hover:bg-muted/35"
+          className="shrink-0 text-text-tertiary/70 hover:text-text-tertiary hover:bg-muted/35"
         >
           <X size={12} strokeWidth={1.75} />
         </Button>
@@ -939,7 +1085,7 @@ function HubDetail({ resource, onBack, onNavigate, onInstall, onFilterAuthor }) 
       <div className="flex-1 flex min-h-0">
         {/* Left: Package info panel */}
         <div className="flex shrink-0" style={{ width: panelWidth }}>
-          <div className="flex-1 min-w-0 border-r border-border overflow-y-auto p-4">
+          <div className="flex-1 min-w-0 border-r border-border overflow-y-auto p-4 pr-2.5 [scrollbar-gutter:stable]">
             {/* Hero */}
             <div className="aspect-square rounded-lg overflow-hidden mb-3 relative">
               <div className="absolute inset-0" style={{ background: getGradient(String(resourceId)) }} />

@@ -20,6 +20,21 @@ function syncInstalledFromDetail(detail) {
   useInstalledStore.getState().update(detail.resource_id, detail._installed, detail._isDirect, detail._localFilename)
 }
 
+// Renderer-side detail cache (insertion-order LRU). The main process already
+// caches detail payloads, but every `openDetail` still clears `detailData` and
+// awaits an async IPC round-trip — so without this the panel always flashes a
+// skeleton for a frame even on a cache hit. Seeding from here lets openDetail
+// render the known detail synchronously and revalidate in the background.
+const MAX_DETAIL_CACHE = 60
+const detailCache = new Map()
+function cacheDetail(detail) {
+  if (!detail?.resource_id) return
+  const key = String(detail.resource_id)
+  detailCache.delete(key)
+  detailCache.set(key, detail)
+  if (detailCache.size > MAX_DETAIL_CACHE) detailCache.delete(detailCache.keys().next().value)
+}
+
 export const useHubStore = create((set, get) => ({
   resources: [],
   totalFound: 0,
@@ -40,6 +55,11 @@ export const useHubStore = create((set, get) => ({
   detailResource: null,
   detailData: null,
   detailLoading: false,
+  // Bumped on every explicit detail open (gallery click, cross-view nav, prev/next
+  // jump) so HubDetail can be keyed on it and remount for a fresh load. Deliberately
+  // NOT changed by followDetail, which must keep the webview mounted while the user
+  // browses inside the guest page.
+  detailNonce: 0,
   // Resource id whose detail followDetail is fetching in the background; dedupes
   // concurrent follows and lets stale responses be discarded after a newer
   // follow/open supersedes them.
@@ -148,11 +168,22 @@ export const useHubStore = create((set, get) => ({
   },
 
   openDetail: async (resource) => {
-    set({ detailResource: resource, detailData: null, detailLoading: true, followingDetailId: null })
+    const rid = String(resource.resource_id)
+    const cached = detailCache.get(rid)
+    set((s) => ({
+      detailResource: resource,
+      detailData: cached || null,
+      detailLoading: !cached,
+      followingDetailId: null,
+      detailNonce: s.detailNonce + 1,
+    }))
+    if (cached) syncInstalledFromDetail(cached)
     try {
       const detail = await window.api.hub.detail(resource.resource_id)
+      cacheDetail(detail)
       syncInstalledFromDetail(detail)
-      const rid = String(detail.resource_id)
+      // A newer open/close may have superseded this resource while we awaited.
+      if (String(get().detailResource?.resource_id) !== rid) return
       set((s) => ({
         detailData: detail,
         detailLoading: false,
@@ -164,9 +195,19 @@ export const useHubStore = create((set, get) => ({
             : s.resources,
       }))
     } catch (err) {
+      if (String(get().detailResource?.resource_id) !== rid) return
       toast(`Failed to load hub detail: ${err.message}`)
       set({ detailLoading: false })
     }
+  },
+
+  /** Warm the detail cache for a resource without touching visible state. */
+  prefetchDetail: async (resourceId) => {
+    const key = String(resourceId)
+    if (detailCache.has(key)) return
+    try {
+      cacheDetail(await window.api.hub.detail(resourceId))
+    } catch {}
   },
 
   /**
@@ -182,6 +223,7 @@ export const useHubStore = create((set, get) => ({
     try {
       const detail = await window.api.hub.detail(resource.resource_id)
       if (get().followingDetailId !== rid) return
+      cacheDetail(detail)
       syncInstalledFromDetail(detail)
       set((s) => ({
         detailResource: resource,
@@ -209,6 +251,7 @@ export const useHubStore = create((set, get) => ({
     if (!detailResource) return
     try {
       const detail = await window.api.hub.detail(detailResource.resource_id)
+      cacheDetail(detail)
       syncInstalledFromDetail(detail)
       const rid = String(detail.resource_id)
       set((s) => ({
