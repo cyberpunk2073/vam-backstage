@@ -119,7 +119,8 @@ export default function HubView({ onNavigate }) {
         clearTimeout(searchDebounceRef.current)
         searchDebounceRef.current = null
       }
-      if (value === '') {
+      const trimmed = value.trim()
+      if (trimmed === '') {
         setSearch('')
         return
       }
@@ -127,7 +128,7 @@ export default function HubView({ onNavigate }) {
         searchDebounceRef.current = null
         // Ignore stale timers (clear clicked after timeout fired, or newer keystrokes).
         if (searchDraftRef.current !== value) return
-        setSearch(value)
+        setSearch(trimmed)
       }, HUB_SEARCH_DEBOUNCE_MS)
     },
     [setSearch],
