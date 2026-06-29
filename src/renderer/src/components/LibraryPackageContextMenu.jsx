@@ -156,6 +156,15 @@ async function runLibraryBulkPromoteFromStore() {
   }
 }
 
+function formatDependentNames(dependents) {
+  if (!dependents?.length) return ''
+  const names = dependents
+    .slice(0, 2)
+    .map((d) => d.packageName?.split('.').pop() || d.filename)
+    .join(', ')
+  return names + (dependents.length > 2 ? ` +${dependents.length - 2}` : '')
+}
+
 export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, children }) {
   const selectedDetail = useLibraryStore((s) => s.selectedDetail)
   const bulkSelectedFilenames = useLibraryStore((s) => s.bulkSelectedFilenames)
@@ -169,6 +178,29 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
   const [uninstallOpen, setUninstallOpen] = useState(false)
   const [disableOpen, setDisableOpen] = useState(false)
   const [forceRemoveOpen, setForceRemoveOpen] = useState(false)
+  // Snapshot of `detail` taken when a confirm dialog opens. The context menu
+  // clears `detail` on close, so gating the dialog on the live `detail` would
+  // unmount its content while the dialog is still open — which tears down
+  // Radix's modal layer mid-flight and freezes the app. Keep our own copy.
+  const [confirmDetail, setConfirmDetail] = useState(null)
+
+  const openConfirm = useCallback(
+    (setOpen) => {
+      const snapshot = detail || (selectedDetail?.filename === pkg.filename ? selectedDetail : null)
+      if (!snapshot) return
+      setConfirmDetail(snapshot)
+      setOpen(true)
+    },
+    [detail, selectedDetail, pkg.filename],
+  )
+
+  const closeConfirm = useCallback(
+    (setOpen) => (open) => {
+      setOpen(open)
+      if (!open) setConfirmDetail(null)
+    },
+    [],
+  )
 
   const onOpenChange = useCallback(
     async (open) => {
@@ -196,16 +228,9 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
   )
 
   const p = detail || pkg
-  const name = displayName(p)
   const hasDependents = (p.dependents?.length ?? 0) > 0
   const suppressDisablePackageWarning = useLibraryStore((s) => s.suppressDisablePackageWarning)
   const showDisableDialog = packageNeedsDisableConfirmation(p, suppressDisablePackageWarning)
-  const dependentNames = hasDependents
-    ? p.dependents
-        .slice(0, 2)
-        .map((d) => d.packageName?.split('.').pop() || d.filename)
-        .join(', ') + (p.dependents.length > 2 ? ` +${p.dependents.length - 2}` : '')
-    : ''
 
   const handleToggleEnabled = async () => {
     try {
@@ -625,7 +650,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
               )}
               <ContextMenuSeparator />
               {showDisableDialog ? (
-                <ContextMenuItem onSelect={() => setDisableOpen(true)} disabled={!detail}>
+                <ContextMenuItem onSelect={() => openConfirm(setDisableOpen)} disabled={!detail}>
                   <Power size={12} className="shrink-0" />
                   Disable…
                 </ContextMenuItem>
@@ -639,12 +664,20 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                 </ContextMenuItem>
               )}
               {p.isDirect ? (
-                <ContextMenuItem variant="destructive" onSelect={() => setUninstallOpen(true)} disabled={!detail}>
+                <ContextMenuItem
+                  variant="destructive"
+                  onSelect={() => openConfirm(setUninstallOpen)}
+                  disabled={!detail}
+                >
                   <Trash2 size={12} className="shrink-0" />
                   {hasDependents ? 'Remove…' : 'Uninstall…'}
                 </ContextMenuItem>
               ) : (
-                <ContextMenuItem variant="destructive" onSelect={() => setForceRemoveOpen(true)} disabled={!detail}>
+                <ContextMenuItem
+                  variant="destructive"
+                  onSelect={() => openConfirm(setForceRemoveOpen)}
+                  disabled={!detail}
+                >
                   <Trash2 size={12} className="shrink-0" />
                   {hasDependents ? 'Force remove…' : 'Remove…'}
                 </ContextMenuItem>
@@ -658,30 +691,34 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
 
       {linkHubOpen && <LinkHubDialog pkg={pkg} open={linkHubOpen} onOpenChange={setLinkHubOpen} />}
 
-      <AlertDialog open={uninstallOpen} onOpenChange={setUninstallOpen}>
-        {uninstallOpen && detail ? (
+      <AlertDialog open={uninstallOpen} onOpenChange={closeConfirm(setUninstallOpen)}>
+        {uninstallOpen && confirmDetail ? (
           <UninstallDialogContent
-            pkg={detail}
-            name={name}
-            hasDependents={hasDependents}
-            dependentNames={dependentNames}
+            pkg={confirmDetail}
+            name={displayName(confirmDetail)}
+            hasDependents={(confirmDetail.dependents?.length ?? 0) > 0}
+            dependentNames={formatDependentNames(confirmDetail.dependents)}
             onConfirm={handleUninstall}
           />
         ) : null}
       </AlertDialog>
 
-      <AlertDialog open={disableOpen} onOpenChange={setDisableOpen}>
-        {disableOpen && detail ? (
-          <DisablePackageDialogContent pkg={detail} name={name} onConfirm={handleToggleEnabled} />
+      <AlertDialog open={disableOpen} onOpenChange={closeConfirm(setDisableOpen)}>
+        {disableOpen && confirmDetail ? (
+          <DisablePackageDialogContent
+            pkg={confirmDetail}
+            name={displayName(confirmDetail)}
+            onConfirm={handleToggleEnabled}
+          />
         ) : null}
       </AlertDialog>
 
-      <AlertDialog open={forceRemoveOpen} onOpenChange={setForceRemoveOpen}>
-        {forceRemoveOpen && detail ? (
+      <AlertDialog open={forceRemoveOpen} onOpenChange={closeConfirm(setForceRemoveOpen)}>
+        {forceRemoveOpen && confirmDetail ? (
           <ForceRemoveDialogContent
-            pkg={detail}
-            name={name}
-            hasDependents={hasDependents}
+            pkg={confirmDetail}
+            name={displayName(confirmDetail)}
+            hasDependents={(confirmDetail.dependents?.length ?? 0) > 0}
             onConfirm={handleForceRemove}
           />
         ) : null}
