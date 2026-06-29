@@ -81,6 +81,11 @@ export async function runScan(vamDir, onProgress = () => {}) {
    * by the inheritance pass below, key membership by leaf detection downstream. */
   const newAdditions = new Map()
   const unreadable = []
+  // One discovery timestamp for the whole run: every package first seen in this
+  // scan shares an identical `first_seen_at`, so "Recently installed" sorts the
+  // batch by file mtime within the run, and the inheritance donor gate cleanly
+  // excludes same-run peers (see upsertPackage / getDonorVersionsByPackageName).
+  const scanStartedAt = Math.floor(Date.now() / 1000)
   for (let i = 0; i < varFiles.length; i++) {
     const { filename, fullPath, mtime, size, storageState, libraryDirId, subpath } = varFiles[i]
     onProgress({ phase: 'reading', step: i + 1, total: varFiles.length, message: filename })
@@ -101,7 +106,13 @@ export async function runScan(vamDir, onProgress = () => {}) {
     }
 
     try {
-      const result = await scanAndUpsert(fullPath, { storageState, libraryDirId, subpath, isDirect: 0 })
+      const result = await scanAndUpsert(fullPath, {
+        storageState,
+        libraryDirId,
+        subpath,
+        isDirect: 0,
+        firstSeenAt: scanStartedAt,
+      })
       if (!result) continue
       scanned++
       if (!cached) {

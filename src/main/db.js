@@ -537,10 +537,19 @@ function stmt(sql) {
 }
 
 // Packages
+/**
+ * Upsert a package row. `firstSeenAt` (unix seconds) is written on INSERT only —
+ * it is deliberately absent from the ON CONFLICT UPDATE so re-scans never move a
+ * package's discovery time. Callers that ingest a whole scan run pass one shared
+ * timestamp so every package discovered in that run shares an identical
+ * `first_seen_at`; that keeps the "Recently installed" sort ordering whole batches
+ * by file mtime within the run, and keeps the inheritance donor gate
+ * (`first_seen_at < self`) excluding same-run peers. Defaults to now when omitted.
+ */
 export function upsertPackage(pkg) {
   stmt(`
-    INSERT INTO packages (filename, creator, package_name, version, type, title, description, license, size_bytes, file_mtime, is_direct, storage_state, library_dir_id, subpath, dep_refs, scanned_at)
-    VALUES (@filename, @creator, @packageName, @version, @type, @title, @description, @license, @sizeBytes, @fileMtime, @isDirect, @storageState, @libraryDirId, @subpath, @depRefs, unixepoch())
+    INSERT INTO packages (filename, creator, package_name, version, type, title, description, license, size_bytes, file_mtime, is_direct, storage_state, library_dir_id, subpath, dep_refs, first_seen_at, scanned_at)
+    VALUES (@filename, @creator, @packageName, @version, @type, @title, @description, @license, @sizeBytes, @fileMtime, @isDirect, @storageState, @libraryDirId, @subpath, @depRefs, @firstSeenAt, unixepoch())
     ON CONFLICT(filename) DO UPDATE SET
       creator = excluded.creator, package_name = excluded.package_name, version = excluded.version,
       type = excluded.type, title = excluded.title, description = excluded.description,
@@ -549,7 +558,7 @@ export function upsertPackage(pkg) {
       library_dir_id = excluded.library_dir_id,
       subpath = excluded.subpath,
       dep_refs = excluded.dep_refs, scanned_at = excluded.scanned_at
-  `).run({ subpath: '', ...pkg })
+  `).run({ subpath: '', firstSeenAt: Math.floor(Date.now() / 1000), ...pkg })
 }
 
 export function deletePackage(filename) {

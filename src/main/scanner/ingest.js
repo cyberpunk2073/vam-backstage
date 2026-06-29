@@ -49,11 +49,14 @@ export function personAtomIdsJsonFromBuffer(buf, packageFilename = null) {
  * @param {string}  [opts.subpath=''] - POSIX relative dir within the library dir ('' = root)
  * @param {number}  [opts.isDirect=0] - 0 or 1
  * @param {string}  [opts.typeOverride] - if set, used instead of derived type
+ * @param {number}  [opts.firstSeenAt] - unix seconds stamped as the row's discovery time on
+ *   INSERT only (ignored on re-scan). Callers ingesting a batch pass one shared value so the
+ *   whole run shares a `first_seen_at`; defaults to now for single-file ingests.
  * @returns {Promise<{ filename, contentItems, meta, size, pkgType, packageName } | null>} null if filename unparseable
  */
 export async function scanAndUpsert(
   fullPath,
-  { storageState = 'enabled', libraryDirId = null, subpath = '', isDirect = 0, typeOverride } = {},
+  { storageState = 'enabled', libraryDirId = null, subpath = '', isDirect = 0, typeOverride, firstSeenAt } = {},
 ) {
   const filename = canonicalVarFilename(basename(fullPath))
   const s = await stat(fullPath)
@@ -80,6 +83,7 @@ export async function scanAndUpsert(
     libraryDirId: libraryDirId == null ? null : libraryDirId,
     subpath: subpath || '',
     depRefs: JSON.stringify(depRefs),
+    ...(firstSeenAt != null && { firstSeenAt }),
   })
 
   deleteContentsForPackage(filename)

@@ -375,7 +375,8 @@ export default function LibraryView({ onNavigate, navContext }) {
     result = result.filter((p) => packageMatchesSelectedTags(p, selectedTags))
     result = result.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
     const sortFns = {
-      'Recently installed': (a, b) => (b.fileMtime || b.firstSeenAt || 0) - (a.fileMtime || a.firstSeenAt || 0),
+      'Recently installed': (a, b) =>
+        (b.firstSeenAt || 0) - (a.firstSeenAt || 0) || (b.fileMtime || 0) - (a.fileMtime || 0),
       Name: (a, b) => displayName(a).localeCompare(displayName(b)),
       Type: (a, b) => compareLibraryPackageTypes(a.type, b.type),
       Size: (a, b) => b.sizeBytes + (b.removableSize || 0) - (a.sizeBytes + (a.removableSize || 0)),
