@@ -1,6 +1,8 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import { toast } from '@/components/Toast'
 import { useInstalledStore } from './useInstalledStore'
+import { persistViewState, oneOf, asArray, asString, asCardWidth } from './persistViewState'
 
 let fetchSeq = 0
 
@@ -35,252 +37,238 @@ function cacheDetail(detail) {
   if (detailCache.size > MAX_DETAIL_CACHE) detailCache.delete(detailCache.keys().next().value)
 }
 
-export const useHubStore = create((set, get) => ({
-  resources: [],
-  totalFound: 0,
-  totalPages: 0,
-  page: 1,
-  loading: false,
-  error: null,
+export const useHubStore = create(
+  persist(
+    (set, get) => ({
+      resources: [],
+      totalFound: 0,
+      totalPages: 0,
+      page: 1,
+      loading: false,
+      error: null,
 
-  search: '',
-  selectedType: 'All',
-  paidFilter: 'all',
-  authorSearch: '',
-  /** Hub tag filter — joined with comma for `getResources` */
-  selectedHubTags: [],
-  sort: '',
-  license: 'Any',
-
-  detailResource: null,
-  detailData: null,
-  detailLoading: false,
-  // Bumped on every explicit detail open (gallery click, cross-view nav, prev/next
-  // jump) so HubDetail can be keyed on it and remount for a fresh load. Deliberately
-  // NOT changed by followDetail, which must keep the webview mounted while the user
-  // browses inside the guest page.
-  detailNonce: 0,
-  // Resource id whose detail followDetail is fetching in the background; dedupes
-  // concurrent follows and lets stale responses be discarded after a newer
-  // follow/open supersedes them.
-  followingDetailId: null,
-  cardMode: 'medium',
-  cardWidth: 220,
-
-  filterOptions: null,
-
-  setSearch: (search) => set({ search }),
-  setSelectedType: (selectedType) => set({ selectedType }),
-  setPaidFilter: (paidFilter) => set({ paidFilter }),
-  setAuthorSearch: (authorSearch) => set({ authorSearch }),
-  setSelectedHubTags: (selectedHubTags) => set({ selectedHubTags }),
-  setSort: (sort) => {
-    set({ sort })
-    void window.api.settings.set('hub_last_sort', sort)
-  },
-  setLicense: (license) => set({ license }),
-  setCardMode: (cardMode) => {
-    set({ cardMode })
-    void window.api.settings.set('hub_card_mode', cardMode)
-  },
-  setCardWidth: (cardWidth) => {
-    set({ cardWidth })
-    void window.api.settings.set('hub_card_width', String(cardWidth))
-  },
-  setPage: (page) => set({ page }),
-
-  fetchFilters: async (force) => {
-    if (!force && get().filterOptions) return
-    if (!get().resources.length) set({ loading: true })
-    try {
-      const options = await window.api.hub.filters()
-      set({ filterOptions: options })
-      const list = options.sort || []
-      let nextSort = get().sort
-      if (!nextSort && list.length) nextSort = list[0]
-      else if (nextSort && !list.includes(nextSort)) nextSort = list[0] || ''
-      set({ sort: nextSort })
-      if (nextSort) void window.api.settings.set('hub_last_sort', nextSort)
-    } catch (err) {
-      console.error('Failed to fetch hub filters:', err)
-    }
-  },
-
-  /** Restore Hub UI preferences from disk (sort + gallery card size/mode) */
-  hydrateHubFilterPreferences: async () => {
-    try {
-      const [last, mode, widthStr] = await Promise.all([
-        window.api.settings.get('hub_last_sort'),
-        window.api.settings.get('hub_card_mode'),
-        window.api.settings.get('hub_card_width'),
-      ])
-      const patch = {}
-      if (last) patch.sort = last
-      if (mode === 'minimal' || mode === 'medium') patch.cardMode = mode
-      const w = parseInt(String(widthStr ?? ''), 10)
-      if (!Number.isNaN(w) && w >= 100 && w <= 500) patch.cardWidth = w
-      if (Object.keys(patch).length) set(patch)
-    } catch {}
-  },
-
-  fetchResources: async (resetPage, opts) => {
-    const seq = ++fetchSeq
-    const state = get()
-    const page = resetPage ? 1 : state.page
-    if (resetPage && state.page !== 1) set({ page: 1 })
-    set({ loading: true, error: null, ...(resetPage ? { resources: [] } : {}) })
-    try {
-      if (opts?.forceRefresh) {
-        await window.api.hub.invalidateCaches()
-        await get().fetchFilters(true)
-      }
-      const q = get()
-      const params = { page, perpage: 30 }
-      if (q.sort) params.sort = q.sort
-      if (q.search) params.search = q.search
-      if (q.selectedType !== 'All') params.type = q.selectedType
-      if (q.paidFilter === 'free') params.category = 'Free'
-      else if (q.paidFilter === 'paid') params.category = 'Paid'
-      if (q.authorSearch) params.username = q.authorSearch
-      if (q.selectedHubTags?.length) params.tags = q.selectedHubTags.join(',')
-      if (q.license && q.license !== 'Any') params.license = q.license
-
-      const result = await window.api.hub.search(params)
-      if (seq !== fetchSeq) return
-      const incoming = result.resources || []
-      syncInstalledFromResources(incoming)
-      set({
-        resources: resetPage ? incoming : [...q.resources, ...incoming],
-        totalFound: result.totalFound || 0,
-        totalPages: result.totalPages || 0,
-        loading: false,
-      })
-    } catch (err) {
-      if (seq !== fetchSeq) return
-      set({ error: err.message, loading: false, ...(resetPage ? { resources: [] } : {}) })
-    }
-  },
-
-  fetchNextPage: () => {
-    const { page, totalPages, loading } = get()
-    if (loading || page >= totalPages) return
-    set({ page: page + 1, loading: true })
-  },
-
-  openDetail: async (resource) => {
-    const rid = String(resource.resource_id)
-    const cached = detailCache.get(rid)
-    set((s) => ({
-      detailResource: resource,
-      detailData: cached || null,
-      detailLoading: !cached,
-      followingDetailId: null,
-      detailNonce: s.detailNonce + 1,
-    }))
-    if (cached) syncInstalledFromDetail(cached)
-    try {
-      const detail = await window.api.hub.detail(resource.resource_id)
-      cacheDetail(detail)
-      syncInstalledFromDetail(detail)
-      // A newer open/close may have superseded this resource while we awaited.
-      if (String(get().detailResource?.resource_id) !== rid) return
-      set((s) => ({
-        detailData: detail,
-        detailLoading: false,
-        resources:
-          detail._installSizeBytes != null
-            ? s.resources.map((r) =>
-                String(r.resource_id) === rid ? { ...r, _installSizeBytes: detail._installSizeBytes } : r,
-              )
-            : s.resources,
-      }))
-    } catch (err) {
-      if (String(get().detailResource?.resource_id) !== rid) return
-      toast(`Failed to load hub detail: ${err.message}`)
-      set({ detailLoading: false })
-    }
-  },
-
-  /** Warm the detail cache for a resource without touching visible state. */
-  prefetchDetail: async (resourceId) => {
-    const key = String(resourceId)
-    if (detailCache.has(key)) return
-    try {
-      cacheDetail(await window.api.hub.detail(resourceId))
-    } catch {}
-  },
-
-  /**
-   * Load a different resource while keeping the currently displayed detail on
-   * screen, then swap atomically once the new detail is ready (no skeleton flash).
-   * Used when following in-browser navigation. Self-dedupes concurrent follows and
-   * discards stale responses superseded by a newer follow or by openDetail/closeDetail.
-   */
-  followDetail: async (resource) => {
-    const rid = String(resource.resource_id)
-    if (String(get().detailData?.resource_id) === rid || get().followingDetailId === rid) return
-    set({ followingDetailId: rid })
-    try {
-      const detail = await window.api.hub.detail(resource.resource_id)
-      if (get().followingDetailId !== rid) return
-      cacheDetail(detail)
-      syncInstalledFromDetail(detail)
-      set((s) => ({
-        detailResource: resource,
-        detailData: detail,
-        detailLoading: false,
-        followingDetailId: null,
-        resources:
-          detail._installSizeBytes != null
-            ? s.resources.map((r) =>
-                String(r.resource_id) === rid ? { ...r, _installSizeBytes: detail._installSizeBytes } : r,
-              )
-            : s.resources,
-      }))
-    } catch (err) {
-      if (get().followingDetailId !== rid) return
-      toast(`Failed to load hub detail: ${err.message}`)
-      set({ followingDetailId: null })
-    }
-  },
-
-  closeDetail: () => set({ detailResource: null, detailData: null, followingDetailId: null }),
-
-  refreshDetail: async () => {
-    const { detailResource } = get()
-    if (!detailResource) return
-    try {
-      const detail = await window.api.hub.detail(detailResource.resource_id)
-      cacheDetail(detail)
-      syncInstalledFromDetail(detail)
-      const rid = String(detail.resource_id)
-      set((s) => ({
-        detailData: detail,
-        resources:
-          detail._installSizeBytes != null
-            ? s.resources.map((r) =>
-                String(r.resource_id) === rid ? { ...r, _installSizeBytes: detail._installSizeBytes } : r,
-              )
-            : s.resources,
-      }))
-    } catch (err) {
-      toast(`Failed to refresh hub detail: ${err.message}`)
-    }
-  },
-
-  resetFilters: () => {
-    const sortOptions = get().filterOptions?.sort
-    const nextSort = sortOptions?.[0] || ''
-    set({
       search: '',
       selectedType: 'All',
       paidFilter: 'all',
       authorSearch: '',
+      /** Hub tag filter — joined with comma for `getResources` */
       selectedHubTags: [],
-      sort: nextSort,
+      sort: '',
       license: 'Any',
-      page: 1,
-    })
-    if (nextSort) void window.api.settings.set('hub_last_sort', nextSort)
-  },
-}))
+
+      detailResource: null,
+      detailData: null,
+      detailLoading: false,
+      // Bumped on every explicit detail open (gallery click, cross-view nav, prev/next
+      // jump) so HubDetail can be keyed on it and remount for a fresh load. Deliberately
+      // NOT changed by followDetail, which must keep the webview mounted while the user
+      // browses inside the guest page.
+      detailNonce: 0,
+      // Resource id whose detail followDetail is fetching in the background; dedupes
+      // concurrent follows and lets stale responses be discarded after a newer
+      // follow/open supersedes them.
+      followingDetailId: null,
+      cardMode: 'medium',
+      cardWidth: 220,
+
+      filterOptions: null,
+
+      setSearch: (search) => set({ search }),
+      setSelectedType: (selectedType) => set({ selectedType }),
+      setPaidFilter: (paidFilter) => set({ paidFilter }),
+      setAuthorSearch: (authorSearch) => set({ authorSearch }),
+      setSelectedHubTags: (selectedHubTags) => set({ selectedHubTags }),
+      setSort: (sort) => set({ sort }),
+      setLicense: (license) => set({ license }),
+      setCardMode: (cardMode) => set({ cardMode }),
+      setCardWidth: (cardWidth) => set({ cardWidth }),
+      setPage: (page) => set({ page }),
+
+      fetchFilters: async (force) => {
+        if (!force && get().filterOptions) return
+        if (!get().resources.length) set({ loading: true })
+        try {
+          const options = await window.api.hub.filters()
+          set({ filterOptions: options })
+          const list = options.sort || []
+          let nextSort = get().sort
+          if (!nextSort && list.length) nextSort = list[0]
+          else if (nextSort && !list.includes(nextSort)) nextSort = list[0] || ''
+          set({ sort: nextSort })
+        } catch (err) {
+          console.error('Failed to fetch hub filters:', err)
+        }
+      },
+
+      fetchResources: async (resetPage, opts) => {
+        const seq = ++fetchSeq
+        const state = get()
+        const page = resetPage ? 1 : state.page
+        if (resetPage && state.page !== 1) set({ page: 1 })
+        set({ loading: true, error: null, ...(resetPage ? { resources: [] } : {}) })
+        try {
+          if (opts?.forceRefresh) {
+            await window.api.hub.invalidateCaches()
+            await get().fetchFilters(true)
+          }
+          const q = get()
+          const params = { page, perpage: 30 }
+          if (q.sort) params.sort = q.sort
+          if (q.search) params.search = q.search
+          if (q.selectedType !== 'All') params.type = q.selectedType
+          if (q.paidFilter === 'free') params.category = 'Free'
+          else if (q.paidFilter === 'paid') params.category = 'Paid'
+          if (q.authorSearch) params.username = q.authorSearch
+          if (q.selectedHubTags?.length) params.tags = q.selectedHubTags.join(',')
+          if (q.license && q.license !== 'Any') params.license = q.license
+
+          const result = await window.api.hub.search(params)
+          if (seq !== fetchSeq) return
+          const incoming = result.resources || []
+          syncInstalledFromResources(incoming)
+          set({
+            resources: resetPage ? incoming : [...q.resources, ...incoming],
+            totalFound: result.totalFound || 0,
+            totalPages: result.totalPages || 0,
+            loading: false,
+          })
+        } catch (err) {
+          if (seq !== fetchSeq) return
+          set({ error: err.message, loading: false, ...(resetPage ? { resources: [] } : {}) })
+        }
+      },
+
+      fetchNextPage: () => {
+        const { page, totalPages, loading } = get()
+        if (loading || page >= totalPages) return
+        set({ page: page + 1, loading: true })
+      },
+
+      openDetail: async (resource) => {
+        const rid = String(resource.resource_id)
+        const cached = detailCache.get(rid)
+        set((s) => ({
+          detailResource: resource,
+          detailData: cached || null,
+          detailLoading: !cached,
+          followingDetailId: null,
+          detailNonce: s.detailNonce + 1,
+        }))
+        if (cached) syncInstalledFromDetail(cached)
+        try {
+          const detail = await window.api.hub.detail(resource.resource_id)
+          cacheDetail(detail)
+          syncInstalledFromDetail(detail)
+          // A newer open/close may have superseded this resource while we awaited.
+          if (String(get().detailResource?.resource_id) !== rid) return
+          set((s) => ({
+            detailData: detail,
+            detailLoading: false,
+            resources:
+              detail._installSizeBytes != null
+                ? s.resources.map((r) =>
+                    String(r.resource_id) === rid ? { ...r, _installSizeBytes: detail._installSizeBytes } : r,
+                  )
+                : s.resources,
+          }))
+        } catch (err) {
+          if (String(get().detailResource?.resource_id) !== rid) return
+          toast(`Failed to load hub detail: ${err.message}`)
+          set({ detailLoading: false })
+        }
+      },
+
+      /** Warm the detail cache for a resource without touching visible state. */
+      prefetchDetail: async (resourceId) => {
+        const key = String(resourceId)
+        if (detailCache.has(key)) return
+        try {
+          cacheDetail(await window.api.hub.detail(resourceId))
+        } catch {}
+      },
+
+      /**
+       * Load a different resource while keeping the currently displayed detail on
+       * screen, then swap atomically once the new detail is ready (no skeleton flash).
+       * Used when following in-browser navigation. Self-dedupes concurrent follows and
+       * discards stale responses superseded by a newer follow or by openDetail/closeDetail.
+       */
+      followDetail: async (resource) => {
+        const rid = String(resource.resource_id)
+        if (String(get().detailData?.resource_id) === rid || get().followingDetailId === rid) return
+        set({ followingDetailId: rid })
+        try {
+          const detail = await window.api.hub.detail(resource.resource_id)
+          if (get().followingDetailId !== rid) return
+          cacheDetail(detail)
+          syncInstalledFromDetail(detail)
+          set((s) => ({
+            detailResource: resource,
+            detailData: detail,
+            detailLoading: false,
+            followingDetailId: null,
+            resources:
+              detail._installSizeBytes != null
+                ? s.resources.map((r) =>
+                    String(r.resource_id) === rid ? { ...r, _installSizeBytes: detail._installSizeBytes } : r,
+                  )
+                : s.resources,
+          }))
+        } catch (err) {
+          if (get().followingDetailId !== rid) return
+          toast(`Failed to load hub detail: ${err.message}`)
+          set({ followingDetailId: null })
+        }
+      },
+
+      closeDetail: () => set({ detailResource: null, detailData: null, followingDetailId: null }),
+
+      refreshDetail: async () => {
+        const { detailResource } = get()
+        if (!detailResource) return
+        try {
+          const detail = await window.api.hub.detail(detailResource.resource_id)
+          cacheDetail(detail)
+          syncInstalledFromDetail(detail)
+          const rid = String(detail.resource_id)
+          set((s) => ({
+            detailData: detail,
+            resources:
+              detail._installSizeBytes != null
+                ? s.resources.map((r) =>
+                    String(r.resource_id) === rid ? { ...r, _installSizeBytes: detail._installSizeBytes } : r,
+                  )
+                : s.resources,
+          }))
+        } catch (err) {
+          toast(`Failed to refresh hub detail: ${err.message}`)
+        }
+      },
+
+      resetFilters: () => {
+        const sortOptions = get().filterOptions?.sort
+        const nextSort = sortOptions?.[0] || ''
+        set({
+          search: '',
+          selectedType: 'All',
+          paidFilter: 'all',
+          authorSearch: '',
+          selectedHubTags: [],
+          sort: nextSort,
+          license: 'Any',
+          page: 1,
+        })
+      },
+    }),
+    persistViewState('hub-view', {
+      selectedType: asString,
+      paidFilter: oneOf(['all', 'free', 'paid']),
+      selectedHubTags: asArray,
+      authorSearch: asString,
+      license: asString,
+      sort: asString,
+      cardMode: oneOf(['minimal', 'medium']),
+      cardWidth: asCardWidth,
+    }),
+  ),
+)

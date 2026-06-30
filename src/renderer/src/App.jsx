@@ -21,6 +21,7 @@ import { useHubStore } from '@/stores/useHubStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
 import { useContentStore } from '@/stores/useContentStore'
 import { useLabelsStore } from '@/stores/useLabelsStore'
+import { useViewStore } from '@/stores/useViewStore'
 
 const NAV_ITEMS = [
   { id: 'hub', icon: Compass, label: 'Hub' },
@@ -29,7 +30,8 @@ const NAV_ITEMS = [
 ]
 
 export default function App() {
-  const [view, setView] = useState('library')
+  const view = useViewStore((s) => s.view)
+  const setView = useViewStore((s) => s.setView)
   const [dlPanelOpen, setDlPanelOpen] = useState(false)
   const [showWizard, setShowWizard] = useState(null) // null=checking, true/false
   const [whatsNew, setWhatsNew] = useState(null) // { entries, current } | null
@@ -40,9 +42,9 @@ export default function App() {
 
   useEffect(() => {
     useDownloadStore.getState().init()
-    useHubStore.getState().hydrateHubFilterPreferences()
+    // View filters/sort/layout are restored synchronously by each store's persist
+    // middleware; only the Settings-tab behavior prefs still load from SQLite here.
     useLibraryStore.getState().hydrateLibraryVisualPreferences()
-    useContentStore.getState().hydrateContentVisualPreferences()
     // Labels are app-wide reference data; load once here (not per-view) and
     // refresh on the broadcast event. Each view used to own a copy + listener,
     // which meant whichever view was unmounted at mutation time stayed stale.
@@ -144,20 +146,23 @@ export default function App() {
     await window.api.settings.set('whats_new_last_seen_version', v)
   }, [whatsNew])
 
-  const navigateTo = useCallback((targetView, context) => {
-    if (targetView === 'hub') {
-      if (context?.openResource) {
-        useHubStore.getState().openDetail(context.openResource)
+  const navigateTo = useCallback(
+    (targetView, context) => {
+      if (targetView === 'hub') {
+        if (context?.openResource) {
+          useHubStore.getState().openDetail(context.openResource)
+        } else {
+          useHubStore.getState().closeDetail()
+        }
+        navContextRef.current = null
       } else {
-        useHubStore.getState().closeDetail()
+        navContextRef.current = context || null
       }
-      navContextRef.current = null
-    } else {
-      navContextRef.current = context || null
-    }
-    setView(targetView)
-    setDlPanelOpen(false)
-  }, [])
+      setView(targetView)
+      setDlPanelOpen(false)
+    },
+    [setView],
+  )
 
   if (showWizard === null) {
     return <div className="h-full bg-base" />
