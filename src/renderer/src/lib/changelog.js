@@ -7,12 +7,37 @@
 export const CHANGELOG = [
   {
     version: '0.2.4',
-    date: '2026-06-24',
+    date: '2026-06-30',
     notes: [
       {
         kind: 'new',
-        title: 'Favorites and bookmarks',
-        body: 'When signed in to the Hub browser, favorite and bookmark resources right from their details panel.',
+        title: 'Favorites, bookmarks, and likes on the Hub',
+        body: 'When signed in to the Hub browser, favorite, bookmark, and like resources right from their details panel.',
+      },
+      {
+        kind: 'new',
+        title: 'Link packages to the Hub',
+        body: 'Packages missing from the public index, like paid ones, now get matched to the Hub automatically, and you can link any package to its Hub page yourself with "Link to Hub..." in the right-click menu.',
+      },
+      {
+        kind: 'new',
+        title: 'Packages in subfolders',
+        body: "Packages organized into subfolders now show up and behave like any other instead of being skipped, and offload directories can now live inside VaM's Saves folder, such as the one BrowserAssist offloads to.",
+      },
+      {
+        kind: 'improved',
+        title: 'Browse the Hub without losing your place',
+        body: 'Step through search results with Previous/Next buttons and arrow keys, and when you follow a link inside the Hub browser the details panel updates to match the package you land on.',
+      },
+      {
+        kind: 'improved',
+        title: 'Many small improvements',
+        body: 'Newly added content stays grouped together under "Recently installed", arrow keys move across rows and columns in grids, Hub browsing and downloads follow your system proxy settings, and Hub search ignores stray spaces.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Many small fixes',
+        body: "Fixed downloads for packages with non-Latin names, a freeze when removing packages from the right-click menu, Hub scrolling that could stop loading more, and a search box that wouldn't always clear. Startup is also quicker on Windows.",
       },
     ],
   },
