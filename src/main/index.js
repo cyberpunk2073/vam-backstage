@@ -187,6 +187,39 @@ function createWindow() {
   }
 }
 
+/**
+ * The Hub serves .var downloads with a `content-disposition: attachment;
+ * filename="<pkg>.var"` header, and package names can contain non-ASCII
+ * characters (e.g. Chinese: `Qing.黑色符文（免费版）.1.var`). Electron's
+ * `net.fetch` throws an uncatchable error when a response header carries
+ * non-ASCII bytes (electron/electron#42244), which kills the download before
+ * our own try/catch ever runs.
+ *
+ * We never read `content-disposition` — filenames come from the Hub metadata —
+ * so we just url-encode the value into valid ASCII so the parser stops choking.
+ * Only this header can carry a user-supplied filename; every other header (and
+ * every already-ASCII value) is passed through byte-identical, so unrelated
+ * default-session traffic (thumbnails, avatars, the JSON API) is untouched.
+ *
+ * Must be a session-level hook: net.fetch throws while constructing the
+ * Response, so there is no per-call header interception point.
+ */
+function installDownloadHeaderSanitizer(ses = session.defaultSession) {
+  ses.webRequest.onHeadersReceived((details, callback) => {
+    const headers = details.responseHeaders || {}
+    let changed = false
+    for (const key of Object.keys(headers)) {
+      if (key.toLowerCase() !== 'content-disposition') continue
+      headers[key] = headers[key].map((v) => {
+        if (!/[^\u0020-\u007e]/.test(v)) return v
+        changed = true
+        return encodeURIComponent(v)
+      })
+    }
+    callback(changed ? { responseHeaders: headers } : {})
+  })
+}
+
 async function setupHubConsent() {
   const hubSession = session.fromPartition('persist:hub')
   await hubSession.cookies.set({
@@ -211,6 +244,7 @@ function initBackend() {
   initNotify(() => mainWindow)
   initLogForward(() => mainWindow)
   setupHubConsent()
+  installDownloadHeaderSanitizer()
   initHubAuthWatch()
   initDownloadManager()
 
