@@ -19,6 +19,7 @@ import {
   clearFailedDownloads,
   deleteDownload,
   getSetting,
+  setSetting,
   setHubDisplayName,
   upsertHubUser,
   setHubResourceId,
@@ -51,6 +52,7 @@ const MAX_CONCURRENT = 5
 const PROGRESS_INTERVAL_MS = 250
 const MAX_AUTO_RETRIES = 5
 const RETRY_BASE_DELAY_MS = 2000 // 2s, 4s, 8s, 16s, 32s
+const DOWNLOADS_PAUSED_SETTING = 'downloads_paused'
 
 /** True for errors that are likely transient network failures (Wi-Fi switch, brief outage). */
 function isTransientNetworkError(err) {
@@ -76,6 +78,13 @@ let paused = false
 let pendingDepLookups = new Set() // dep refs currently in-flight via findPackages
 
 export async function initDownloadManager() {
+  paused = getSetting(DOWNLOADS_PAUSED_SETTING) === '1'
+  if (paused) {
+    resetActiveDownloads()
+    clearCompleted()
+    return
+  }
+
   // Clean up temp files from any interrupted downloads before marking them failed
   const rows = getAllDownloads()
   for (const r of rows) {
@@ -626,6 +635,7 @@ export function isPaused() {
 
 export function pauseAll() {
   paused = true
+  setSetting(DOWNLOADS_PAUSED_SETTING, '1')
   const ids = [...activeTransfers.keys()]
   for (const id of ids) {
     const transfer = activeTransfers.get(id)
@@ -640,6 +650,7 @@ export function pauseAll() {
 
 export function resumeAll() {
   paused = false
+  setSetting(DOWNLOADS_PAUSED_SETTING, '0')
   resetActiveDownloads()
   emitUpdated()
   processQueue()
@@ -658,6 +669,7 @@ export async function cancelAll() {
   }
   cancelAllDownloads()
   paused = false
+  setSetting(DOWNLOADS_PAUSED_SETTING, '0')
   pausedProgress.clear()
   for (const timer of retryTimers.values()) clearTimeout(timer)
   retryTimers.clear()
