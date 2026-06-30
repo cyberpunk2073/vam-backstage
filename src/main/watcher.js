@@ -17,6 +17,7 @@ import { getAllLibraryDirs, refreshLibraryDirs, getLibraryDirPath, libraryRelSub
 import { applyStorageState } from './storage-state.js'
 import { awaitStable } from './var-stability.js'
 import { hidePackageContent, readAllPrefs } from './vam-prefs.js'
+import { warmFileWatcherBackend } from './watcher-warm.js'
 
 const DEBOUNCE_MS = 500
 
@@ -151,6 +152,10 @@ export async function restartPackageWatcher() {
 
 export async function startWatcher(vamDir) {
   vamDirPath = vamDir
+
+  // Ensure parcel's native backend is warmed (on a worker) before the first real subscribe,
+  // so this never blocks the main thread for ~5s on Explorer launches. See watcher-warm.js.
+  await warmFileWatcherBackend()
 
   await restartPackageWatcher()
 

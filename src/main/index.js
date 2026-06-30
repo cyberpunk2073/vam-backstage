@@ -8,6 +8,7 @@ import { readAllPrefs } from './vam-prefs.js'
 import { registerAllHandlers } from './ipc/index.js'
 import { initDownloadManager, onNetworkOnline } from './downloads/manager.js'
 import { startWatcher, stopWatcher } from './watcher.js'
+import { warmFileWatcherBackend } from './watcher-warm.js'
 import { resolvePackageThumbnails } from './thumb-resolver.js'
 import { initNotify, notify } from './notify.js'
 import { initLogForward, forwardLogToRenderer, flushBufferedLogs } from './log-forward.js'
@@ -292,6 +293,11 @@ async function startupScan() {
 }
 
 app.whenReady().then(async () => {
+  // Warm @parcel/watcher's native backend on a worker thread, before the heavy startup scan
+  // and window creation, so the real (main-thread) watchers attach without the ~5s
+  // Explorer-launch stall. Fire-and-forget; startWatcher awaits it. See watcher-warm.js.
+  warmFileWatcherBackend()
+
   electronApp.setAppUserModelId('com.cyberpunk2073.vam-backstage')
 
   app.on('browser-window-created', (_, window) => {
