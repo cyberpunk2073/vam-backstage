@@ -1,5 +1,5 @@
 import { createWriteStream } from 'fs'
-import { ipcMain, net, session } from 'electron'
+import { ipcMain, net } from 'electron'
 import { access, rename, unlink } from 'fs/promises'
 import { dirname, join } from 'path'
 import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
@@ -535,12 +535,8 @@ export function registerPackageHandlers() {
     const tempPath = join(targetDir, filename + '.redownload.tmp')
 
     try {
-      const hubSession = session.fromPartition('persist:hub')
-      const cookies = await hubSession.cookies.get({ url: 'https://hub.virtamate.com' })
-      const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join('; ')
-
       const res = await net.fetch(downloadUrl, {
-        headers: { 'User-Agent': HUB_HTTP_USER_AGENT, Cookie: cookieHeader },
+        headers: { 'User-Agent': HUB_HTTP_USER_AGENT, Cookie: 'vamhubconsent=yes' },
         redirect: 'follow',
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`)

@@ -2,7 +2,7 @@ import { createWriteStream } from 'fs'
 import { stat as fsStat, rename, unlink, mkdir } from 'fs/promises'
 import { join, dirname } from 'path'
 import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
-import { net, session } from 'electron'
+import { net } from 'electron'
 import { verifyZipFile } from '../var-stability.js'
 import {
   insertDownload,
@@ -770,12 +770,7 @@ async function startDownload(entry) {
     } catch {}
     transferState.bytesLoaded = existingBytes
 
-    // Get cookies from the hub session for consent
-    const hubSession = session.fromPartition('persist:hub')
-    const cookies = await hubSession.cookies.get({ url: 'https://hub.virtamate.com' })
-    const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join('; ')
-
-    const headers = { 'User-Agent': HUB_HTTP_USER_AGENT, Cookie: cookieHeader }
+    const headers = { 'User-Agent': HUB_HTTP_USER_AGENT, Cookie: 'vamhubconsent=yes' }
     if (existingBytes > 0) headers['Range'] = `bytes=${existingBytes}-`
 
     const res = await net.fetch(download_url, {
