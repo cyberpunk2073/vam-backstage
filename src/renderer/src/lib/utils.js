@@ -1,6 +1,8 @@
 import { clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 import { VISIBLE_CATEGORIES, isCorePackageCategory } from '@shared/content-types.js'
+import { normalizeExternalUrl } from '@shared/external-url.js'
+import { toast } from '@/components/Toast.jsx'
 
 export function cn(...inputs) {
   return twMerge(clsx(inputs))
@@ -137,13 +139,22 @@ const DOMAIN_NAMES = {
 }
 
 export function extractDomainLabel(url) {
-  try {
-    const host = new URL(url).hostname.replace(/^www\./, '')
-    const name = DOMAIN_NAMES[host]
-    return name ? `Get on ${name}` : 'Get Package'
-  } catch {
-    return 'Get Package'
-  }
+  const normalized = normalizeExternalUrl(url)
+  if (!normalized) return 'Get Package'
+  const host = new URL(normalized).hostname.replace(/^www\./, '')
+  const name = DOMAIN_NAMES[host]
+  return name ? `Get on ${name}` : 'Get Package'
+}
+
+/** True when `url` normalizes to an openable http(s) link (see normalizeExternalUrl). */
+export function isPromotionalLink(url) {
+  return normalizeExternalUrl(url) != null
+}
+
+/** Open an external link via the main process, surfacing a toast if it fails. */
+export async function openExternalLink(url) {
+  const res = await window.api.shell.openExternal(url)
+  if (!res?.ok) toast(`Could not open link${res?.error ? `: ${res.error}` : ''}`)
 }
 
 // --- Display helpers ---

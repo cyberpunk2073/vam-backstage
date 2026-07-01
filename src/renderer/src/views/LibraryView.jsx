@@ -48,6 +48,8 @@ import {
   cn,
   THUMB_CHIP_BOX,
   THUMB_OVERLAY_CHIP,
+  isPromotionalLink,
+  openExternalLink,
 } from '@/lib/utils'
 import { toastIfBulkToggleFailures, toastIfSingleToggleFailed } from '@/lib/packageStorageToggleResults'
 import {
@@ -1883,17 +1885,15 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                 <span className="text-[11px] text-text-secondary">
                   by <AuthorLink author={pkg.creator} onFilterAuthor={onFilterAuthor} />
                 </span>
-                {pkg.promotionalLink && (
-                  <a
+                {isPromotionalLink(pkg.promotionalLink) && (
+                  <button
+                    type="button"
                     title={pkg.promotionalLink}
-                    onClick={(e) => {
-                      e.preventDefault()
-                      void window.api.shell.openExternal(pkg.promotionalLink)
-                    }}
-                    className="flex items-center gap-1 text-[10px] text-accent-blue hover:brightness-125 transition-[filter] cursor-pointer ml-1"
+                    onClick={() => void openExternalLink(pkg.promotionalLink)}
+                    className="flex items-center gap-1 text-[10px] text-accent-blue hover:brightness-125 transition-[filter] cursor-pointer ml-1 shrink-0"
                   >
                     <Heart size={9} /> Support
-                  </a>
+                  </button>
                 )}
               </div>
               <div className="flex items-center gap-1 mt-1 flex-wrap">

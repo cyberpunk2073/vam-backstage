@@ -39,6 +39,8 @@ import {
   formatDate,
   getGradient,
   extractDomainLabel,
+  isPromotionalLink,
+  openExternalLink,
 } from '@/lib/utils'
 import { useHubStore } from '@/stores/useHubStore'
 import { useDownloadStore } from '@/stores/useDownloadStore'
@@ -1137,17 +1139,15 @@ function HubDetail({
               </div>
             )}
 
-            {pkg.promotional_link && (
-              <a
+            {isPromotionalLink(pkg.promotional_link) && (
+              <button
+                type="button"
                 title={pkg.promotional_link}
-                onClick={(e) => {
-                  e.preventDefault()
-                  void window.api.shell.openExternal(pkg.promotional_link)
-                }}
+                onClick={() => void openExternalLink(pkg.promotional_link)}
                 className="flex items-center gap-1.5 mt-1.5 px-2 py-1 text-[10px] text-accent-blue hover:brightness-125 transition-[filter] cursor-pointer"
               >
                 <Heart size={10} /> Support this creator
-              </a>
+              </button>
             )}
 
             {/* Badges */}

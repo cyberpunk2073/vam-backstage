@@ -35,7 +35,7 @@ import {
 } from '@/components/package-action-dialogs'
 import FileTreeDialog from '@/components/FileTreeDialog'
 import LinkHubDialog from '@/components/LinkHubDialog'
-import { displayName } from '@/lib/utils'
+import { displayName, isPromotionalLink, openExternalLink } from '@/lib/utils'
 import { toastIfBulkToggleFailures, toastIfSingleToggleFailed } from '@/lib/packageStorageToggleResults'
 import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
@@ -589,10 +589,10 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                   Link to Hub…
                 </ContextMenuItem>
               )}
-              {p.promotionalLink && (
+              {isPromotionalLink(p.promotionalLink) && (
                 <ContextMenuItem
                   onSelect={() => {
-                    void window.api.shell.openExternal(p.promotionalLink)
+                    void openExternalLink(p.promotionalLink)
                   }}
                 >
                   <Heart size={12} className="shrink-0 text-accent-blue" />

@@ -1,23 +1,13 @@
 import { ipcMain, shell } from 'electron'
 import { join } from 'path'
-
-const ALLOWED_PROTOCOLS = new Set(['http:', 'https:'])
-
-function isAllowedExternalUrl(urlString) {
-  if (typeof urlString !== 'string' || !urlString.trim()) return false
-  try {
-    const u = new URL(urlString.trim())
-    return ALLOWED_PROTOCOLS.has(u.protocol)
-  } catch {
-    return false
-  }
-}
+import { normalizeExternalUrl } from '@shared/external-url.js'
 
 export function registerShellHandlers() {
   ipcMain.handle('shell:openExternal', async (_, url) => {
-    if (!isAllowedExternalUrl(url)) return { ok: false, error: 'invalid_url' }
+    const target = normalizeExternalUrl(url)
+    if (!target) return { ok: false, error: 'invalid_url' }
     try {
-      await shell.openExternal(url.trim())
+      await shell.openExternal(target)
       return { ok: true }
     } catch (err) {
       return { ok: false, error: err.message }
