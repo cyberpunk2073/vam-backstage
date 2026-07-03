@@ -1,4 +1,4 @@
-import { Gift, Wrench, Bug } from 'lucide-react'
+import { Gift, Wrench, Bug, CircleMinus } from 'lucide-react'
 import {
   Dialog,
   DialogClose,
@@ -17,6 +17,7 @@ const KIND_META = {
   new: { Icon: Gift, label: 'New', colorCls: 'text-emerald-400/70' },
   improved: { Icon: Wrench, label: 'Improved', colorCls: 'text-sky-400/70' },
   fixed: { Icon: Bug, label: 'Fixed', colorCls: 'text-amber-400/70' },
+  removed: { Icon: CircleMinus, label: 'Removed', colorCls: 'text-rose-400/70' },
 }
 
 /**

@@ -11,12 +11,14 @@ const CLEARED = { favorited: false, bookmarked: false, liked: false, disliked: f
  * toggles that reconcile against the authoritative POST response.
  *
  * @param {string|number} resourceId
+ * @param {{ enabled?: boolean }} [options] When `enabled` is false the hook stays
+ *   mounted but performs no fetches and reports a neutral logged-out state.
  */
-export function useHubInteractions(resourceId) {
+export function useHubInteractions(resourceId, { enabled = true } = {}) {
   const [state, setState] = useState({
     loggedIn: false,
     ...CLEARED,
-    loading: true,
+    loading: enabled,
     serverFavoriteCount: null,
   })
   // Latest known state for optimistic-toggle reconciliation without stale closures.
@@ -27,7 +29,7 @@ export function useHubInteractions(resourceId) {
   const serverFavoritedRef = useRef(false)
 
   const fetchState = useCallback(() => {
-    if (resourceId == null) return
+    if (!enabled || resourceId == null) return
     let cancelled = false
     setState((s) => ({ ...s, loading: true }))
     // Fast cookie-only check so the bookmark button + enabled heart appear
@@ -59,18 +61,19 @@ export function useHubInteractions(resourceId) {
     return () => {
       cancelled = true
     }
-  }, [resourceId])
+  }, [enabled, resourceId])
 
   useEffect(() => fetchState(), [fetchState])
 
   useEffect(() => {
+    if (!enabled) return
     return window.api.onHubAuthChanged((data) => {
       if (data?.loggedIn) fetchState()
       // Logged out: clear personal state too, otherwise a filled heart lingers
       // after the count/bookmark (gated on login) disappear.
       else setState((s) => ({ ...s, loggedIn: false, ...CLEARED, serverFavoriteCount: null }))
     })
-  }, [fetchState])
+  }, [enabled, fetchState])
 
   // Shared optimistic toggle: snapshot prev → apply optimistic patch → reconcile
   // against the POST result, reverting (and surfacing a toast) on auth/error.

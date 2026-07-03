@@ -64,6 +64,8 @@ const HUB_GALLERY_GRID_GAP_PX = 12
 /** IntersectionObserver rootMargin (bottom): load next page before user reaches the list end */
 const HUB_LOAD_MORE_MARGIN_BOTTOM_PX = 1600
 
+const HUB_INTERACTIONS_ENABLED = false
+
 export default function HubView({ onNavigate }) {
   const {
     resources,
@@ -655,7 +657,7 @@ function HubDetail({
     toggleFavorite,
     toggleBookmark,
     toggleLike,
-  } = useHubInteractions(resourceId)
+  } = useHubInteractions(resourceId, { enabled: HUB_INTERACTIONS_ENABLED })
 
   const tabUrls = useMemo(
     () => ({

@@ -1,10 +1,31 @@
 /**
  * In-app release notes (substantial user-facing changes only), newest first.
- * @typedef {{ kind: 'new' | 'improved' | 'fixed', title: string, body: string }} ChangelogNote
+ * @typedef {{ kind: 'new' | 'improved' | 'fixed' | 'removed', title: string, body: string }} ChangelogNote
  * @typedef {{ version: string, date: string, notes: ChangelogNote[] }} ChangelogEntry
  * @type {ChangelogEntry[]}
  */
 export const CHANGELOG = [
+  {
+    version: '0.2.5',
+    date: '2026-07-03',
+    notes: [
+      {
+        kind: 'removed',
+        title: 'Removed Hub favorites, bookmarks, and likes features',
+        body: 'By request of the Hub admins, favoriting, bookmarking, and liking resources from the details panel is disabled.',
+      },
+      {
+        kind: 'improved',
+        title: 'Picks up where you left off',
+        body: 'The app now reopens on the view you were last using and remembers your filters, sorting, and layout between restarts.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Small fixes',
+        body: 'Fixed some Patreon links that would not open, and Hub downloads that could sometimes fail.',
+      },
+    ],
+  },
   {
     version: '0.2.4',
     date: '2026-06-30',
