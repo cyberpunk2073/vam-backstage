@@ -692,6 +692,30 @@ function HubDetail({
   // Display URL for the address bar — tracks in-page navigation independently.
   const [displayUrl, setDisplayUrl] = useState(navUrl)
 
+  // Editable address bar: `addressDraft` mirrors `displayUrl` unless the user is
+  // actively typing, so live navigation keeps the field current without clobbering edits.
+  const addressInputRef = useRef(null)
+  const [addressFocused, setAddressFocused] = useState(false)
+  const [addressDraft, setAddressDraft] = useState(displayUrl)
+  useEffect(() => {
+    if (!addressFocused) setAddressDraft(displayUrl)
+  }, [displayUrl, addressFocused])
+
+  const navigateToAddress = useCallback(() => {
+    const raw = addressDraft.trim()
+    if (!raw) return
+    const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`
+    try {
+      webviewRef.current?.loadURL(url)
+    } catch {
+      // ignore malformed URL — the webview will surface a load error if reached
+    }
+    // Optimistically show the target so blur doesn't briefly restore the old URL
+    // before `did-navigate` fires with the real one.
+    setDisplayUrl(url)
+    addressInputRef.current?.blur()
+  }, [addressDraft])
+
   const selectTab = useCallback(
     (key) => {
       setBrowserTab(key)
@@ -1408,9 +1432,34 @@ function HubDetail({
             <Button variant="ghost" size="icon-sm" onClick={reload}>
               <RotateCw size={13} />
             </Button>
-            <div className="flex-1 min-w-0 h-7 bg-elevated border border-border rounded px-2.5 flex items-center gap-2 text-[11px] text-text-secondary font-mono truncate ml-1 select-text cursor-text">
+            <div className="flex-1 min-w-0 h-7 bg-elevated border border-border rounded px-2.5 flex items-center gap-2 ml-1 focus-within:border-accent-blue/60 transition-colors">
               <Globe size={12} className="text-text-tertiary shrink-0" />
-              {displayUrl}
+              <input
+                ref={addressInputRef}
+                type="text"
+                value={addressDraft}
+                spellCheck={false}
+                onChange={(e) => setAddressDraft(e.target.value)}
+                onFocus={(e) => {
+                  setAddressFocused(true)
+                  e.target.select()
+                }}
+                onBlur={() => {
+                  setAddressFocused(false)
+                  setAddressDraft(displayUrl)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    navigateToAddress()
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setAddressDraft(displayUrl)
+                    addressInputRef.current?.blur()
+                  }
+                }}
+                className="flex-1 min-w-0 bg-transparent outline-none text-[11px] text-text-secondary font-mono select-text cursor-text"
+              />
             </div>
             <Button
               variant="ghost"
