@@ -2,7 +2,7 @@ import { app, ipcMain } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { autoUpdater } from 'electron-updater'
 import { notify } from './notify.js'
-import { getSetting, setSetting } from './db.js'
+import { getDb, getSetting, setSetting } from './db.js'
 
 const DEV_ROLLING_TAG = 'dev-latest'
 
@@ -32,8 +32,17 @@ async function applyChannel(channel) {
   autoUpdater.allowDowngrade = false
 }
 
+// A client head runs with no local DB (see initBackend in index.js), yet the
+// updater IPC handlers are still registered. Guard the DB touch so they never
+// hit an undefined `db` (which threw on the client, most visibly on reconnect
+// reloads): with no DB we assume the 'stable' channel and drop the write.
 function readChannel() {
+  if (!getDb()) return 'stable'
   return getSetting('update_channel') === 'dev' ? 'dev' : 'stable'
+}
+
+function writeChannel(channel) {
+  if (getDb()) setSetting('update_channel', channel)
 }
 
 async function runCheck(extra = {}) {
@@ -67,7 +76,7 @@ export function initAutoUpdater() {
       if (channel !== 'stable' && channel !== 'dev') {
         return { ok: false, error: `invalid channel: ${String(channel)}` }
       }
-      setSetting('update_channel', channel)
+      writeChannel(channel)
       if (is.dev) {
         return { ok: true, channel }
       }
