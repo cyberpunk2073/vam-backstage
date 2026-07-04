@@ -86,6 +86,8 @@ export default function SettingsView() {
     window.api.settings.get('hub_debug_requests').then((v) => setHubDebugRequests(v === '1'))
     window.api.settings.get('developer_options_unlocked').then((v) => setDeveloperUnlocked(v === '1'))
     window.api.settings.get('disable_behavior').then((v) => setDisableBehavior(v || 'suffix'))
+    window.api.settings.get('remote_serve_port').then((v) => setServerPort(v || String(DEFAULT_REMOTE_PORT)))
+    window.api.settings.get('remote_connect_url').then((v) => setConnectUrl(v || ''))
     window.api.dev.isDev().then(setIsDev)
     window.api.app.getVersion().then(setAppVersion)
     window.api.updater.getChannel().then((c) => setUpdateChannel(c === 'dev' ? 'dev' : 'stable'))
@@ -347,8 +349,10 @@ export default function SettingsView() {
   }, [])
 
   const handleStartServer = useCallback(async () => {
-    const port = parseInt(serverPort, 10) || DEFAULT_REMOTE_PORT
-    const r = await window.api.remote.startServer(port)
+    const portStr = String(parseInt(serverPort, 10) || DEFAULT_REMOTE_PORT)
+    setServerPort(portStr)
+    await window.api.settings.set('remote_serve_port', portStr)
+    const r = await window.api.remote.startServer(parseInt(portStr, 10))
     if (!r?.ok) {
       toast(`Could not start server: ${r?.error || 'unknown error'}`, 'error', 4500)
       return
@@ -364,7 +368,11 @@ export default function SettingsView() {
   }, [refreshRemoteStatus])
 
   const handleConnect = useCallback(async () => {
-    const url = normalizeConnectUrl(connectUrl)
+    const trimmed = connectUrl.trim()
+    if (!trimmed) return
+    setConnectUrl(trimmed)
+    await window.api.settings.set('remote_connect_url', trimmed)
+    const url = normalizeConnectUrl(trimmed)
     if (!url) return
     await window.api.remote.connect(url) // relaunches the app into client mode
   }, [connectUrl])
