@@ -151,6 +151,13 @@ function migrate() {
 
   if (current === SCHEMA_VERSION) return
 
+  if (current > SCHEMA_VERSION) {
+    throw new Error(
+      `Schema version ${current} is newer than this app supports (v${SCHEMA_VERSION}). ` +
+        `Update the app to open this database.`,
+    )
+  }
+
   if (current === 0) {
     db.transaction(() => {
       createSchema()

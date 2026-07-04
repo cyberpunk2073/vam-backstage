@@ -67,6 +67,21 @@ describe('migrate v22 (hub_name_checked_at)', () => {
   })
 })
 
+// ── newer-than-supported schema ────────────────────────────────────────────────
+
+describe('unsupported newer schema', () => {
+  beforeEach(async () => {
+    tmp = await mkTempVamDir()
+    const raw = new Database(tmp.dbPath)
+    raw.pragma('user_version = 25')
+    raw.close()
+  })
+
+  it('refuses to open a database migrated by a newer app', async () => {
+    await expect(openTestDatabase(tmp.dbPath)).rejects.toThrow(/newer than this app supports \(v24\)/)
+  })
+})
+
 // ── fresh install (no legacy table, user_version=0) ────────────────────────────
 
 describe('fresh database', () => {
