@@ -123,8 +123,9 @@ describe('formatDate', () => {
   })
 
   it('formats unix timestamp to readable date', () => {
-    // 1704067200 = Jan 1, 2024 00:00:00 UTC
-    const result = formatDate(1704067200)
+    // Noon UTC so the local-time render stays on Jan 1 across timezones.
+    // 1704110400 = Jan 1, 2024 12:00:00 UTC
+    const result = formatDate(1704110400)
     expect(result).toMatch(/Jan/)
     expect(result).toMatch(/2024/)
   })

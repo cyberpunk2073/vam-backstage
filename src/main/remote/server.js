@@ -1,6 +1,5 @@
 import { WebSocketServer } from 'ws'
 import { app } from 'electron'
-import { is } from '@electron-toolkit/utils'
 import { encode, decode } from '@shared/net-codec.js'
 import { DEFAULT_REMOTE_PORT } from '@shared/remote-config.js'
 import { getHandler } from './registry.js'
@@ -70,7 +69,7 @@ export function startServer(port = DEFAULT_REMOTE_PORT) {
         emitStatus()
       })
       ws.on('message', (raw) => handleMessage(ws, raw))
-      send(ws, { t: 'hello', version: app.getVersion(), dev: is.dev })
+      send(ws, { t: 'hello', version: app.getVersion(), dev: !app.isPackaged })
     })
   })
 }
@@ -168,7 +167,7 @@ function sendError(ws, id, err) {
     error: {
       name: err?.name || 'Error',
       message: err?.message || String(err),
-      stack: is.dev ? err?.stack : undefined,
+      stack: !app.isPackaged ? err?.stack : undefined,
     },
   })
 }
