@@ -19,6 +19,9 @@ import { fetchPackagesJson, loadPackagesJsonFromCache } from './hub/packages-jso
 import { scanHubDetails } from './hub/scanner.js'
 import { initHubAuthWatch } from './hub/interactions.js'
 import { initAutoUpdater } from './updater.js'
+import { installRegistry } from './remote/registry.js'
+import { startServer, stopServer } from './remote/server.js'
+import { getServePort, getConnectUrl } from './remote/cli.js'
 import {
   attachMainWindowStatePersistence,
   loadMainWindowState,
@@ -71,6 +74,22 @@ import {
 let mainWindow = null
 
 const HUB_ORIGIN = new URL('https://hub.virtamate.com').origin
+
+// Remote-mode switches, resolved once at startup from argv. `CONNECT_URL` set =
+// this instance is a pure client head (backend suppressed, UI points at a
+// remote server). `SERVE_PORT` set = expose the backend over the LAN.
+const CONNECT_URL = getConnectUrl()
+const SERVE_PORT = getServePort()
+const IS_CLIENT = !!CONNECT_URL
+// Serving without a local window: headless host.
+const HEADLESS_SERVE = SERVE_PORT != null && !IS_CLIENT
+
+// A client and a server may run on the same machine; keep the client's
+// userData (DB is unused, but window-state + persist:hub cookies are not) in a
+// separate dir so the two instances don't clobber each other.
+if (IS_CLIENT) {
+  app.setPath('userData', app.getPath('userData') + '-client')
+}
 
 /**
  * Chromium often does not show the native text edit menu in Electron; with a hidden menu bar
@@ -145,7 +164,9 @@ function attachDevToolsHotkeys(window) {
 }
 
 function createWindow() {
-  const saved = loadMainWindowState()
+  // Client head has no DB, so window-state read/persist (both go through the
+  // settings table) is skipped — fall back to default geometry.
+  const saved = IS_CLIENT ? null : loadMainWindowState()
   mainWindow = new BrowserWindow({
     title: 'VaM Backstage',
     width: saved?.width ?? DEFAULT_WIDTH,
@@ -161,9 +182,13 @@ function createWindow() {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
       webviewTag: true,
+      // The preload needs the connect URL synchronously (before any async IPC)
+      // to decide which transport to build. It's the only value forwarded;
+      // version/dev flags come from the client's own local IPC handlers.
+      ...(CONNECT_URL ? { additionalArguments: [`--connect=${CONNECT_URL}`] } : {}),
     },
   })
-  attachMainWindowStatePersistence(mainWindow)
+  if (!IS_CLIENT) attachMainWindowStatePersistence(mainWindow)
 
   mainWindow.on('ready-to-show', () => {
     if (saved?.isMaximized) mainWindow.maximize()
@@ -230,9 +255,21 @@ async function setupHubConsent() {
 }
 
 function initBackend() {
+  // Capture handler registrations into the remote registry BEFORE registering
+  // them, so hot-starting the server later can dispatch to every channel.
+  installRegistry()
   // Register IPC before DB open so a failed migration/open still exposes handlers
   // (renderer otherwise gets "No handler registered" for every channel).
   registerAllHandlers()
+  initNotify(() => mainWindow)
+  initLogForward(() => mainWindow)
+  setupHubConsent()
+  initHubAuthWatch()
+
+  // Client head: no local DB / scan / watcher / downloads. Everything data-side
+  // is served by the remote instance over the transport.
+  if (IS_CLIENT) return
+
   openDatabase()
   try {
     const removed = gcOrphanLabels()
@@ -241,11 +278,7 @@ function initBackend() {
     console.warn('[labels] startup gc failed:', err.message)
   }
   loadPackagesJsonFromCache()
-  initNotify(() => mainWindow)
-  initLogForward(() => mainWindow)
-  setupHubConsent()
   installDownloadHeaderSanitizer()
-  initHubAuthWatch()
   initDownloadManager()
 
   refreshLibraryDirs()
@@ -264,6 +297,7 @@ function initBackend() {
 }
 
 async function startupScan() {
+  if (IS_CLIENT) return
   const vamDir = getSetting('vam_dir')
   const scanDone = getSetting('initial_scan_done')
   if (!vamDir || !scanDone) return
@@ -330,7 +364,8 @@ app.whenReady().then(async () => {
   // Warm @parcel/watcher's native backend on a worker thread, before the heavy startup scan
   // and window creation, so the real (main-thread) watchers attach without the ~5s
   // Explorer-launch stall. Fire-and-forget; startWatcher awaits it. See watcher-warm.js.
-  warmFileWatcherBackend()
+  // Client head has no watcher, so skip it.
+  if (!IS_CLIENT) warmFileWatcherBackend()
 
   electronApp.setAppUserModelId('com.cyberpunk2073.vam-backstage')
 
@@ -343,14 +378,27 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.error('Backend init failed:', err)
   }
-  powerMonitor.on('resume', onNetworkOnline)
+  // Download manager only exists on the data-side instance.
+  if (!IS_CLIENT) powerMonitor.on('resume', onNetworkOnline)
   registerWebviewWindowOpenHandler()
-  createWindow()
-  initAutoUpdater()
+
+  // Headless host: no local window, and no auto-updater (nothing to surface the
+  // install prompt to). The process stays alive because `window-all-closed`
+  // never fires with zero windows.
+  if (!HEADLESS_SERVE) {
+    createWindow()
+    initAutoUpdater()
+  }
+
   startupScan()
 
+  if (SERVE_PORT != null && !IS_CLIENT) {
+    const res = await startServer(SERVE_PORT)
+    if (!res.ok) console.error(`[remote] server did not start: ${res.error}`)
+  }
+
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (!HEADLESS_SERVE && BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
 
@@ -360,24 +408,33 @@ app.on('window-all-closed', () => {
   }
 })
 
-// One-shot async shutdown: stopWatcher awaits parcel's native unsubscribe,
-// which detaches the watcher thread's N-API threadsafe-function refs. If we
-// don't await it before the env tears down, parcel's worker dispatches back
-// into a freed env and triggers `napi_fatal_error` (visible as the harmless-
-// looking native stack trace on close). We intercept the first will-quit,
-// drain cleanup, then re-quit — second pass falls through.
-let cleanedUp = false
+// Async shutdown drain. stopWatcher awaits parcel's native unsubscribe, which
+// detaches the watcher thread's N-API threadsafe-function refs. If we don't
+// await it before the env tears down, parcel's worker dispatches back into a
+// freed env and triggers `napi_fatal_error` (the harmless-looking native stack
+// trace on close). We intercept will-quit, drain cleanup, then force-exit.
+//
+// Force-exit with `app.exit(0)` (not `app.quit()`): a signal-initiated quit
+// (Ctrl-C/SIGINT, which Electron consumes natively) reaches here already inside
+// a quit cycle we just preventDefault'd, and calling `app.quit()` from that same
+// tick is swallowed — the quit never restarts and the process hangs (on macOS it
+// then orphans in the dock, since window-all-closed doesn't quit on darwin).
+// `app.exit(0)` terminates unconditionally once our cleanup has run.
+let draining = false
 app.on('will-quit', (event) => {
-  if (cleanedUp) return
   event.preventDefault()
+  if (draining) return
+  draining = true
   ;(async () => {
+    try {
+      await stopServer()
+    } catch {}
     try {
       await stopWatcher()
     } catch {}
     try {
       closeDatabase()
     } catch {}
-    cleanedUp = true
-    app.quit()
+    app.exit(0)
   })()
 })

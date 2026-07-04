@@ -12,9 +12,13 @@ import {
   Compass,
   FlaskConical,
   CurlyBraces,
+  Network,
+  Plug,
+  PlugZap,
 } from 'lucide-react'
 import { formatBytes } from '@/lib/utils'
 import { parseDisableBehavior, disableBehaviorMoveTo } from '@shared/disable-behavior.js'
+import { DEFAULT_REMOTE_PORT, normalizeConnectUrl } from '@shared/remote-config.js'
 import { toast } from '@/components/Toast'
 import { useStatusStore } from '@/stores/useStatusStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
@@ -62,6 +66,10 @@ export default function SettingsView() {
   const setDimInactive = useLibraryStore((s) => s.setDimInactive)
   const suppressDisablePackageWarning = useLibraryStore((s) => s.suppressDisablePackageWarning)
   const setSuppressDisablePackageWarning = useLibraryStore((s) => s.setSuppressDisablePackageWarning)
+  const isRemoteClient = !!window.api.remote?.isRemote
+  const [remoteStatus, setRemoteStatus] = useState(null)
+  const [serverPort, setServerPort] = useState(String(DEFAULT_REMOTE_PORT))
+  const [connectUrl, setConnectUrl] = useState('')
 
   const refreshLibDirs = useCallback(async () => {
     try {
@@ -315,6 +323,54 @@ export default function SettingsView() {
     await window.api.settings.set('developer_options_unlocked', '0')
     setDeveloperUnlocked(false)
     toast('Developer options disabled', 'success', 2500)
+  }, [])
+
+  useEffect(() => {
+    if (isRemoteClient) return
+    window.api.remote
+      .status()
+      .then((s) => {
+        setRemoteStatus(s)
+        if (s?.port) setServerPort(String(s.port))
+      })
+      .catch(() => {})
+    // Live updates when clients connect/disconnect (pushed from the server).
+    return window.api.on('remote:server-status', (s) => setRemoteStatus(s))
+  }, [isRemoteClient])
+
+  const refreshRemoteStatus = useCallback(async () => {
+    try {
+      setRemoteStatus(await window.api.remote.status())
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  const handleStartServer = useCallback(async () => {
+    const port = parseInt(serverPort, 10) || DEFAULT_REMOTE_PORT
+    const r = await window.api.remote.startServer(port)
+    if (!r?.ok) {
+      toast(`Could not start server: ${r?.error || 'unknown error'}`, 'error', 4500)
+      return
+    }
+    await refreshRemoteStatus()
+    toast(`Serving on port ${r.port}`, 'success')
+  }, [serverPort, refreshRemoteStatus])
+
+  const handleStopServer = useCallback(async () => {
+    await window.api.remote.stopServer()
+    await refreshRemoteStatus()
+    toast('Server stopped', 'success')
+  }, [refreshRemoteStatus])
+
+  const handleConnect = useCallback(async () => {
+    const url = normalizeConnectUrl(connectUrl)
+    if (!url) return
+    await window.api.remote.connect(url) // relaunches the app into client mode
+  }, [connectUrl])
+
+  const handleDisconnect = useCallback(async () => {
+    await window.api.remote.disconnect() // relaunches back into local mode
   }, [])
 
   return (
@@ -764,6 +820,93 @@ export default function SettingsView() {
                 </AlertDialog>
               </div>
             </div>
+          </Section>
+        )}
+
+        {(showDevSection || isRemoteClient) && (
+          <Section
+            title="Remote (Network)"
+            description="Experimental. Serve this instance over the LAN, or run as a client head pointed at another instance. Single user, trusted network, no authentication."
+          >
+            {isRemoteClient ? (
+              <div className="flex items-start gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs text-text-primary font-medium flex items-center gap-1.5">
+                    <PlugZap size={14} className="text-accent-blue shrink-0" />
+                    Running as remote client
+                  </div>
+                  <div className="text-[11px] text-text-tertiary mt-0.5 select-text cursor-text font-mono break-all">
+                    {window.api.remote.url}
+                  </div>
+                </div>
+                <Button variant="outline" size="lg" onClick={handleDisconnect} className="shrink-0 text-xs">
+                  <Plug size={14} /> Disconnect
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-end gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs text-text-primary font-medium flex items-center gap-1.5">
+                      <Network size={14} className="text-text-tertiary shrink-0" />
+                      Host server
+                    </div>
+                    <div className="text-[11px] text-text-tertiary mt-0.5">
+                      {remoteStatus?.running
+                        ? `Serving on port ${remoteStatus.port} · ${remoteStatus.clients} client${remoteStatus.clients === 1 ? '' : 's'} connected`
+                        : 'Expose this instance so another machine can connect to it.'}
+                    </div>
+                  </div>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={serverPort}
+                    onChange={(e) => setServerPort(e.target.value.replace(/[^\d]/g, ''))}
+                    disabled={remoteStatus?.running}
+                    placeholder={String(DEFAULT_REMOTE_PORT)}
+                    className="w-20 h-9 bg-elevated border border-border rounded-lg px-2.5 text-xs text-text-secondary font-mono disabled:opacity-50"
+                  />
+                  {remoteStatus?.running ? (
+                    <Button variant="outline" size="lg" onClick={handleStopServer} className="shrink-0 text-xs">
+                      Stop
+                    </Button>
+                  ) : (
+                    <Button variant="outline" size="lg" onClick={handleStartServer} className="shrink-0 text-xs">
+                      Start
+                    </Button>
+                  )}
+                </div>
+
+                <div className="flex items-end gap-2 border-t border-border pt-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs text-text-primary font-medium flex items-center gap-1.5">
+                      <PlugZap size={14} className="text-text-tertiary shrink-0" />
+                      Connect to a server
+                    </div>
+                    <div className="text-[11px] text-text-tertiary mt-0.5">
+                      Relaunches this app as a client head pointed at the given address. Configure this machine as a
+                      normal local install first.
+                    </div>
+                  </div>
+                  <input
+                    type="text"
+                    value={connectUrl}
+                    onChange={(e) => setConnectUrl(e.target.value)}
+                    placeholder="192.168.1.5"
+                    className="w-44 h-9 bg-elevated border border-border rounded-lg px-2.5 text-xs text-text-secondary font-mono"
+                  />
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    onClick={handleConnect}
+                    disabled={!connectUrl.trim()}
+                    className="shrink-0 text-xs"
+                  >
+                    <Plug size={14} /> Connect
+                  </Button>
+                </div>
+              </div>
+            )}
           </Section>
         )}
 

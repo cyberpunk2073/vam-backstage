@@ -1,5 +1,15 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { Compass, Library, LayoutGrid, Download, Settings, Pause } from 'lucide-react'
+import { Compass, Library, LayoutGrid, Download, Settings, Pause, Loader2, AlertTriangle } from 'lucide-react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import ribbonAppIcon from '@resources/icon.png?url'
 import StatusBar from '@/components/StatusBar'
 import DownloadsPanel from '@/components/DownloadsPanel'
@@ -171,6 +181,7 @@ export default function App() {
   return (
     <TooltipProvider>
       <div className="flex h-full bg-base">
+        <RemoteGate />
         {showWizard && <FirstRun onDone={() => setShowWizard(false)} />}
         {/* Ribbon */}
         <nav className="w-[56px] bg-surface flex flex-col items-center border-r border-border shrink-0">
@@ -246,6 +257,47 @@ export default function App() {
         <ThumbnailLightbox />
       </div>
     </TooltipProvider>
+  )
+}
+
+/**
+ * Full-window blocking gate for client (remote) mode. While the socket is not
+ * connected it covers the UI and swallows pointer/keyboard input, so the user
+ * can't fire mutations that would queue against a dead connection (and would be
+ * discarded by the reload-on-reconnect anyway). A fatal version mismatch can't
+ * self-heal, so it offers a one-click switch back to local mode.
+ */
+function RemoteGate() {
+  const [status, setStatus] = useState(null)
+  useEffect(() => {
+    if (!window.api.remote?.isRemote) return
+    return window.api.remote.onStatus(setStatus)
+  }, [])
+  if (!window.api.remote?.isRemote) return null
+  const connected = status?.connected && !status?.error
+  if (connected) return null
+  const isError = !!status?.error
+  return (
+    <AlertDialog open>
+      <AlertDialogContent onEscapeKeyDown={(e) => e.preventDefault()}>
+        <AlertDialogHeader>
+          <AlertDialogMedia className="self-center bg-transparent">
+            {isError ? <AlertTriangle className="text-error" /> : <Loader2 className="animate-spin text-accent-blue" />}
+          </AlertDialogMedia>
+          <AlertDialogTitle>{isError ? 'Connection error' : status ? 'Reconnecting…' : 'Connecting…'}</AlertDialogTitle>
+          <AlertDialogDescription className="select-text cursor-text break-all">
+            {isError ? status.error : status?.url || window.api.remote.url}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {isError && (
+          <AlertDialogFooter>
+            <AlertDialogAction variant="outline" onClick={() => window.api.remote.disconnect()}>
+              Switch to local mode
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        )}
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 

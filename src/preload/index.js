@@ -1,219 +1,190 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
+import { createRemoteTransport } from './remote-transport.js'
+
+// `--connect=<url>` is forwarded here via webPreferences.additionalArguments in
+// client mode. It must be read synchronously to pick the transport before any
+// api method runs. Without it, the transport is a thin passthrough to IPC, so
+// the normal local app is behaviourally unchanged.
+const connectArg = process.argv.find((a) => a.startsWith('--connect='))
+const connectUrl = connectArg ? connectArg.slice('--connect='.length) : null
+
+const transport = connectUrl
+  ? createRemoteTransport(connectUrl)
+  : {
+      invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
+      on: (channel, callback) => {
+        const handler = (_e, ...args) => callback(...args)
+        ipcRenderer.on(channel, handler)
+        return () => ipcRenderer.removeListener(channel, handler)
+      },
+      remote: { isRemote: false },
+    }
+
+const invoke = transport.invoke
 
 const api = {
   packages: {
-    list: (filters) => ipcRenderer.invoke('packages:list', filters),
-    detail: (filename) => ipcRenderer.invoke('packages:detail', filename),
-    stats: () => ipcRenderer.invoke('packages:stats'),
-    statusCounts: () => ipcRenderer.invoke('packages:status-counts'),
-    typeCounts: () => ipcRenderer.invoke('packages:type-counts'),
-    tagCounts: () => ipcRenderer.invoke('packages:tag-counts'),
-    authorCounts: () => ipcRenderer.invoke('packages:author-counts'),
-    install: (ref) => ipcRenderer.invoke('packages:install', ref),
-    installMissing: (filename, autoQueueDeps) =>
-      ipcRenderer.invoke('packages:install-missing', { filename, autoQueueDeps }),
-    installAllMissing: () => ipcRenderer.invoke('packages:install-all-missing'),
-    installDepsBatch: (items, autoQueueDeps) =>
-      ipcRenderer.invoke('packages:install-deps-batch', { items, autoQueueDeps }),
-    installDep: (hubFileData) => ipcRenderer.invoke('packages:install-dep', hubFileData),
-    missingDeps: () => ipcRenderer.invoke('packages:missing-deps'),
-    enrichFromHub: (stems) => ipcRenderer.invoke('packages:enrich-from-hub', stems),
-    removeOrphans: () => ipcRenderer.invoke('packages:remove-orphans'),
-    checkUpdates: (opts) => ipcRenderer.invoke('packages:check-updates', opts),
-    uninstall: (filename) => ipcRenderer.invoke('packages:uninstall', filename),
-    promote: (filename, hubResourceId) => ipcRenderer.invoke('packages:promote', filename, hubResourceId),
-    forceRemove: (filename) => ipcRenderer.invoke('packages:force-remove', filename),
-    toggleEnabled: (filename) => ipcRenderer.invoke('packages:toggle-enabled', filename),
-    setEnabled: (filenames, enabled) => ipcRenderer.invoke('packages:set-enabled', { filenames, enabled }),
+    list: (filters) => invoke('packages:list', filters),
+    detail: (filename) => invoke('packages:detail', filename),
+    stats: () => invoke('packages:stats'),
+    statusCounts: () => invoke('packages:status-counts'),
+    typeCounts: () => invoke('packages:type-counts'),
+    tagCounts: () => invoke('packages:tag-counts'),
+    authorCounts: () => invoke('packages:author-counts'),
+    install: (ref) => invoke('packages:install', ref),
+    installMissing: (filename, autoQueueDeps) => invoke('packages:install-missing', { filename, autoQueueDeps }),
+    installAllMissing: () => invoke('packages:install-all-missing'),
+    installDepsBatch: (items, autoQueueDeps) => invoke('packages:install-deps-batch', { items, autoQueueDeps }),
+    installDep: (hubFileData) => invoke('packages:install-dep', hubFileData),
+    missingDeps: () => invoke('packages:missing-deps'),
+    enrichFromHub: (stems) => invoke('packages:enrich-from-hub', stems),
+    removeOrphans: () => invoke('packages:remove-orphans'),
+    checkUpdates: (opts) => invoke('packages:check-updates', opts),
+    uninstall: (filename) => invoke('packages:uninstall', filename),
+    promote: (filename, hubResourceId) => invoke('packages:promote', filename, hubResourceId),
+    forceRemove: (filename) => invoke('packages:force-remove', filename),
+    toggleEnabled: (filename) => invoke('packages:toggle-enabled', filename),
+    setEnabled: (filenames, enabled) => invoke('packages:set-enabled', { filenames, enabled }),
     setTypeOverride: (filenameOrPayload, typeOverride) =>
       typeof filenameOrPayload === 'object' && filenameOrPayload !== null && 'filenames' in filenameOrPayload
-        ? ipcRenderer.invoke('packages:set-type-override', filenameOrPayload)
-        : ipcRenderer.invoke('packages:set-type-override', { filename: filenameOrPayload, typeOverride }),
-    fileList: (filename) => ipcRenderer.invoke('packages:file-list', filename),
-    redownload: (filename) => ipcRenderer.invoke('packages:redownload', filename),
-    setHubResource: (filename, id) => ipcRenderer.invoke('packages:setHubResource', filename, id),
+        ? invoke('packages:set-type-override', filenameOrPayload)
+        : invoke('packages:set-type-override', { filename: filenameOrPayload, typeOverride }),
+    fileList: (filename) => invoke('packages:file-list', filename),
+    redownload: (filename) => invoke('packages:redownload', filename),
+    setHubResource: (filename, id) => invoke('packages:setHubResource', filename, id),
   },
   contents: {
-    list: (filters) => ipcRenderer.invoke('contents:list', filters),
-    typeCounts: () => ipcRenderer.invoke('contents:type-counts'),
-    visibilityCounts: () => ipcRenderer.invoke('contents:visibility-counts'),
-    toggleHidden: (payload) => ipcRenderer.invoke('contents:toggle-hidden', payload),
-    toggleFavorite: (payload) => ipcRenderer.invoke('contents:toggle-favorite', payload),
-    setHiddenBatch: (payload) => ipcRenderer.invoke('contents:set-hidden-batch', payload),
-    setFavoriteBatch: (payload) => ipcRenderer.invoke('contents:set-favorite-batch', payload),
+    list: (filters) => invoke('contents:list', filters),
+    typeCounts: () => invoke('contents:type-counts'),
+    visibilityCounts: () => invoke('contents:visibility-counts'),
+    toggleHidden: (payload) => invoke('contents:toggle-hidden', payload),
+    toggleFavorite: (payload) => invoke('contents:toggle-favorite', payload),
+    setHiddenBatch: (payload) => invoke('contents:set-hidden-batch', payload),
+    setFavoriteBatch: (payload) => invoke('contents:set-favorite-batch', payload),
   },
   labels: {
-    list: () => ipcRenderer.invoke('labels:list'),
-    create: ({ name }) => ipcRenderer.invoke('labels:create', { name }),
-    rename: ({ id, name }) => ipcRenderer.invoke('labels:rename', { id, name }),
-    recolor: ({ id, color }) => ipcRenderer.invoke('labels:recolor', { id, color }),
-    delete: ({ id }) => ipcRenderer.invoke('labels:delete', { id }),
-    applyToPackages: ({ id, filenames, applied }) =>
-      ipcRenderer.invoke('labels:apply-packages', { id, filenames, applied }),
-    applyToContents: ({ id, items, applied }) => ipcRenderer.invoke('labels:apply-contents', { id, items, applied }),
+    list: () => invoke('labels:list'),
+    create: ({ name }) => invoke('labels:create', { name }),
+    rename: ({ id, name }) => invoke('labels:rename', { id, name }),
+    recolor: ({ id, color }) => invoke('labels:recolor', { id, color }),
+    delete: ({ id }) => invoke('labels:delete', { id }),
+    applyToPackages: ({ id, filenames, applied }) => invoke('labels:apply-packages', { id, filenames, applied }),
+    applyToContents: ({ id, items, applied }) => invoke('labels:apply-contents', { id, items, applied }),
   },
   thumbnails: {
-    get: (keys) => ipcRenderer.invoke('thumbnails:get', keys),
+    get: (keys) => invoke('thumbnails:get', keys),
   },
   avatars: {
-    get: (usernames) => ipcRenderer.invoke('avatars:get', usernames),
+    get: (usernames) => invoke('avatars:get', usernames),
   },
   hub: {
-    search: (params) => ipcRenderer.invoke('hub:search', params),
-    detail: (id) => ipcRenderer.invoke('hub:detail', id),
-    filters: () => ipcRenderer.invoke('hub:filters'),
-    invalidateCaches: () => ipcRenderer.invoke('hub:invalidateCaches'),
-    checkAvailability: (refs) => ipcRenderer.invoke('hub:check-availability', refs),
-    localSnapshot: (resourceIds) => ipcRenderer.invoke('hub:localSnapshot', resourceIds),
-    scanPackages: () => ipcRenderer.invoke('hub:scan-packages'),
-    isLoggedIn: () => ipcRenderer.invoke('hub:isLoggedIn'),
-    resourceUserState: (id) => ipcRenderer.invoke('hub:resourceUserState', id),
-    toggleFavorite: (id) => ipcRenderer.invoke('hub:toggleFavorite', id),
-    toggleBookmark: (id, currentlyBookmarked) => ipcRenderer.invoke('hub:toggleBookmark', id, currentlyBookmarked),
-    toggleLike: (id, currentlyLiked) => ipcRenderer.invoke('hub:toggleLike', id, currentlyLiked),
+    search: (params) => invoke('hub:search', params),
+    detail: (id) => invoke('hub:detail', id),
+    filters: () => invoke('hub:filters'),
+    invalidateCaches: () => invoke('hub:invalidateCaches'),
+    checkAvailability: (refs) => invoke('hub:check-availability', refs),
+    localSnapshot: (resourceIds) => invoke('hub:localSnapshot', resourceIds),
+    scanPackages: () => invoke('hub:scan-packages'),
+    isLoggedIn: () => invoke('hub:isLoggedIn'),
+    resourceUserState: (id) => invoke('hub:resourceUserState', id),
+    toggleFavorite: (id) => invoke('hub:toggleFavorite', id),
+    toggleBookmark: (id, currentlyBookmarked) => invoke('hub:toggleBookmark', id, currentlyBookmarked),
+    toggleLike: (id, currentlyLiked) => invoke('hub:toggleLike', id, currentlyLiked),
   },
   downloads: {
-    list: () => ipcRenderer.invoke('downloads:list'),
-    cancel: (id) => ipcRenderer.invoke('downloads:cancel', id),
-    retry: (id) => ipcRenderer.invoke('downloads:retry', id),
-    clearCompleted: () => ipcRenderer.invoke('downloads:clear-completed'),
-    clearFailed: () => ipcRenderer.invoke('downloads:clear-failed'),
-    removeFailed: (id) => ipcRenderer.invoke('downloads:remove-failed', id),
-    isPaused: () => ipcRenderer.invoke('downloads:is-paused'),
-    pauseAll: () => ipcRenderer.invoke('downloads:pause-all'),
-    resumeAll: () => ipcRenderer.invoke('downloads:resume-all'),
-    cancelAll: () => ipcRenderer.invoke('downloads:cancel-all'),
+    list: () => invoke('downloads:list'),
+    cancel: (id) => invoke('downloads:cancel', id),
+    retry: (id) => invoke('downloads:retry', id),
+    clearCompleted: () => invoke('downloads:clear-completed'),
+    clearFailed: () => invoke('downloads:clear-failed'),
+    removeFailed: (id) => invoke('downloads:remove-failed', id),
+    isPaused: () => invoke('downloads:is-paused'),
+    pauseAll: () => invoke('downloads:pause-all'),
+    resumeAll: () => invoke('downloads:resume-all'),
+    cancelAll: () => invoke('downloads:cancel-all'),
   },
   scan: {
-    start: () => ipcRenderer.invoke('scan:start'),
-    applyAutoHide: (ruleId) => ipcRenderer.invoke('scan:apply-auto-hide', ruleId),
-    removeAutoHide: (ruleId) => ipcRenderer.invoke('scan:remove-auto-hide', ruleId),
+    start: () => invoke('scan:start'),
+    applyAutoHide: (ruleId) => invoke('scan:apply-auto-hide', ruleId),
+    removeAutoHide: (ruleId) => invoke('scan:remove-auto-hide', ruleId),
   },
   integrity: {
-    check: () => ipcRenderer.invoke('integrity:check'),
+    check: () => invoke('integrity:check'),
   },
   startup: {
-    consumeUnreadable: () => ipcRenderer.invoke('startup:consume-unreadable'),
+    consumeUnreadable: () => invoke('startup:consume-unreadable'),
   },
   wizard: {
-    detectVamDir: () => ipcRenderer.invoke('wizard:detect-vam-dir'),
-    browseVamDir: (defaultPath) => ipcRenderer.invoke('wizard:browse-vam-dir', defaultPath),
-    enrichHub: () => ipcRenderer.invoke('wizard:enrich-hub'),
+    detectVamDir: () => invoke('wizard:detect-vam-dir'),
+    browseVamDir: (defaultPath) => invoke('wizard:browse-vam-dir', defaultPath),
+    enrichHub: () => invoke('wizard:enrich-hub'),
   },
   settings: {
-    get: (key) => ipcRenderer.invoke('settings:get', key),
-    set: (key, value) => ipcRenderer.invoke('settings:set', key, value),
-    getDatabasePath: () => ipcRenderer.invoke('settings:getDatabasePath'),
+    get: (key) => invoke('settings:get', key),
+    set: (key, value) => invoke('settings:set', key, value),
+    getDatabasePath: () => invoke('settings:getDatabasePath'),
   },
   libraryDirs: {
-    list: () => ipcRenderer.invoke('library-dirs:list'),
-    browse: () => ipcRenderer.invoke('library-dirs:browse'),
-    add: (path) => ipcRenderer.invoke('library-dirs:add', path),
-    remove: (id) => ipcRenderer.invoke('library-dirs:remove', id),
+    list: () => invoke('library-dirs:list'),
+    browse: () => invoke('library-dirs:browse'),
+    add: (path) => invoke('library-dirs:add', path),
+    remove: (id) => invoke('library-dirs:remove', id),
   },
   dev: {
-    isDev: () => ipcRenderer.invoke('dev:is-dev'),
-    nukeDatabase: () => ipcRenderer.invoke('dev:nuke-database'),
-    browserAssistDirExists: () => ipcRenderer.invoke('dev:browser-assist-dir-exists'),
-    syncBrowserAssist: () => ipcRenderer.invoke('dev:sync-browser-assist'),
+    isDev: () => invoke('dev:is-dev'),
+    nukeDatabase: () => invoke('dev:nuke-database'),
+    browserAssistDirExists: () => invoke('dev:browser-assist-dir-exists'),
+    syncBrowserAssist: () => invoke('dev:sync-browser-assist'),
   },
   extract: {
-    probeScene: (p) => ipcRenderer.invoke('extract:probe-scene', p),
-    probePackage: (fn) => ipcRenderer.invoke('extract:probe-package', fn),
-    run: (p) => ipcRenderer.invoke('extract:run', p),
+    probeScene: (p) => invoke('extract:probe-scene', p),
+    probePackage: (fn) => invoke('extract:probe-package', fn),
+    run: (p) => invoke('extract:run', p),
   },
   shell: {
-    openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
-    showItemInFolder: (fullPath) => ipcRenderer.invoke('shell:showItemInFolder', fullPath),
+    openExternal: (url) => invoke('shell:openExternal', url),
+    showItemInFolder: (fullPath) => invoke('shell:showItemInFolder', fullPath),
   },
   app: {
-    getVersion: () => ipcRenderer.invoke('app:version'),
+    getVersion: () => invoke('app:version'),
   },
   updater: {
-    install: () => ipcRenderer.invoke('updater:install'),
-    check: () => ipcRenderer.invoke('updater:check'),
-    getChannel: () => ipcRenderer.invoke('updater:getChannel'),
-    setChannel: (channel) => ipcRenderer.invoke('updater:setChannel', channel),
+    install: () => invoke('updater:install'),
+    check: () => invoke('updater:check'),
+    getChannel: () => invoke('updater:getChannel'),
+    setChannel: (channel) => invoke('updater:setChannel', channel),
+  },
+  remote: {
+    isRemote: transport.remote.isRemote,
+    url: transport.remote.url ?? null,
+    status: () => invoke('remote:status'),
+    startServer: (port) => invoke('remote:start', port),
+    stopServer: () => invoke('remote:stop'),
+    connect: (url) => invoke('remote:relaunch-connect', url),
+    disconnect: () => invoke('remote:relaunch-disconnect'),
+    onStatus: (cb) => transport.remote.onStatus?.(cb) ?? (() => {}),
   },
 
-  // Event subscriptions — each returns a cleanup function
-  on: (channel, callback) => {
-    const handler = (_, ...args) => callback(...args)
-    ipcRenderer.on(channel, handler)
-    return () => ipcRenderer.removeListener(channel, handler)
-  },
+  // Event subscriptions — each returns a cleanup function. All route through the
+  // transport, which delivers events from the socket (remote mode) and/or the
+  // local ipcRenderer, with the event object already stripped.
+  on: (channel, callback) => transport.on(channel, callback),
   // Convenience: well-known event channels
-  onPackagesUpdated: (cb) => {
-    const handler = () => cb()
-    ipcRenderer.on('packages:updated', handler)
-    return () => ipcRenderer.removeListener('packages:updated', handler)
-  },
-  onContentsUpdated: (cb) => {
-    const handler = () => cb()
-    ipcRenderer.on('contents:updated', handler)
-    return () => ipcRenderer.removeListener('contents:updated', handler)
-  },
-  onLabelsUpdated: (cb) => {
-    const handler = () => cb()
-    ipcRenderer.on('labels:updated', handler)
-    return () => ipcRenderer.removeListener('labels:updated', handler)
-  },
-  onDownloadsUpdated: (cb) => {
-    const handler = () => cb()
-    ipcRenderer.on('downloads:updated', handler)
-    return () => ipcRenderer.removeListener('downloads:updated', handler)
-  },
-  onDownloadProgress: (cb) => {
-    const handler = (_, data) => cb(data)
-    ipcRenderer.on('download:progress', handler)
-    return () => ipcRenderer.removeListener('download:progress', handler)
-  },
-  onDownloadFailed: (cb) => {
-    const handler = (_, data) => cb(data)
-    ipcRenderer.on('download:failed', handler)
-    return () => ipcRenderer.removeListener('download:failed', handler)
-  },
-  onScanProgress: (cb) => {
-    const handler = (_, data) => cb(data)
-    ipcRenderer.on('scan:progress', handler)
-    return () => ipcRenderer.removeListener('scan:progress', handler)
-  },
-  onIntegrityProgress: (cb) => {
-    const handler = (_, data) => cb(data)
-    ipcRenderer.on('integrity:progress', handler)
-    return () => ipcRenderer.removeListener('integrity:progress', handler)
-  },
-  onScanUnreadable: (cb) => {
-    const handler = (_, data) => cb(data)
-    ipcRenderer.on('scan:unreadable', handler)
-    return () => ipcRenderer.removeListener('scan:unreadable', handler)
-  },
-  onHubScanProgress: (cb) => {
-    const handler = (_, data) => cb(data)
-    ipcRenderer.on('hub-scan:progress', handler)
-    return () => ipcRenderer.removeListener('hub-scan:progress', handler)
-  },
-  onHubAuthChanged: (cb) => {
-    const handler = (_, data) => cb(data)
-    ipcRenderer.on('hub:auth-changed', handler)
-    return () => ipcRenderer.removeListener('hub:auth-changed', handler)
-  },
-  onApplyAutoHideProgress: (cb) => {
-    const handler = (_, data) => cb(data)
-    ipcRenderer.on('auto-hide:progress', handler)
-    return () => ipcRenderer.removeListener('auto-hide:progress', handler)
-  },
-  onUpdateAvailable: (cb) => {
-    const handler = (_, data) => cb(data)
-    ipcRenderer.on('updater:update-available', handler)
-    return () => ipcRenderer.removeListener('updater:update-available', handler)
-  },
-  onUpdateDownloaded: (cb) => {
-    const handler = (_, data) => cb(data)
-    ipcRenderer.on('updater:update-downloaded', handler)
-    return () => ipcRenderer.removeListener('updater:update-downloaded', handler)
-  },
+  onPackagesUpdated: (cb) => transport.on('packages:updated', () => cb()),
+  onContentsUpdated: (cb) => transport.on('contents:updated', () => cb()),
+  onLabelsUpdated: (cb) => transport.on('labels:updated', () => cb()),
+  onDownloadsUpdated: (cb) => transport.on('downloads:updated', () => cb()),
+  onDownloadProgress: (cb) => transport.on('download:progress', (data) => cb(data)),
+  onDownloadFailed: (cb) => transport.on('download:failed', (data) => cb(data)),
+  onScanProgress: (cb) => transport.on('scan:progress', (data) => cb(data)),
+  onIntegrityProgress: (cb) => transport.on('integrity:progress', (data) => cb(data)),
+  onScanUnreadable: (cb) => transport.on('scan:unreadable', (data) => cb(data)),
+  onHubScanProgress: (cb) => transport.on('hub-scan:progress', (data) => cb(data)),
+  onHubAuthChanged: (cb) => transport.on('hub:auth-changed', (data) => cb(data)),
+  onApplyAutoHideProgress: (cb) => transport.on('auto-hide:progress', (data) => cb(data)),
+  onUpdateAvailable: (cb) => transport.on('updater:update-available', (data) => cb(data)),
+  onUpdateDownloaded: (cb) => transport.on('updater:update-downloaded', (data) => cb(data)),
 }
 
 // Mirror main-process logs into the renderer DevTools console. Errors sent
@@ -235,10 +206,10 @@ ipcRenderer.on('main:log', (_e, payload) => {
   fn('%c[main]', 'color:#888', ...restored)
 })
 
-// When the browser detects network recovery, notify the main process so
-// downloads waiting on retry backoff can resume immediately.
+// When the browser detects network recovery, notify the (possibly remote)
+// download manager so downloads waiting on retry backoff can resume immediately.
 window.addEventListener('online', () => {
-  ipcRenderer.invoke('downloads:network-online').catch(() => {})
+  invoke('downloads:network-online').catch(() => {})
 })
 
 if (process.contextIsolated) {
