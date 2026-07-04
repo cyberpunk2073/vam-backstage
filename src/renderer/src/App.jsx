@@ -174,8 +174,17 @@ export default function App() {
     [setView],
   )
 
+  // On a client head every `window.api` call (incl. the `initial_scan_done`
+  // lookup that resolves `showWizard`) is a remote invoke queued until the
+  // socket connects — so this loading phase can last the whole first-connect.
+  // RemoteGate must render here too, otherwise the user stares at a black
+  // screen instead of the "Connecting…" modal.
   if (showWizard === null) {
-    return <div className="h-full bg-base" />
+    return (
+      <div className="h-full bg-base">
+        <RemoteGate />
+      </div>
+    )
   }
 
   return (
