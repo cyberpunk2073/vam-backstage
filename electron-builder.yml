@@ -3,12 +3,12 @@ productName: VaM Backstage
 icon: resources/icon.png
 directories:
   buildResources: build
+# Whitelist: only our bundled output + assets. Include patterns suppress the
+# default `**/*`, so nothing else in the repo root (VaM/, docs/, test/, …) is
+# swept in. package.json and the production node_modules tree are added anyway.
 files:
-  - '!**/.vscode/*'
-  - '!src/*'
-  - '!electron.vite.config.{js,ts,mjs,cjs}'
-  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,CHANGELOG.md,README.md}'
-  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - out/**
+  - resources/**
 asarUnpack:
   - resources/**
   # @parcel/watcher loads its native .node binary at runtime via
@@ -24,6 +24,11 @@ nsis:
   createDesktopShortcut: always
 mac:
   artifactName: vam-backstage-${arch}-mac.${ext}
+  # No Apple Developer cert: opt into ad-hoc signing explicitly and apply the
+  # entitlements (incl. disable-library-validation) to both the main app and
+  # every nested component so the hardened-runtime bundle actually launches.
+  identity: '-'
+  entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSCameraUsageDescription: Application requests access to the device's camera.

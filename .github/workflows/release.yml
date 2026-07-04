@@ -61,9 +61,9 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Build installers
+        # mac signing is driven entirely by electron-builder.yml (`identity: '-'`
+        # ad-hoc). No keychain discovery needed; Windows/Linux stay unsigned.
         run: ${{ matrix.build_cmd }}
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.os }}

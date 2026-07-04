@@ -8,5 +8,13 @@
     <true/>
     <key>com.apple.security.cs.allow-dyld-environment-variables</key>
     <true/>
+    <!-- Builds are ad-hoc signed (no Apple Developer cert). With hardened runtime
+         active, macOS enforces library validation, which rejects Electron's
+         pre-signed framework because ad-hoc binaries carry no Team ID (crash:
+         "not valid for use in process: ... different Team IDs"). Disabling
+         library validation is the electron-builder-recommended fix that keeps
+         hardened runtime on. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
   </dict>
 </plist>
