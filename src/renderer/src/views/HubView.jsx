@@ -8,10 +8,8 @@ import {
   ChevronRight,
   Download,
   Heart,
-  Bookmark,
   Star,
   ThumbsUp,
-  ThumbsDown,
   ExternalLink,
   Bug,
   Copy,
@@ -46,7 +44,6 @@ import { useHubStore } from '@/stores/useHubStore'
 import { useDownloadStore } from '@/stores/useDownloadStore'
 import { useInstalledStore } from '@/stores/useInstalledStore'
 import { useHubInstallState } from '@/hooks/useHubInstallState'
-import { useHubInteractions } from '@/hooks/useHubInteractions'
 import { HubCard, AuthorAvatar, DepRow } from '@/components/PackageCard'
 import FilterPanel from '@/components/FilterPanel'
 import ResizeHandle from '@/components/ResizeHandle'
@@ -63,8 +60,6 @@ const HUB_SEARCH_DEBOUNCE_MS = 320
 const HUB_GALLERY_GRID_GAP_PX = 12
 /** IntersectionObserver rootMargin (bottom): load next page before user reaches the list end */
 const HUB_LOAD_MORE_MARGIN_BOTTOM_PX = 1600
-
-const HUB_INTERACTIONS_ENABLED = false
 
 export default function HubView({ onNavigate }) {
   const {
@@ -646,19 +641,6 @@ function HubDetail({
   // navigated to. Captured once per mount; fresh gallery opens remount HubDetail.
   const [browserResourceId] = useState(() => String(resource.resource_id))
 
-  const {
-    loggedIn: hubLoggedIn,
-    favorited,
-    favoriteCount,
-    bookmarked,
-    liked,
-    disliked,
-    loading: interactionsLoading,
-    toggleFavorite,
-    toggleBookmark,
-    toggleLike,
-  } = useHubInteractions(resourceId, { enabled: HUB_INTERACTIONS_ENABLED })
-
   const tabUrls = useMemo(
     () => ({
       overview: `https://hub.virtamate.com/resources/${resourceId}/overview-panel`,
@@ -1221,68 +1203,12 @@ function HubDetail({
                 <Star size={13} />
                 <span className="text-text-primary font-medium">{formatStarRating(pkg.rating_avg)}</span>
               </span>
-              {hubLoggedIn ? (
-                <button
-                  type="button"
-                  onClick={toggleLike}
-                  disabled={interactionsLoading}
-                  title={disliked ? 'Disliked — click to like' : liked ? 'Remove like' : 'Like'}
-                  className={`flex items-center gap-1.5 transition-colors disabled:cursor-default cursor-pointer ${
-                    disliked
-                      ? 'text-error hover:text-accent-blue'
-                      : liked
-                        ? 'text-accent-blue'
-                        : 'text-text-tertiary hover:text-accent-blue'
-                  }`}
-                >
-                  {disliked ? (
-                    <ThumbsDown size={13} className="fill-current" />
-                  ) : (
-                    <ThumbsUp size={13} className={liked ? 'fill-current' : ''} />
-                  )}
-                  <span
-                    className={`font-medium ${disliked ? 'text-error' : liked ? 'text-accent-blue' : 'text-text-primary'}`}
-                  >
-                    {formatNumber(parseInt(pkg.reaction_score || '0', 10))}
-                  </span>
-                </button>
-              ) : (
-                <span className="flex items-center gap-1.5 text-text-tertiary" title="Likes">
-                  <ThumbsUp size={13} />
-                  <span className="text-text-primary font-medium">
-                    {formatNumber(parseInt(pkg.reaction_score || '0', 10))}
-                  </span>
+              <span className="flex items-center gap-1.5 text-text-tertiary" title="Likes">
+                <ThumbsUp size={13} />
+                <span className="text-text-primary font-medium">
+                  {formatNumber(parseInt(pkg.reaction_score || '0', 10))}
                 </span>
-              )}
-              {hubLoggedIn && (
-                <>
-                  <button
-                    type="button"
-                    onClick={toggleFavorite}
-                    disabled={interactionsLoading}
-                    title={favorited ? 'Remove favorite' : 'Add to favorites'}
-                    className="flex items-center gap-1.5 text-text-tertiary transition-colors hover:text-accent-pink disabled:hover:text-text-tertiary disabled:cursor-default cursor-pointer"
-                  >
-                    <Heart size={13} className={favorited ? 'fill-current text-accent-pink' : ''} />
-                    {favoriteCount == null ? (
-                      <span className="h-3 w-4 skeleton rounded" />
-                    ) : (
-                      <span className={`font-medium ${favorited ? 'text-accent-pink' : 'text-text-primary'}`}>
-                        {formatNumber(favoriteCount)}
-                      </span>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={toggleBookmark}
-                    disabled={interactionsLoading}
-                    title={bookmarked ? 'Remove bookmark' : 'Bookmark'}
-                    className="flex items-center text-text-tertiary transition-colors hover:text-accent-blue disabled:opacity-50 cursor-pointer"
-                  >
-                    <Bookmark size={14} className={bookmarked ? 'fill-current text-accent-blue' : ''} />
-                  </button>
-                </>
-              )}
+              </span>
             </div>
 
             {/* Dates */}

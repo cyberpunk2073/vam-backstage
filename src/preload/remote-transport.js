@@ -25,11 +25,6 @@ const LOCAL_CHANNELS = new Set([
   'updater:getChannel',
   'updater:setChannel',
   'shell:openExternal',
-  'hub:isLoggedIn',
-  'hub:resourceUserState',
-  'hub:toggleFavorite',
-  'hub:toggleBookmark',
-  'hub:toggleLike',
 ])
 
 // Channels resolved locally without hitting the server. A function value is

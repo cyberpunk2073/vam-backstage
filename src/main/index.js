@@ -17,7 +17,6 @@ import { refreshLibraryDirs } from './library-dirs.js'
 import { setPendingStartupUnreadable } from './ipc/scanner.js'
 import { fetchPackagesJson, loadPackagesJsonFromCache } from './hub/packages-json.js'
 import { scanHubDetails } from './hub/scanner.js'
-import { initHubAuthWatch } from './hub/interactions.js'
 import { initAutoUpdater } from './updater.js'
 import { installRegistry } from './remote/registry.js'
 import { startServer, stopServer } from './remote/server.js'
@@ -264,7 +263,6 @@ function initBackend() {
   initNotify(() => mainWindow)
   initLogForward(() => mainWindow)
   setupHubConsent()
-  initHubAuthWatch()
 
   // Client head: no local DB / scan / watcher / downloads. Everything data-side
   // is served by the remote instance over the transport.

@@ -89,7 +89,7 @@ export async function stopServer() {
 
 // Events tied to handlers the client runs locally must not be fanned out from
 // the server.
-const CLIENT_LOCAL_EVENTS = new Set(['hub:auth-changed'])
+const CLIENT_LOCAL_EVENTS = new Set()
 
 /** Fan a `notify()` event out to every connected client. */
 export function broadcast(channel, data) {
