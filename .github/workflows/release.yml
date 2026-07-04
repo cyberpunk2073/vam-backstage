@@ -23,9 +23,23 @@ jobs:
             exit 1
           fi
 
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.15.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run test
+      - run: npm run build
+
   build:
-    needs: [validate]
-    if: always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped')
+    needs: [validate, check]
+    if: always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped') && needs.check.result == 'success'
     strategy:
       fail-fast: false
       matrix:
