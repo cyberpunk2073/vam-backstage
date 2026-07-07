@@ -167,6 +167,10 @@ describe('displayName', () => {
   it('returns full name when no dot present', () => {
     expect(displayName({ packageName: 'NoDot' })).toBe('NoDot')
   })
+
+  it('returns a friendly label for the local content sentinel', () => {
+    expect(displayName({ filename: '__local__' })).toBe('Local content')
+  })
 })
 
 describe('getAuthorInitials', () => {

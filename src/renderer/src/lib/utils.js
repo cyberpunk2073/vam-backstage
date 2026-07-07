@@ -2,6 +2,7 @@ import { clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 import { VISIBLE_CATEGORIES, isCorePackageCategory } from '@shared/content-types.js'
 import { normalizeExternalUrl } from '@shared/external-url.js'
+import { isLocalPackage, LOCAL_PACKAGE_DISPLAY_NAME } from '@shared/local-package.js'
 import { toast } from '@/components/Toast.jsx'
 
 export function cn(...inputs) {
@@ -160,6 +161,7 @@ export async function openExternalLink(url) {
 // --- Display helpers ---
 
 export function displayName(pkg) {
+  if (isLocalPackage(pkg.filename)) return LOCAL_PACKAGE_DISPLAY_NAME
   if (pkg.hubDisplayName) return pkg.hubDisplayName
   if (pkg.title) return pkg.title
   const name = pkg.packageName || pkg.filename

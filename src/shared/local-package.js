@@ -11,6 +11,9 @@
  */
 export const LOCAL_PACKAGE_FILENAME = '__local__'
 
+/** User-visible label for the synthetic local-content package (cards, menus, search). */
+export const LOCAL_PACKAGE_DISPLAY_NAME = 'Local content'
+
 /**
  * Subdirectories of the VaM install that hold loose user content owned by the
  * `__local__` sentinel. Used by the scanner walk (`runLocalScan`), the prefs

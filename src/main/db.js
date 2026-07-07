@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import { existsSync, unlinkSync } from 'fs'
 import { app } from 'electron'
 import { join } from 'path'
-import { LOCAL_PACKAGE_FILENAME } from '@shared/local-package.js'
+import { LOCAL_PACKAGE_FILENAME, LOCAL_PACKAGE_DISPLAY_NAME } from '@shared/local-package.js'
 
 const SCHEMA_VERSION = 24
 
@@ -406,8 +406,8 @@ export function ensureLocalPackage() {
     `INSERT OR IGNORE INTO packages (
       filename, creator, package_name, version, type, title, description, license,
       size_bytes, file_mtime, is_direct, storage_state, library_dir_id, dep_refs, first_seen_at
-    ) VALUES (?, '', '', '', NULL, 'Local content', NULL, NULL, 0, 0, 1, 'enabled', NULL, '[]', unixepoch())`,
-  ).run(LOCAL_PACKAGE_FILENAME)
+    ) VALUES (?, '', '', '', NULL, ?, NULL, NULL, 0, 0, 1, 'enabled', NULL, '[]', unixepoch())`,
+  ).run(LOCAL_PACKAGE_FILENAME, LOCAL_PACKAGE_DISPLAY_NAME)
 }
 
 /** Full schema as of current SCHEMA_VERSION — new installs skip incremental migrations. */
