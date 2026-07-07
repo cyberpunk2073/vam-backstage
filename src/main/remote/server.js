@@ -44,6 +44,7 @@ export function startServer(port = DEFAULT_REMOTE_PORT) {
       wss = server
       currentPort = port
       console.info(`[remote] serving on ws://0.0.0.0:${port}`)
+      emitStatus()
       resolve({ ok: true, port })
     })
 
@@ -85,6 +86,7 @@ export async function stopServer() {
   await new Promise((resolve) => wss.close(() => resolve()))
   wss = null
   currentPort = null
+  emitStatus()
 }
 
 // Events tied to handlers the client runs locally must not be fanned out from

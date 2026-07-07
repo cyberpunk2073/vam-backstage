@@ -15,6 +15,7 @@ import {
   Network,
   Plug,
   PlugZap,
+  X,
 } from 'lucide-react'
 import { formatBytes } from '@/lib/utils'
 import { parseDisableBehavior, disableBehaviorMoveTo } from '@shared/disable-behavior.js'
@@ -22,6 +23,7 @@ import { DEFAULT_REMOTE_PORT, normalizeConnectUrl } from '@shared/remote-config.
 import { toast } from '@/components/Toast'
 import { useStatusStore } from '@/stores/useStatusStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
+import { useRemoteUiStore } from '@/stores/useRemoteUiStore'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -66,9 +68,15 @@ export default function SettingsView() {
   const setDimInactive = useLibraryStore((s) => s.setDimInactive)
   const suppressDisablePackageWarning = useLibraryStore((s) => s.suppressDisablePackageWarning)
   const setSuppressDisablePackageWarning = useLibraryStore((s) => s.setSuppressDisablePackageWarning)
+  const remoteWarningDismissed = useRemoteUiStore((s) => s.warningDismissed)
+  const dismissRemoteWarning = useRemoteUiStore((s) => s.dismissWarning)
   const isRemoteClient = !!window.api.remote?.isRemote
   const [remoteStatus, setRemoteStatus] = useState(null)
   const [serverPort, setServerPort] = useState(String(DEFAULT_REMOTE_PORT))
+  const [serveOnLaunch, setServeOnLaunch] = useState(false)
+  const [remoteEnabled, setRemoteEnabled] = useState(false)
+  const [localIps, setLocalIps] = useState({ primary: null, all: [] })
+  const [autoConnectArmed, setAutoConnectArmed] = useState(false)
   const [connectUrl, setConnectUrl] = useState('')
 
   const refreshLibDirs = useCallback(async () => {
@@ -87,7 +95,13 @@ export default function SettingsView() {
     window.api.settings.get('developer_options_unlocked').then((v) => setDeveloperUnlocked(v === '1'))
     window.api.settings.get('disable_behavior').then((v) => setDisableBehavior(v || 'suffix'))
     window.api.settings.get('remote_serve_port').then((v) => setServerPort(v || String(DEFAULT_REMOTE_PORT)))
+    window.api.settings.get('remote_serve_on_launch').then((v) => setServeOnLaunch(v === '1'))
+    window.api.settings.get('remote_mode_enabled').then((v) => setRemoteEnabled(v === '1'))
     window.api.settings.get('remote_connect_url').then((v) => setConnectUrl(v || ''))
+    window.api.remote
+      .getAutoconnect()
+      .then((r) => setAutoConnectArmed(!!r?.url))
+      .catch(() => {})
     window.api.dev.isDev().then(setIsDev)
     window.api.app.getVersion().then(setAppVersion)
     window.api.updater.getChannel().then((c) => setUpdateChannel(c === 'dev' ? 'dev' : 'stable'))
@@ -301,6 +315,9 @@ export default function SettingsView() {
   }, [])
 
   const showDevSection = isDev || developerUnlocked
+  // The section can't be hidden while a client/host connection is live — the
+  // toggle then reflects that forced-on state and can't be switched off.
+  const remoteSectionForced = isRemoteClient || !!remoteStatus?.running
 
   const handleAboutVersionTap = useCallback(() => {
     if (isDev || developerUnlocked) return
@@ -336,6 +353,10 @@ export default function SettingsView() {
         if (s?.port) setServerPort(String(s.port))
       })
       .catch(() => {})
+    window.api.remote
+      .localIps()
+      .then(setLocalIps)
+      .catch(() => {})
     // Live updates when clients connect/disconnect (pushed from the server).
     return window.api.on('remote:server-status', (s) => setRemoteStatus(s))
   }, [isRemoteClient])
@@ -367,6 +388,32 @@ export default function SettingsView() {
     toast('Server stopped', 'success')
   }, [refreshRemoteStatus])
 
+  const handleToggleServeOnLaunch = useCallback(async (checked) => {
+    setServeOnLaunch(checked)
+    await window.api.settings.set('remote_serve_on_launch', checked ? '1' : '0')
+  }, [])
+
+  const handleToggleRemoteEnabled = useCallback(
+    async (checked) => {
+      setRemoteEnabled(checked)
+      await window.api.settings.set('remote_mode_enabled', checked ? '1' : '0')
+      // Hiding the section must not leave the feature silently active behind it:
+      // clear auto-start and stop any running server so there's nothing the user
+      // can't see or reach.
+      if (!checked) {
+        if (serveOnLaunch) {
+          setServeOnLaunch(false)
+          await window.api.settings.set('remote_serve_on_launch', '0')
+        }
+        if (remoteStatus?.running) {
+          await window.api.remote.stopServer()
+          await refreshRemoteStatus()
+        }
+      }
+    },
+    [serveOnLaunch, remoteStatus, refreshRemoteStatus],
+  )
+
   const handleConnect = useCallback(async () => {
     const trimmed = connectUrl.trim()
     if (!trimmed) return
@@ -378,7 +425,33 @@ export default function SettingsView() {
   }, [connectUrl])
 
   const handleDisconnect = useCallback(async () => {
-    await window.api.remote.disconnect() // relaunches back into local mode
+    await window.api.remote.disconnect() // relaunches back into local mode (also disarms auto-connect)
+  }, [])
+
+  const handleToggleAutoConnect = useCallback(
+    async (checked) => {
+      if (checked) {
+        const trimmed = connectUrl.trim()
+        const url = normalizeConnectUrl(trimmed)
+        if (!url) {
+          toast('Enter a server address first', 'error')
+          return
+        }
+        setConnectUrl(trimmed)
+        await window.api.settings.set('remote_connect_url', trimmed)
+        await window.api.remote.setAutoconnect(url)
+        setAutoConnectArmed(true)
+      } else {
+        await window.api.remote.setAutoconnect(null)
+        setAutoConnectArmed(false)
+      }
+    },
+    [connectUrl],
+  )
+
+  const handleToggleClientAutoConnect = useCallback(async (checked) => {
+    await window.api.remote.setAutoconnect(checked ? window.api.remote.url : null)
+    setAutoConnectArmed(checked)
   }, [])
 
   return (
@@ -672,8 +745,184 @@ export default function SettingsView() {
               </div>
               <Switch checked={suppressDisablePackageWarning} onCheckedChange={setSuppressDisablePackageWarning} />
             </label>
+            <label
+              className="flex items-center gap-3 cursor-pointer"
+              title={remoteSectionForced ? "Can't be hidden while a client/host connection is active." : undefined}
+            >
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-text-primary font-medium">Client-server mode</div>
+                <div className="text-[11px] text-text-tertiary mt-0.5">
+                  Show the network options for using one library from several devices. Leave off if you only run this
+                  app on a single PC.
+                </div>
+              </div>
+              <Switch
+                checked={remoteEnabled || remoteSectionForced}
+                disabled={remoteSectionForced}
+                onCheckedChange={handleToggleRemoteEnabled}
+              />
+            </label>
           </div>
         </Section>
+
+        {(remoteEnabled || remoteSectionForced) && (
+          <Section
+            title="Client-server mode"
+            description="Use one library from several devices. Run this app on the PC that stores your library (the host), then point another device on the same network at it to browse and manage that library remotely."
+          >
+            {isRemoteClient ? (
+              <div className="space-y-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs text-text-primary font-medium flex items-center gap-1.5">
+                      <PlugZap size={14} className="text-accent-blue shrink-0" />
+                      Running as remote client
+                    </div>
+                    <div className="text-[11px] text-text-tertiary mt-0.5 select-text cursor-text font-mono break-all">
+                      {window.api.remote.url}
+                    </div>
+                  </div>
+                  <Button variant="outline" size="lg" onClick={handleDisconnect} className="shrink-0 text-xs">
+                    <Plug size={14} /> Disconnect
+                  </Button>
+                </div>
+                <label className="flex items-center gap-3 cursor-pointer border-t border-border pt-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs text-text-primary font-medium">Reconnect on launch</div>
+                    <div className="text-[11px] text-text-tertiary mt-0.5">
+                      Connect to this host automatically each time the app starts. Disconnecting turns this off.
+                    </div>
+                  </div>
+                  <Switch checked={autoConnectArmed} onCheckedChange={handleToggleClientAutoConnect} />
+                </label>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {!remoteWarningDismissed && (
+                  <div className="flex items-start gap-2 p-2.5 rounded-lg text-[11px] bg-warning/10 border border-warning/20 text-warning">
+                    <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                    <span className="flex-1 min-w-0">
+                      No login, encryption, or access control — anyone who can reach the host can view and change its
+                      library. Only use this on a network you trust.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={dismissRemoteWarning}
+                      title="Dismiss"
+                      className="shrink-0 -mt-0.5 -mr-0.5 text-warning/60 hover:text-warning cursor-pointer"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                )}
+                <div className="flex items-end gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs text-text-primary font-medium flex items-center gap-1.5">
+                      <Network size={14} className="text-text-tertiary shrink-0" />
+                      Host this library
+                    </div>
+                    <div className="text-[11px] text-text-tertiary mt-0.5">
+                      {remoteStatus?.running ? (
+                        <span
+                          title={
+                            localIps.all.length > 1
+                              ? `Enter one of these on the other device:\n${localIps.all.map((a) => `${a.address}:${remoteStatus.port} (${a.name})`).join('\n')}`
+                              : undefined
+                          }
+                        >
+                          Reachable at{' '}
+                          <span className="font-mono text-text-secondary select-text cursor-text">
+                            {localIps.primary || 'this-pc'}
+                            {remoteStatus.port === DEFAULT_REMOTE_PORT ? '' : `:${remoteStatus.port}`}
+                          </span>
+                          {localIps.all.length > 1 && ` (+${localIps.all.length - 1} more)`} · {remoteStatus.clients}{' '}
+                          client{remoteStatus.clients === 1 ? '' : 's'} connected
+                        </span>
+                      ) : (
+                        'Run this on the PC that holds your library so other devices can connect to it.'
+                      )}
+                    </div>
+                  </div>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={serverPort}
+                    onChange={(e) => setServerPort(e.target.value.replace(/[^\d]/g, ''))}
+                    disabled={remoteStatus?.running}
+                    placeholder={String(DEFAULT_REMOTE_PORT)}
+                    title={`Network port other devices connect to (default ${DEFAULT_REMOTE_PORT}).`}
+                    className="w-20 h-9 bg-elevated border border-border rounded-lg px-2.5 text-xs text-text-secondary font-mono disabled:opacity-50"
+                  />
+                  {remoteStatus?.running ? (
+                    <Button variant="outline" size="lg" onClick={handleStopServer} className="shrink-0 text-xs">
+                      Stop
+                    </Button>
+                  ) : (
+                    <Button variant="outline" size="lg" onClick={handleStartServer} className="shrink-0 text-xs">
+                      Start
+                    </Button>
+                  )}
+                </div>
+
+                <label
+                  className="flex items-center gap-3 cursor-pointer"
+                  title="Runs the normal app and hosts at the same time. For a headless server with no window, launch with --serve (or set VAM_SERVE)."
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs text-text-primary font-medium">Start server on launch</div>
+                    <div className="text-[11px] text-text-tertiary mt-0.5">
+                      Automatically start hosting on the port above each time you open VaM Backstage.
+                    </div>
+                  </div>
+                  <Switch checked={serveOnLaunch} onCheckedChange={handleToggleServeOnLaunch} />
+                </label>
+
+                <div className="flex items-end gap-2 border-t border-border pt-4">
+                  <div
+                    className="flex-1 min-w-0"
+                    title="To launch straight into client mode, start with --connect=<host> (or set VAM_CONNECT)."
+                  >
+                    <div className="text-xs text-text-primary font-medium flex items-center gap-1.5">
+                      <PlugZap size={14} className="text-text-tertiary shrink-0" />
+                      Connect to a host
+                    </div>
+                    <div className="text-[11px] text-text-tertiary mt-0.5">
+                      From another device, enter the host&apos;s address (e.g. its IP, like 192.168.1.5) to use its
+                      library here. The app relaunches as a client.
+                    </div>
+                  </div>
+                  <input
+                    type="text"
+                    value={connectUrl}
+                    onChange={(e) => setConnectUrl(e.target.value)}
+                    placeholder="192.168.1.5"
+                    className="w-44 h-9 bg-elevated border border-border rounded-lg px-2.5 text-xs text-text-secondary font-mono"
+                  />
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    onClick={handleConnect}
+                    disabled={!connectUrl.trim()}
+                    className="shrink-0 text-xs"
+                  >
+                    <Plug size={14} /> Connect
+                  </Button>
+                </div>
+
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs text-text-primary font-medium">Connect on launch</div>
+                    <div className="text-[11px] text-text-tertiary mt-0.5">
+                      Start as a client pointed at the address above every time the app opens. Disconnecting from the
+                      connection screen turns this off.
+                    </div>
+                  </div>
+                  <Switch checked={autoConnectArmed} onCheckedChange={handleToggleAutoConnect} />
+                </label>
+              </div>
+            )}
+          </Section>
+        )}
 
         {showDevSection && (
           <Section
@@ -828,93 +1077,6 @@ export default function SettingsView() {
                 </AlertDialog>
               </div>
             </div>
-          </Section>
-        )}
-
-        {(showDevSection || isRemoteClient) && (
-          <Section
-            title="Remote (Network)"
-            description="Experimental. Serve this instance over the LAN, or run as a client head pointed at another instance. Single user, trusted network, no authentication."
-          >
-            {isRemoteClient ? (
-              <div className="flex items-start gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs text-text-primary font-medium flex items-center gap-1.5">
-                    <PlugZap size={14} className="text-accent-blue shrink-0" />
-                    Running as remote client
-                  </div>
-                  <div className="text-[11px] text-text-tertiary mt-0.5 select-text cursor-text font-mono break-all">
-                    {window.api.remote.url}
-                  </div>
-                </div>
-                <Button variant="outline" size="lg" onClick={handleDisconnect} className="shrink-0 text-xs">
-                  <Plug size={14} /> Disconnect
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="flex items-end gap-2">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs text-text-primary font-medium flex items-center gap-1.5">
-                      <Network size={14} className="text-text-tertiary shrink-0" />
-                      Host server
-                    </div>
-                    <div className="text-[11px] text-text-tertiary mt-0.5">
-                      {remoteStatus?.running
-                        ? `Serving on port ${remoteStatus.port} · ${remoteStatus.clients} client${remoteStatus.clients === 1 ? '' : 's'} connected`
-                        : 'Expose this instance so another machine can connect to it.'}
-                    </div>
-                  </div>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={serverPort}
-                    onChange={(e) => setServerPort(e.target.value.replace(/[^\d]/g, ''))}
-                    disabled={remoteStatus?.running}
-                    placeholder={String(DEFAULT_REMOTE_PORT)}
-                    className="w-20 h-9 bg-elevated border border-border rounded-lg px-2.5 text-xs text-text-secondary font-mono disabled:opacity-50"
-                  />
-                  {remoteStatus?.running ? (
-                    <Button variant="outline" size="lg" onClick={handleStopServer} className="shrink-0 text-xs">
-                      Stop
-                    </Button>
-                  ) : (
-                    <Button variant="outline" size="lg" onClick={handleStartServer} className="shrink-0 text-xs">
-                      Start
-                    </Button>
-                  )}
-                </div>
-
-                <div className="flex items-end gap-2 border-t border-border pt-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs text-text-primary font-medium flex items-center gap-1.5">
-                      <PlugZap size={14} className="text-text-tertiary shrink-0" />
-                      Connect to a server
-                    </div>
-                    <div className="text-[11px] text-text-tertiary mt-0.5">
-                      Relaunches this app as a client head pointed at the given address. Configure this machine as a
-                      normal local install first.
-                    </div>
-                  </div>
-                  <input
-                    type="text"
-                    value={connectUrl}
-                    onChange={(e) => setConnectUrl(e.target.value)}
-                    placeholder="192.168.1.5"
-                    className="w-44 h-9 bg-elevated border border-border rounded-lg px-2.5 text-xs text-text-secondary font-mono"
-                  />
-                  <Button
-                    variant="outline"
-                    size="lg"
-                    onClick={handleConnect}
-                    disabled={!connectUrl.trim()}
-                    className="shrink-0 text-xs"
-                  >
-                    <Plug size={14} /> Connect
-                  </Button>
-                </div>
-              </div>
-            )}
           </Section>
         )}
 

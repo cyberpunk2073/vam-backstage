@@ -1,8 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
-import { Package, GitFork, Layers, HardDrive, Download, RefreshCw, Loader2, Compass } from 'lucide-react'
+import {
+  Package,
+  GitFork,
+  Layers,
+  HardDrive,
+  Download,
+  RefreshCw,
+  Loader2,
+  Compass,
+  Network,
+  PlugZap,
+  AlertTriangle,
+} from 'lucide-react'
 import { useStatusStore } from '@/stores/useStatusStore'
 import { useDownloadStore } from '@/stores/useDownloadStore'
 import { CONTENT_TYPES, formatBytes, middleTruncate } from '@/lib/utils'
+import { DEFAULT_REMOTE_PORT } from '@shared/remote-config.js'
 import { toast } from './Toast'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
@@ -32,6 +45,89 @@ function VersionLabelButton({ busy, onClick, children, className = '' }) {
       <span className="min-w-0 truncate select-text">{children}</span>
     </button>
   )
+}
+
+/**
+ * Client-server mode indicator. Renders nothing in a plain local instance; shows
+ * the live connection state when this is a client head, or the hosting state
+ * (port + connected client count) when this instance is serving over the LAN.
+ */
+function RemoteStatusIndicator() {
+  const isRemoteClient = !!window.api.remote?.isRemote
+  const [clientStatus, setClientStatus] = useState(null)
+  const [serverStatus, setServerStatus] = useState(null)
+  const [localIp, setLocalIp] = useState(null)
+
+  useEffect(() => {
+    if (isRemoteClient) return window.api.remote.onStatus(setClientStatus)
+    window.api.remote
+      .status()
+      .then(setServerStatus)
+      .catch(() => {})
+    return window.api.on('remote:server-status', setServerStatus)
+  }, [isRemoteClient])
+
+  // Resolve the LAN address only while actually hosting — a plain local instance
+  // never needs it. Feeds the tooltip; the label deliberately stays address-free.
+  useEffect(() => {
+    if (isRemoteClient || !serverStatus?.running) return
+    window.api.remote
+      .localIps()
+      .then((r) => setLocalIp(r?.primary || null))
+      .catch(() => {})
+  }, [isRemoteClient, serverStatus?.running])
+
+  if (isRemoteClient) {
+    const url = window.api.remote.url
+    // Strip the scheme, and the port too when it's the default — a bare IP is
+    // what the user typed and all they need to recognize the host.
+    const shortUrl = (url?.replace(/^wss?:\/\//i, '') || url)?.replace(new RegExp(`:${DEFAULT_REMOTE_PORT}$`), '')
+    const error = !!clientStatus?.error
+    const connected = clientStatus?.connected && !error
+    if (error) {
+      return (
+        <StatTooltip lines={`Disconnected\n${url}\n${clientStatus.error}`}>
+          <span className="flex items-center gap-1 shrink-0 text-error">
+            <AlertTriangle size={11} />
+            Disconnected
+          </span>
+        </StatTooltip>
+      )
+    }
+    if (connected) {
+      return (
+        <StatTooltip lines={`Connected to server\n${url}`}>
+          <span className="flex items-center gap-1 shrink-0 text-accent-blue max-w-[220px]">
+            <PlugZap size={11} className="shrink-0" />
+            <span className="truncate">{shortUrl}</span>
+          </span>
+        </StatTooltip>
+      )
+    }
+    return (
+      <StatTooltip lines={`${clientStatus ? 'Reconnecting to server' : 'Connecting to server'}\n${url}`}>
+        <span className="flex items-center gap-1 shrink-0 text-warning">
+          <Loader2 size={11} className="animate-spin" />
+          {clientStatus ? 'Reconnecting…' : 'Connecting…'}
+        </span>
+      </StatTooltip>
+    )
+  }
+
+  if (serverStatus?.running) {
+    const clients = serverStatus.clients || 0
+    const addr = localIp ? `${localIp}:${serverStatus.port}` : `port ${serverStatus.port}`
+    return (
+      <StatTooltip lines={`Hosting at ${addr}\n${clients} client${clients === 1 ? '' : 's'} connected`}>
+        <span className="flex items-center gap-1 shrink-0 text-accent-blue">
+          <Network size={11} />
+          Hosting ({clients})
+        </span>
+      </StatTooltip>
+    )
+  }
+
+  return null
 }
 
 export default function StatusBar() {
@@ -241,6 +337,7 @@ export default function StatusBar() {
           </span>
         </div>
       )}
+      <RemoteStatusIndicator />
       <StatTooltip
         lines={isDev ? 'VaM Backstage\nAutomatic updates run in the release build.' : 'Click to check for updates.'}
       >

@@ -21,6 +21,8 @@ import { initAutoUpdater } from './updater.js'
 import { installRegistry } from './remote/registry.js'
 import { startServer, stopServer } from './remote/server.js'
 import { getServePort, getConnectUrl } from './remote/cli.js'
+import { initAutostart, readAutostartUrl } from './remote/autostart.js'
+import { DEFAULT_REMOTE_PORT } from '@shared/remote-config.js'
 import {
   attachMainWindowStatePersistence,
   loadMainWindowState,
@@ -74,11 +76,21 @@ let mainWindow = null
 
 const HUB_ORIGIN = new URL('https://hub.virtamate.com').origin
 
+// Bind the client-autostart file to the BASE userData dir now, before the
+// `-client` swap below — both instances must resolve the same path.
+initAutostart(app.getPath('userData'))
+
 // Remote-mode switches, resolved once at startup from argv. `CONNECT_URL` set =
 // this instance is a pure client head (backend suppressed, UI points at a
 // remote server). `SERVE_PORT` set = expose the backend over the LAN.
-const CONNECT_URL = getConnectUrl()
+//
+// Connect resolution order: explicit CLI/env `--connect` wins; otherwise, when
+// we're not being told to host (`--serve`), fall back to the persisted
+// client-autostart URL. This is what makes a saved client head come up on a
+// plain launch — no relaunch needed, since the connect URL is forwarded to the
+// preload via additionalArguments in createWindow.
 const SERVE_PORT = getServePort()
+const CONNECT_URL = getConnectUrl() || (SERVE_PORT == null ? readAutostartUrl() : null)
 const IS_CLIENT = !!CONNECT_URL
 // Serving without a local window: headless host.
 const HEADLESS_SERVE = SERVE_PORT != null && !IS_CLIENT
@@ -390,9 +402,22 @@ app.whenReady().then(async () => {
 
   startupScan()
 
-  if (SERVE_PORT != null && !IS_CLIENT) {
-    const res = await startServer(SERVE_PORT)
-    if (!res.ok) console.error(`[remote] server did not start: ${res.error}`)
+  // Auto-start the LAN server when requested via CLI/env (headless, handled
+  // above via HEADLESS_SERVE) or via the persisted "start on launch" preference
+  // (windowed). CLI/env wins on port; the setting falls back to the last-used
+  // port. Client heads never host. The setting lives in the local DB, so it is
+  // never read in client mode (no DB there) — another reason client auto-connect
+  // isn't a persisted flag.
+  if (!IS_CLIENT) {
+    let servePort = SERVE_PORT
+    const autoStart = getSetting('remote_mode_enabled') === '1' && getSetting('remote_serve_on_launch') === '1'
+    if (servePort == null && autoStart) {
+      servePort = parseInt(getSetting('remote_serve_port'), 10) || DEFAULT_REMOTE_PORT
+    }
+    if (servePort != null) {
+      const res = await startServer(servePort)
+      if (!res.ok) console.error(`[remote] server did not start: ${res.error}`)
+    }
   }
 
   app.on('activate', () => {

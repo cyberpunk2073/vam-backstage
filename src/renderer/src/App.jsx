@@ -273,19 +273,37 @@ export default function App() {
  * Full-window blocking gate for client (remote) mode. While the socket is not
  * connected it covers the UI and swallows pointer/keyboard input, so the user
  * can't fire mutations that would queue against a dead connection (and would be
- * discarded by the reload-on-reconnect anyway). A fatal version mismatch can't
- * self-heal, so it offers a one-click switch back to local mode.
+ * discarded by the reload-on-reconnect anyway).
+ *
+ * Client mode has no local DB, so there's no persisted "auto-connect" flag to
+ * disable — but a client whose server is offline would otherwise be stuck on
+ * this screen forever. So we always provide an escape: a fatal version mismatch
+ * offers it immediately, and a plain connect/reconnect that hasn't succeeded
+ * within a few seconds reveals it too. Either way one click relaunches the app
+ * back into a normal local instance.
  */
+const SLOW_CONNECT_MS = 6000
+
 function RemoteGate() {
   const [status, setStatus] = useState(null)
+  const [slowConnect, setSlowConnect] = useState(false)
   useEffect(() => {
     if (!window.api.remote?.isRemote) return
     return window.api.remote.onStatus(setStatus)
   }, [])
-  if (!window.api.remote?.isRemote) return null
   const connected = status?.connected && !status?.error
+  useEffect(() => {
+    if (!window.api.remote?.isRemote || connected) {
+      setSlowConnect(false)
+      return
+    }
+    const t = setTimeout(() => setSlowConnect(true), SLOW_CONNECT_MS)
+    return () => clearTimeout(t)
+  }, [connected])
+  if (!window.api.remote?.isRemote) return null
   if (connected) return null
   const isError = !!status?.error
+  const showEscape = isError || slowConnect
   return (
     <AlertDialog open>
       <AlertDialogContent onEscapeKeyDown={(e) => e.preventDefault()}>
@@ -297,8 +315,13 @@ function RemoteGate() {
           <AlertDialogDescription className="select-text cursor-text break-all">
             {isError ? status.error : status?.url || window.api.remote.url}
           </AlertDialogDescription>
+          {!isError && slowConnect && (
+            <p className="col-start-2 text-[12px] text-text-tertiary">
+              This is taking longer than usual — the server may be offline. You can start locally instead.
+            </p>
+          )}
         </AlertDialogHeader>
-        {isError && (
+        {showEscape && (
           <AlertDialogFooter>
             <AlertDialogAction variant="outline" onClick={() => window.api.remote.disconnect()}>
               Switch to local mode
