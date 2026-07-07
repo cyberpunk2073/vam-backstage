@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from 'react'
-import { Compass, Download, Eye, EyeOff, Library as LibraryIcon, Star, Tag } from 'lucide-react'
+import { Compass, Download, Eye, EyeOff, Library as LibraryIcon, RefreshCw, Star, Tag } from 'lucide-react'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -79,11 +79,17 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
   const labels = useLabelsStore((s) => s.labels)
   const [pkg, setPkg] = useState(null)
   const [probe, setProbe] = useState(null)
+  // Source scene+atom that produced this extracted preset (reverse of extract),
+  // resolved lazily on open so the item itself can offer a "Re-extract".
+  const [reSource, setReSource] = useState(null)
 
   const showBulk = bulkSelectedIds.length > 0 && bulkSelectedIds.includes(item.id)
   const isScene = SCENE_SOURCE_TYPES.has(item.type)
   const isLook = LOOK_SOURCE_TYPES.has(item.type)
   const isExtractable = isScene || isLook
+  // A local extracted preset owned by an (installed) package: `Re-extract` lives
+  // here — the reverse direction — instead of cluttering every scene/package card.
+  const isExtracted = !!item.extractedFrom
 
   const bulkSceneItems = useMemo(() => {
     if (!showBulk) return []
@@ -163,12 +169,35 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
             setProbe({ atoms: [], error: true })
           }
         }
+        if (isExtracted && !showBulk) {
+          try {
+            setReSource(
+              await window.api.extract.resolveSource({
+                packageFilename: item.extractedFrom,
+                presetInternalPath: item.internalPath,
+              }),
+            )
+          } catch {
+            setReSource(null)
+          }
+        }
       } else {
         setPkg(null)
         setProbe(null)
+        setReSource(null)
       }
     },
-    [item.id, item.packageFilename, item.internalPath, selectedItem, selectedPackage, isExtractable, showBulk],
+    [
+      item.id,
+      item.packageFilename,
+      item.internalPath,
+      item.extractedFrom,
+      selectedItem,
+      selectedPackage,
+      isExtractable,
+      isExtracted,
+      showBulk,
+    ],
   )
 
   const hubLabel = pkg
@@ -256,6 +285,34 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
       }
     }
     return entries
+  }
+
+  // Overwrite escape hatch on the extracted preset itself: regenerate it from
+  // the source scene the store attributed it to (picks up newer package content
+  // + `.latest` refs). `reSource` carries { packageFilename, internalPath,
+  // atomId, kind, sourceType } resolved on open.
+  const renderReExtractEntry = () => {
+    if (!isExtracted || !reSource) return null
+    const isLookSource = LOOK_SOURCE_TYPES.has(reSource.sourceType)
+    const verb = isLookSource ? 'Re-convert to' : 'Re-extract'
+    const actionLabel = `${verb} ${KIND_NOUN[reSource.kind]}`
+    return (
+      <ContextMenuItem
+        key="reextract"
+        onSelect={() =>
+          void runExtractAndToast(actionLabel, {
+            packageFilename: reSource.packageFilename,
+            internalPath: reSource.internalPath,
+            atomIds: [reSource.atomId],
+            kind: reSource.kind,
+            mode: 'overwrite',
+          })
+        }
+      >
+        <RefreshCw size={12} className="shrink-0 text-text-tertiary" />
+        {actionLabel} preset
+      </ContextMenuItem>
+    )
   }
 
   return (
@@ -387,7 +444,7 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
             </ContextMenuSub>
             <ContextMenuItem
               onSelect={() => {
-                onNavigate?.('library', { selectPackage: item.packageFilename })
+                onNavigate?.('library', { selectPackage: item.extractedFrom || item.packageFilename })
               }}
             >
               <LibraryIcon size={12} className="shrink-0 text-accent-blue" />
@@ -411,6 +468,7 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
               </ContextMenuItem>
             ) : null}
             {renderExtractEntries()}
+            {renderReExtractEntry()}
           </>
         )}
       </ContextMenuContent>

@@ -137,12 +137,17 @@ export function classifyContents(fileList) {
   const raw = []
 
   for (const file of fileList) {
-    const ext = extname(file.path).toLowerCase()
+    // A loose file named `X.vap.disabled` is a disabled variant (the `.var`
+    // disable convention applied to loose content). Match rules/thumbnail against
+    // the live name, but keep the real on-disk path in `internalPath` so the
+    // disabled state is derivable and the file resolves for lifecycle ops.
+    const livePath = stripDisabledSuffix(file.path)
+    const ext = extname(livePath).toLowerCase()
     for (const rule of RULES) {
-      if (rule.match(file.path) && rule.extensions.has(ext)) {
-        const name = basename(file.path, extname(file.path))
+      if (rule.match(livePath) && rule.extensions.has(ext)) {
+        const name = basename(livePath, extname(livePath))
         const displayName = name.replace(/_/g, ' ').replace(/^Preset /i, '')
-        const thumbnailPath = findThumbnail(file.path, pathSet)
+        const thumbnailPath = findThumbnail(livePath, pathSet)
         raw.push({ internalPath: file.path, displayName, type: rule.type, thumbnailPath, _ext: ext })
         break
       }
@@ -150,6 +155,11 @@ export function classifyContents(fileList) {
   }
 
   return deduplicateItems(raw)
+}
+
+/** Drop a trailing `.disabled` marker so a disabled loose file matches its live rule. */
+function stripDisabledSuffix(p) {
+  return p.endsWith('.disabled') ? p.slice(0, -'.disabled'.length) : p
 }
 
 /**

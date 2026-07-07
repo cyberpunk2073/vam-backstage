@@ -305,6 +305,29 @@ describe('classifyContents', () => {
     const items = classifyContents([f('Custom/Clothing/A/Shirt.vab'), f('Custom/Atom/Person/Clothing/Pants.vap')])
     expect(items).toHaveLength(2)
   })
+
+  // --- Disabled loose content (`X.vap.disabled`) ---
+
+  it('classifies a disabled loose preset, keeping the real .disabled path', () => {
+    const items = classifyContents([f('Custom/Atom/Person/Appearance/extracted/Preset_A - Look.vap.disabled')])
+    expect(items).toHaveLength(1)
+    expect(items[0].type).toBe('look')
+    expect(items[0].internalPath).toBe('Custom/Atom/Person/Appearance/extracted/Preset_A - Look.vap.disabled')
+    expect(items[0].displayName).toBe('A - Look')
+  })
+
+  it('pairs a disabled preset with its live-stem .jpg thumbnail', () => {
+    const items = classifyContents([
+      f('Custom/Atom/Person/Appearance/extracted/Look.vap.disabled'),
+      f('Custom/Atom/Person/Appearance/extracted/Look.jpg'),
+    ])
+    expect(items).toHaveLength(1)
+    expect(items[0].thumbnailPath).toBe('Custom/Atom/Person/Appearance/extracted/Look.jpg')
+  })
+
+  it('does not classify a disabled file whose live name matches no rule', () => {
+    expect(classifyContents([f('Custom/Unknown/foo.xyz.disabled')])).toEqual([])
+  })
 })
 
 describe('derivePackageType', () => {

@@ -760,14 +760,16 @@ export function ContentTableRow({
 }) {
   const typeColor = TYPE_COLORS[item.category] || '#6366f1'
   const isHidden = item.hidden
-  const isDisabledPkg = !isPackageActive(item.package?.storageState ?? 'enabled')
+  const isExtracted = !!item.extractedFrom
+  const ownerPkg = item.sourcePackage ?? item.package
+  const isDisabledPkg = item.localDisabled || !isPackageActive(ownerPkg?.storageState ?? 'enabled')
   const dimInactive = useLibraryStore((s) => s.dimInactive)
   const dimHiddenChrome = (isHidden && !suppressHiddenDimming) || (isDisabledPkg && dimInactive)
   const thumbKey = item.thumbnailPath ? `ct:${item.packageFilename}\0${item.thumbnailPath}` : null
   const thumbUrl = useThumbnail(thumbKey)
   const isLocalContent = isLocalPackage(item.packageFilename)
   const pkgLabel = contentPackageLabel(item)
-  const creator = item.package?.creator
+  const creator = ownerPkg?.creator
 
   return (
     <div
@@ -845,13 +847,22 @@ export function ContentTableRow({
               {item.hasExtractedAppearancePreset && <Check size={11} strokeWidth={3} className="shrink-0" />}
             </span>
           )}
-          {isLocalContent && (
+          {isExtracted ? (
             <span
-              className={`${THUMB_OVERLAY_CHIP} bg-white/12 text-white/80 shrink-0`}
-              title="Loose file in your VaM folder, not from a .var package"
+              className={`${THUMB_OVERLAY_CHIP} bg-cyan-400/15 text-cyan-300 shrink-0`}
+              title="Preset extracted from this package's scene; follows the package lifecycle"
             >
-              local
+              extracted
             </span>
+          ) : (
+            isLocalContent && (
+              <span
+                className={`${THUMB_OVERLAY_CHIP} bg-white/12 text-white/80 shrink-0`}
+                title="Loose file in your VaM folder, not from a .var package"
+              >
+                local
+              </span>
+            )
           )}
         </div>
       </div>
@@ -908,7 +919,9 @@ export function ContentCard({
 }) {
   const typeColor = TYPE_COLORS[item.category] || '#6366f1'
   const isHidden = item.hidden
-  const isDisabledPkg = !isPackageActive(item.package?.storageState ?? 'enabled')
+  const isExtracted = !!item.extractedFrom
+  const ownerPkg = item.sourcePackage ?? item.package
+  const isDisabledPkg = item.localDisabled || !isPackageActive(ownerPkg?.storageState ?? 'enabled')
   const dimInactive = useLibraryStore((s) => s.dimInactive)
   const dimHiddenChrome = (isHidden && !suppressHiddenDimming) || (isDisabledPkg && dimInactive)
   const pkgLabel = contentPackageLabel(item)
@@ -971,13 +984,22 @@ export function ContentCard({
                 {item.hasExtractedAppearancePreset && <Check size={11} strokeWidth={3} className="shrink-0" />}
               </span>
             )}
-            {isLocalContent && (
+            {isExtracted ? (
               <span
-                className={`${THUMB_OVERLAY_CHIP} bg-white/15 text-white/80 backdrop-blur-sm`}
-                title="Loose file in your VaM folder, not from a .var package"
+                className={`${THUMB_OVERLAY_CHIP} bg-cyan-400/20 text-cyan-200 backdrop-blur-sm`}
+                title="Preset extracted from this package's scene; follows the package lifecycle"
               >
-                local
+                extracted
               </span>
+            ) : (
+              isLocalContent && (
+                <span
+                  className={`${THUMB_OVERLAY_CHIP} bg-white/15 text-white/80 backdrop-blur-sm`}
+                  title="Loose file in your VaM folder, not from a .var package"
+                >
+                  local
+                </span>
+              )
             )}
           </div>
         )}

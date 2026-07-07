@@ -62,7 +62,13 @@ import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
 import { StorageStateChip } from '@/components/StorageStateChip'
 
 const SORT_OPTIONS = ['Recently installed', 'Name A-Z', 'Package', 'Type']
-const isPackageDisabled = (c) => !isPackageActive(c.package?.storageState ?? 'enabled')
+/** Extracted presets follow their owning (source) package's state; a `.vap.disabled`
+ *  loose file is disabled on its own. Plain rows use their own package. */
+const isPackageDisabled = (c) => {
+  if (c.localDisabled) return true
+  const owner = c.sourcePackage ?? c.package
+  return !isPackageActive(owner?.storageState ?? 'enabled')
+}
 
 function matchesContentPackageStatus(c, packageStatusFilter) {
   if (packageStatusFilter === 'all') return true
@@ -254,12 +260,15 @@ export default function ContentView({ onNavigate, navContext }) {
       const terms = searchAndTerms(search)
       result = result.filter((c) => {
         const pkgLabel = contentPackageLabel(c)
-        return haystacksMatchAllTerms([c.displayName, c.package?.packageName, pkgLabel], terms)
+        // Extracted presets are loose files owned by a package — match them by
+        // their owner's name/label too, so a package-name query surfaces them.
+        const owner = c.sourcePackage ?? c.package
+        return haystacksMatchAllTerms([c.displayName, owner?.packageName, pkgLabel], terms)
       })
     }
     if (authorSearch) {
       const aq = authorSearch.toLowerCase()
-      result = result.filter((c) => (c.package?.creator || '').toLowerCase().includes(aq))
+      result = result.filter((c) => ((c.sourcePackage ?? c.package)?.creator || '').toLowerCase().includes(aq))
     }
     return result
   }, [contents, search, authorSearch])
@@ -1243,7 +1252,10 @@ function ContentDetailPanel({
   const itemThumbUrl = useThumbnail(itemThumbKey)
   const pkgThumbUrl = useThumbnail(pkg ? `pkg:${pkg.filename}` : null)
 
-  const isLocal = isLocalPackage(item.packageFilename)
+  // Extracted presets are loose files but belong to a package — show the package
+  // section ("Extracted from …") rather than the plain local-file section.
+  const isExtracted = !!item.extractedFrom
+  const isLocal = isLocalPackage(item.packageFilename) && !isExtracted
   const allContents = useContentStore((s) => s.contents)
   const allLabels = useLabelsStore((s) => s.labels)
   const onApplyLabelToItem = useCallback(
@@ -1370,7 +1382,7 @@ function ContentDetailPanel({
 
         <div className="p-4 border-b border-border">
           <div className="text-[9px] uppercase tracking-wider text-text-tertiary font-medium mb-2">
-            {isLocal ? 'Local File' : 'From Package'}
+            {isLocal ? 'Local File' : isExtracted ? 'Extracted from Package' : 'From Package'}
           </div>
           {isLocal ? (
             <>

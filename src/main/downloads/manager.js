@@ -30,6 +30,7 @@ import { notify } from '../notify.js'
 import { scanAndUpsert } from '../scanner/ingest.js'
 import { computeAutoHidePathsForNewPackage } from '../scanner/index.js'
 import { inheritFromOlderVersion } from '../scanner/inherit.js'
+import { refreshExtractedPresetsForUpdates } from '../scenes/extract-refresh.js'
 import { computeCascadeEnable, parseDepRef, isFlexibleRef } from '../scanner/graph.js'
 import {
   buildFromDb,
@@ -1078,6 +1079,13 @@ async function postDownloadIntegrate(filename, fullPath, isDirect, hubResourceId
     notify('packages:updated')
     notify('contents:updated')
     resolvePackageThumbnails()
+
+    // Auto-refresh extracted presets when this install is a strictly-newer
+    // version of a package the user had extracted from (after the rebuild so
+    // readScene resolves the new .var).
+    if (inherited?.donor && vamDir) {
+      await refreshExtractedPresetsForUpdates([{ filename, donorFilename: inherited.donor, contentItems }], vamDir)
+    }
   } catch (err) {
     console.warn(`Post-download integration failed for ${filename}:`, err.message)
   }

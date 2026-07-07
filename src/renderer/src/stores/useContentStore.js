@@ -21,7 +21,11 @@ function linkContents(rows, pkgMap) {
   for (let i = 0; i < rows.length; i++) {
     const c = rows[i]
     const pkg = pkgMap.get(c.packageFilename)
-    out[i] = c.package === pkg ? c : { ...c, package: pkg }
+    // Extracted presets are loose (`__local__`) files owned by a real package.
+    // `sourcePackage` is that owner, used for lifecycle status + styling; plain
+    // rows leave it undefined.
+    const sourcePkg = c.extractedFrom ? pkgMap.get(c.extractedFrom) : undefined
+    out[i] = c.package === pkg && c.sourcePackage === sourcePkg ? c : { ...c, package: pkg, sourcePackage: sourcePkg }
   }
   return out
 }
@@ -148,7 +152,11 @@ export const useContentStore = create(
         if (contents.length) patch.contents = linkContents(contents, pkgMap)
         if (selectedItem) {
           const nextPkg = pkgMap.get(selectedItem.packageFilename)
-          patch.selectedItem = selectedItem.package === nextPkg ? selectedItem : { ...selectedItem, package: nextPkg }
+          const nextSourcePkg = selectedItem.extractedFrom ? pkgMap.get(selectedItem.extractedFrom) : undefined
+          patch.selectedItem =
+            selectedItem.package === nextPkg && selectedItem.sourcePackage === nextSourcePkg
+              ? selectedItem
+              : { ...selectedItem, package: nextPkg, sourcePackage: nextSourcePkg }
         }
         set(patch)
       },
@@ -160,10 +168,16 @@ export const useContentStore = create(
         }
         const pkgMap = useLibraryStore.getState().packageByFilename
         const nextPkg = pkgMap.get(item.packageFilename)
-        const linkedItem = item.package === nextPkg ? item : { ...item, package: nextPkg }
+        const sourcePkg = item.extractedFrom ? pkgMap.get(item.extractedFrom) : undefined
+        const linkedItem =
+          item.package === nextPkg && item.sourcePackage === sourcePkg
+            ? item
+            : { ...item, package: nextPkg, sourcePackage: sourcePkg }
         set({ selectedItem: linkedItem, bulkSelectedIds: [], bulkAnchorId: null })
         try {
-          const pkg = await window.api.packages.detail(item.packageFilename)
+          // Extracted presets show their owning package (Extracted from …); plain
+          // items show their own package.
+          const pkg = await window.api.packages.detail(item.extractedFrom || item.packageFilename)
           set({ selectedPackage: pkg })
         } catch (err) {
           toast(`Failed to load package detail: ${err.message}`)
@@ -230,9 +244,17 @@ export const useContentStore = create(
           const fresh = items.find((c) => c.id === selectedItem.id)
           if (fresh) {
             const pkgMap = useLibraryStore.getState().packageByFilename
-            set({ selectedItem: { ...fresh, package: pkgMap.get(fresh.packageFilename) } })
+            set({
+              selectedItem: {
+                ...fresh,
+                package: pkgMap.get(fresh.packageFilename),
+                sourcePackage: fresh.extractedFrom ? pkgMap.get(fresh.extractedFrom) : undefined,
+              },
+            })
           }
-          const pkg = await window.api.packages.detail(selectedItem.packageFilename)
+          const pkg = await window.api.packages.detail(
+            (fresh ?? selectedItem).extractedFrom || selectedItem.packageFilename,
+          )
           set({ selectedPackage: pkg })
         } catch {}
       },
@@ -248,9 +270,11 @@ export const useContentStore = create(
       refreshSelectedPackageDetail: async () => {
         const sel = get().selectedItem
         if (!sel?.packageFilename) return
+        const ownerFilename = sel.extractedFrom || sel.packageFilename
         try {
-          const pkg = await window.api.packages.detail(sel.packageFilename)
-          if (get().selectedItem?.packageFilename === sel.packageFilename) {
+          const pkg = await window.api.packages.detail(ownerFilename)
+          const cur = get().selectedItem
+          if (cur && (cur.extractedFrom || cur.packageFilename) === ownerFilename) {
             set({ selectedPackage: pkg })
           }
         } catch {}

@@ -36,8 +36,15 @@ export function parseSceneJson(s) {
 
 /**
  * Read a scene JSON + sibling thumbnail. When the scene lives in a .var, the
- * `SELF:/` prefix is rewritten to `<packageStem>:/` before parsing (single pass,
- * no re-serialize) for correct cross-ref resolution.
+ * `SELF:/` prefix is rewritten to `<creator.package>.latest:/` before parsing
+ * (single pass, no re-serialize).
+ *
+ * `.latest` (rather than the exact `<creator.package.version>` stem) is
+ * deliberate: `readScene` is only consumed by preset extraction, so the presets
+ * it produces reference the package *group* and resolve to whatever version the
+ * user has installed. They never brick when the source version is later removed,
+ * and they track updates for free. VaM resolves `.latest` to the highest
+ * installed version, which matches the ownership attribution in `store.js`.
  *
  * @returns {Promise<{ sceneJson: object, thumbBuffer: Buffer|null }>}
  */
@@ -54,11 +61,16 @@ export async function readScene({ vamDir, packageFilename, internalPath }) {
     const extracted = await extractFiles(varPath, [internalPath, thumbPath])
     const sceneBuf = extracted.get(internalPath)
     if (!sceneBuf) throw new Error(`Scene JSON not found in ${packageFilename}: ${internalPath}`)
-    const selfName = packageFilename.replace(/\.var$/i, '')
+    // Rewrite SELF to the package group's `.latest` ref (drop the trailing
+    // numeric version segment from the stem). Fall back to the exact stem if the
+    // filename has no numeric version (shouldn't happen for a real .var).
+    const selfStem = packageFilename.replace(/\.var$/i, '')
+    const groupStem = selfStem.replace(/\.\d+$/, '')
+    const selfRef = groupStem !== selfStem ? groupStem + '.latest' : selfStem
     const raw = sceneBuf
       .toString('utf-8')
       .split('SELF:/')
-      .join(selfName + ':/')
+      .join(selfRef + ':/')
     const sceneJson = parseSceneJson(raw)
     const thumbBuffer = extracted.get(thumbPath) || null
     return { sceneJson, thumbBuffer }

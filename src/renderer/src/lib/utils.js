@@ -175,7 +175,9 @@ export function displayName(pkg) {
  * refetch). Use everywhere a content row needs to show its package label.
  */
 export function contentPackageLabel(c) {
-  return c.package ? displayName(c.package) : displayName({ filename: c.packageFilename })
+  // Extracted presets are loose files owned by a package — label them by owner.
+  const pkg = c.sourcePackage ?? c.package
+  return pkg ? displayName(pkg) : displayName({ filename: c.packageFilename })
 }
 
 // --- String helpers ---

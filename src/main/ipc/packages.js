@@ -13,6 +13,7 @@ import {
   applyHubDetailToPackage,
 } from '../db.js'
 import { scanAndUpsert } from '../scanner/ingest.js'
+import { runLocalScan } from '../scanner/local.js'
 import { readVar } from '../scanner/var-reader.js'
 import { verifyPackageFull } from '../scanner/integrity.js'
 import {
@@ -34,7 +35,15 @@ import {
   patchTypeOverride,
   getFilteredContents,
   isNotDownloadable,
+  getExtractedByPackage,
 } from '../store.js'
+import { isPackageActive } from '@shared/storage-state-predicates.js'
+import {
+  extractedRenamePlan,
+  extractedDeletePaths,
+  extractedShouldDisable,
+  extractedHasSurvivor,
+} from '../scenes/extracted-lifecycle.js'
 import { hidePackageContent, unhidePackageContent, readAllPrefs } from '../vam-prefs.js'
 import { computeRemovableDeps, computeCascadeDisable, computeCascadeEnable } from '../scanner/graph.js'
 import { applyStorageState, parseDisableBehavior, nextStorageStateForIntent } from '../storage-state.js'
@@ -126,6 +135,98 @@ async function unlinkPackagePhysicalAndAliases(pkg, filename) {
  * coalesces bursts, so the throttle is a soft floor on refetch frequency rather than a
  * hard cap. A final notify always fires on completion.
  */
+/**
+ * Rename a loose file (relative to vamDir) and record both paths as app-owned so
+ * the watcher doesn't treat the rename as an external change. `optional` swallows
+ * ENOENT (e.g. a missing sidecar). Returns whether the rename succeeded.
+ */
+async function renameLoose(vamDir, fromRel, toRel, { optional = false } = {}) {
+  const from = join(vamDir, fromRel)
+  const to = join(vamDir, toRel)
+  recordOwnedPath(from)
+  recordOwnedPath(to)
+  try {
+    await rename(from, to)
+    return true
+  } catch (err) {
+    if (!optional) console.warn(`Extracted preset rename failed (${fromRel} -> ${toRel}):`, err.message)
+    return false
+  }
+}
+
+/** Apply the disable/enable rename plan for one loose preset (see extractedRenamePlan). */
+async function setExtractedPresetDisabled(vamDir, internalPath, disable) {
+  const [main, ...sidecars] = extractedRenamePlan(internalPath, disable)
+  if (!(await renameLoose(vamDir, main.from, main.to))) return false
+  for (const s of sidecars) await renameLoose(vamDir, s.from, s.to, { optional: true })
+  return true
+}
+
+/** Iterate deduped extracted items claimed by any of `filenames`. */
+function* extractedItemsFor(filenames) {
+  const byPkg = getExtractedByPackage()
+  const seen = new Set()
+  for (const fn of filenames) {
+    for (const item of byPkg.get(fn) || []) {
+      if (seen.has(item.id)) continue
+      seen.add(item.id)
+      yield item
+    }
+  }
+}
+
+/**
+ * After package storage-state changes land, bring each extracted preset claimed
+ * by an affected package into line with its owners: disable (`X.vap.disabled`)
+ * when no candidate version remains active, re-enable when one does. Returns
+ * whether any file was renamed (caller reconciles the store).
+ */
+async function cascadeExtractedPresetState(affectedFilenames) {
+  if (affectedFilenames.size === 0) return false
+  const vamDir = getSetting('vam_dir')
+  if (!vamDir) return false
+  const pkgIndex = getPackageIndex()
+  const isActive = (cf) => {
+    const p = pkgIndex.get(cf)
+    return !!p && isPackageActive(p.storage_state)
+  }
+  let changed = false
+  for (const item of extractedItemsFor(affectedFilenames)) {
+    const shouldDisable = extractedShouldDisable(item.extractedCandidates, isActive)
+    const currentlyDisabled = item.internal_path.endsWith('.disabled')
+    if (shouldDisable === currentlyDisabled) continue
+    if (await setExtractedPresetDisabled(vamDir, item.internal_path, shouldDisable)) changed = true
+  }
+  return changed
+}
+
+/**
+ * When packages are removed, delete the extracted presets they exclusively
+ * owned — but only when no other installed version still claims them (`.latest`
+ * refs keep the preset working otherwise). Returns whether any file was removed.
+ * Call before `deletePackage` so `packageIndex` still resolves the candidates.
+ */
+async function cleanupExtractedPresetsForRemoval(removedFilenames) {
+  const vamDir = getSetting('vam_dir')
+  if (!vamDir) return false
+  const removedSet = removedFilenames instanceof Set ? removedFilenames : new Set(removedFilenames)
+  const pkgIndex = getPackageIndex()
+  const survives = (cf) => !removedSet.has(cf) && pkgIndex.has(cf)
+  let removedAny = false
+  for (const item of extractedItemsFor(removedSet)) {
+    if (extractedHasSurvivor(item.extractedCandidates, survives)) continue
+    for (const rel of extractedDeletePaths(item.internal_path)) {
+      const p = join(vamDir, rel)
+      recordOwnedPath(p)
+      try {
+        await unlink(p)
+      } catch {}
+    }
+    removedAny = true
+  }
+  return removedAny
+}
+
 async function applyStorageStateChange(filenames, intentFn) {
   if (!getSetting('vam_dir')) throw new Error('VaM directory not configured')
   const parsedBehavior = parseDisableBehavior(getSetting('disable_behavior'))
@@ -140,6 +241,7 @@ async function applyStorageStateChange(filenames, intentFn) {
   // case still works — the window is cheap when there's only one rename in it.
   return withBulkWindow(async () => {
     const out = []
+    const affectedForExtracted = new Set()
     let lastProgressEmit = 0
     const emitProgressIfDue = () => {
       if (filenames.length <= 1) return
@@ -175,6 +277,7 @@ async function applyStorageStateChange(filenames, intentFn) {
 
       try {
         await applyStorageState(filename, target)
+        affectedForExtracted.add(filename)
       } catch (err) {
         out.push({ ok: false, filename, error: err.message })
         continue
@@ -190,6 +293,7 @@ async function applyStorageStateChange(filenames, intentFn) {
             if (!depTarget) return
             try {
               await applyStorageState(depFilename, depTarget)
+              affectedForExtracted.add(depFilename)
             } catch (err) {
               console.warn(`Cascade ${intent} failed for ${depFilename}:`, err.message)
             }
@@ -204,6 +308,20 @@ async function applyStorageStateChange(filenames, intentFn) {
         cascadeCount: cascadeSet.size,
       })
       emitProgressIfDue()
+    }
+
+    // Cascade the state change onto extracted presets owned by affected
+    // packages (rename .vap <-> .vap.disabled). Renames are app-owned, so the
+    // watcher stays quiet; we reconcile the loose-content rows explicitly.
+    const extractedChanged = await cascadeExtractedPresetState(affectedForExtracted)
+    if (extractedChanged) {
+      try {
+        await runLocalScan(getSetting('vam_dir'))
+        buildFromDb({ skipGraph: true })
+        notify('contents:updated')
+      } catch (err) {
+        console.warn('Extracted-preset lifecycle reconcile failed:', err.message)
+      }
     }
 
     notify('packages:updated')
@@ -336,10 +454,16 @@ export function registerPackageHandlers() {
           return !depPkg || !isNotDownloadable(depPkg)
         })
         const toDelete = [filename, ...filteredRemovable]
+        // Remove extracted presets no surviving version still owns (before the
+        // rows/index are torn down so candidates still resolve).
+        const removedExtracted = await cleanupExtractedPresetsForRemoval(toDelete)
         for (const fn of toDelete) {
           await unlinkPackagePhysicalAndAliases(getPackageIndex().get(fn), fn)
           deletePackage(fn)
         }
+        // Reconcile the loose-content rows for any extracted presets we deleted
+        // (their `__local__` rows would otherwise linger until the next scan).
+        if (removedExtracted) await runLocalScan(vamDir)
         buildFromDb()
         results.push({ ok: true, deleted: toDelete.length })
       }

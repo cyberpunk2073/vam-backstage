@@ -4,6 +4,7 @@ import { isVarFilename, canonicalVarFilename } from './var-reader.js'
 import { detectLeaves } from './graph.js'
 import { scanAndUpsert } from './ingest.js'
 import { inheritFromOlderVersion } from './inherit.js'
+import { refreshExtractedPresetsForUpdates } from '../scenes/extract-refresh.js'
 import {
   getPackageCacheInfo,
   getAllDbFilenamesWithDir,
@@ -135,15 +136,19 @@ export async function runScan(vamDir, onProgress = () => {}) {
   // intentionally curated per stem. The `first_seen_at` gate inside
   // `inheritFromOlderVersion` keeps mass-additions (multiple new versions in
   // one scan) from picking one of the other still-empty new peers as a donor.
+  const extractRefreshAdditions = []
   if (!isInitialScan && newAdditions.size > 0) {
     for (const [filename, info] of newAdditions) {
       try {
-        await inheritFromOlderVersion({
+        const inherited = await inheritFromOlderVersion({
           filename,
           packageName: info.packageName,
           contentItems: info.contentItems,
           vamDir,
         })
+        if (inherited?.donor) {
+          extractRefreshAdditions.push({ filename, donorFilename: inherited.donor, contentItems: info.contentItems })
+        }
       } catch (err) {
         console.warn(`Inherit from older version failed for ${filename}:`, err.message)
       }
@@ -205,6 +210,10 @@ export async function runScan(vamDir, onProgress = () => {}) {
 
   onProgress({ phase: 'finalizing', step: 1, total: 1, message: 'Building indexes…' })
   buildFromDb()
+
+  // Auto-refresh extracted presets from newly-installed higher versions (runs
+  // after the store rebuild so readScene can resolve the new .var files).
+  await refreshExtractedPresetsForUpdates(extractRefreshAdditions, vamDir)
 
   if (isInitialScan) {
     setSetting('initial_scan_done', '1')

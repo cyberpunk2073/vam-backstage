@@ -62,6 +62,11 @@ export function ContentRow({ item, onSelect, suppressHiddenStyle = false }) {
             {item.tag.label}
           </span>
         )}
+        {item.extracted && (
+          <span className="ml-1.5 text-[9px] font-medium text-cyan-300" title="Extracted preset">
+            extracted
+          </span>
+        )}
       </span>
       <button
         type="button"

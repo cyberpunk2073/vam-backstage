@@ -21,7 +21,12 @@ import {
 import { categoryOf, isGalleryVisible, isVisible, LOOK_ITEM_EXACT_TYPES, tagOf } from '@shared/content-types.js'
 import { getPackagesIndex, loadPackagesJsonFromCache } from './hub/packages-json.js'
 import { isLocalPackage } from '@shared/local-package.js'
-import { packageHasExtractedAppearance, contentHasExtractedAppearance } from './scenes/extract.js'
+import {
+  packageHasExtractedAppearance,
+  contentHasExtractedAppearance,
+  APPEARANCE_SOURCE_TYPES,
+} from './scenes/extract.js'
+import { extractedPresetBasename } from './scenes/extract-targets.js'
 
 /**
  * Iterate packages excluding the synthetic `__local__` sentinel that owns loose
@@ -80,6 +85,8 @@ let removableSizeMap = new Map() // filename -> removableSize (orphaned dep byte
 let morphCountByPackage = new Map() // filename -> number of morphBinary items in that package
 let lookItemCountByPackage = new Map() // filename -> count of look / legacyLook / skinPreset items
 let extractedAppearanceBasenames = new Set() // basenames of local 'look' rows under Custom/Atom/Person/Appearance/extracted/
+let extractedOwnership = new Map() // extracted-preset basename -> Set<packageFilename> (every installed version that could own it)
+let extractedByPackage = new Map() // packageFilename -> local extracted content item[] (indexed under every candidate version)
 let aggregateMorphCountMap = new Map() // filename -> morph count (own + all resolved deps)
 let transitiveDepsCountMap = new Map() // filename -> total unique deps (resolved + missing) in subtree
 let transitiveMissingMap = new Map() // filename -> count of unique missing dep refs in subtree
@@ -163,6 +170,74 @@ export function isNotDownloadable(pkg) {
   return false
 }
 
+// --- Extracted-preset ownership (derived, no persisted state) ---
+
+/** Drop a trailing `.disabled` marker so a disabled loose file matches its live name. */
+function stripDisabledSuffix(p) {
+  return p.endsWith('.disabled') ? p.slice(0, -'.disabled'.length) : p
+}
+
+/** Basename (last path segment) with any `.disabled` marker stripped. */
+function extractedBasenameOf(internalPath) {
+  const live = stripDisabledSuffix(internalPath)
+  return live.slice(live.lastIndexOf('/') + 1)
+}
+
+/**
+ * Is this local row an extracted preset? Appearance presets live as `look` rows
+ * under `Appearance/extracted/`, outfits as `clothingPreset` under
+ * `Clothing/extracted/`. The `.disabled` marker (if any) is stripped first.
+ */
+function isExtractedLocalRow(type, internalPath) {
+  const p = stripDisabledSuffix(internalPath)
+  if (type === 'look') return p.startsWith('Custom/Atom/Person/Appearance/extracted/')
+  if (type === 'clothingPreset') return p.startsWith('Custom/Atom/Person/Clothing/extracted/')
+  return false
+}
+
+/**
+ * Invert the `computeTargets` naming for one scene-source row and register its
+ * expected preset basename(s) against the owning package. Every atom of every
+ * scene contributes a basename; a basename can be claimed by several installed
+ * versions (they all produce the same unversioned filename).
+ */
+function addExtractedOwnership(map, { creator, internalPath, personAtomIdsJson, packageFilename }) {
+  if (!personAtomIdsJson) return
+  let atomIds
+  try {
+    atomIds = JSON.parse(personAtomIdsJson)
+  } catch {
+    return
+  }
+  if (!Array.isArray(atomIds) || atomIds.length === 0) return
+  const singleAtom = atomIds.length === 1
+  for (const atomId of atomIds) {
+    const base = extractedPresetBasename({ creator: creator || '!local', internalPath, atomId, singleAtom })
+    let set = map.get(base)
+    if (!set) {
+      set = new Set()
+      map.set(base, set)
+    }
+    set.add(packageFilename)
+  }
+}
+
+/** Highest installed version among candidate filenames (matches cross-version dedup). */
+function highestVersionCandidate(filenames) {
+  let best = null
+  let bestVer = -1
+  for (const fn of filenames) {
+    const pkg = packageIndex.get(fn)
+    if (!pkg) continue
+    const v = parseInt(pkg.version, 10) || 0
+    if (best === null || v > bestVer) {
+      best = fn
+      bestVer = v
+    }
+  }
+  return best
+}
+
 // --- Build from DB ---
 
 export function buildFromDb({ skipGraph = false } = {}) {
@@ -186,6 +261,10 @@ export function buildFromDb({ skipGraph = false } = {}) {
       ...row,
       hidden: prefs.hidden,
       favorite: prefs.favorite,
+      // A loose file on disk named `X.vap.disabled` (the `.var`-style disable
+      // convention applied to extracted presets) carries its state in the name.
+      localDisabled: isLocalPackage(row.package_filename) && row.internal_path.endsWith('.disabled'),
+      extractedFrom: null,
       category: categoryOf(row.type),
       tag: tagOf(row.type),
       creator: pkg?.creator ?? '',
@@ -205,6 +284,9 @@ export function buildFromDb({ skipGraph = false } = {}) {
   morphCountByPackage = new Map()
   lookItemCountByPackage = new Map()
   extractedAppearanceBasenames = new Set()
+  extractedOwnership = new Map()
+  extractedByPackage = new Map()
+  const localExtractedRows = []
   for (const item of allContentItems) {
     if (item.type === 'morphBinary') {
       morphCountByPackage.set(item.package_filename, (morphCountByPackage.get(item.package_filename) || 0) + 1)
@@ -212,12 +294,42 @@ export function buildFromDb({ skipGraph = false } = {}) {
     if (LOOK_ITEM_EXACT_TYPES.has(item.type)) {
       lookItemCountByPackage.set(item.package_filename, (lookItemCountByPackage.get(item.package_filename) || 0) + 1)
     }
-    if (
-      item.type === 'look' &&
-      isLocalPackage(item.package_filename) &&
-      item.internal_path.startsWith('Custom/Atom/Person/Appearance/extracted/')
-    ) {
-      extractedAppearanceBasenames.add(item.internal_path.slice(item.internal_path.lastIndexOf('/') + 1))
+    // Register the expected preset basename(s) of every packaged scene-source
+    // row against its package (any installed version claims the same names).
+    if (!isLocalPackage(item.package_filename) && APPEARANCE_SOURCE_TYPES.has(item.type)) {
+      addExtractedOwnership(extractedOwnership, {
+        creator: item.creator,
+        internalPath: item.internal_path,
+        personAtomIdsJson: item.person_atom_ids,
+        packageFilename: item.package_filename,
+      })
+    }
+    // Local extracted presets: collect now, resolve ownership after the map is
+    // fully built. Track appearance basenames for the "no preset" checkmark.
+    if (isLocalPackage(item.package_filename) && isExtractedLocalRow(item.type, item.internal_path)) {
+      localExtractedRows.push(item)
+      if (item.type === 'look') extractedAppearanceBasenames.add(extractedBasenameOf(item.internal_path))
+    }
+  }
+
+  // Attribute each local extracted preset to the highest installed candidate
+  // version, and index it under every candidate so any version's detail panel
+  // can list it. Kept separate from `contentByPackage` so it never perturbs
+  // package content counts or cross-version dedup.
+  for (const item of localExtractedRows) {
+    const candidates = extractedOwnership.get(extractedBasenameOf(item.internal_path))
+    if (!candidates || candidates.size === 0) continue
+    const owner = highestVersionCandidate(candidates)
+    if (!owner) continue
+    item.extractedFrom = owner
+    item.extractedCandidates = [...candidates]
+    for (const fn of candidates) {
+      let arr = extractedByPackage.get(fn)
+      if (!arr) {
+        arr = []
+        extractedByPackage.set(fn, arr)
+      }
+      arr.push(item)
     }
   }
 
@@ -513,6 +625,10 @@ export function getContentByPackage() {
 export function getExtractedAppearanceBasenames() {
   return extractedAppearanceBasenames
 }
+/** packageFilename -> local extracted content item[] claimed by (any version of) that package. */
+export function getExtractedByPackage() {
+  return extractedByPackage
+}
 export function getPrefsMap() {
   return prefsMap
 }
@@ -657,21 +773,32 @@ export function getPackageDetail(filename) {
       : { filename: fn }
   })
 
-  const contents = (contentByPackage.get(filename) || [])
-    .filter((c) => isVisible(c.type))
-    .map((c) => ({
-      id: c.id,
-      packageFilename: c.package_filename,
-      internalPath: c.internal_path,
-      displayName: c.display_name,
-      type: c.type,
-      category: categoryOf(c.type),
-      tag: tagOf(c.type),
-      hidden: c.hidden,
-      favorite: c.favorite,
-      thumbnailPath: c.thumbnail_path,
-      ownLabelIds: labelsByContent.get(c.package_filename + '\0' + c.internal_path) || [],
-    }))
+  const mapContentRow = (c, extra = {}) => ({
+    id: c.id,
+    packageFilename: c.package_filename,
+    internalPath: c.internal_path,
+    displayName: c.display_name,
+    type: c.type,
+    category: categoryOf(c.type),
+    tag: tagOf(c.type),
+    hidden: c.hidden,
+    favorite: c.favorite,
+    thumbnailPath: c.thumbnail_path,
+    ownLabelIds: labelsByContent.get(c.package_filename + '\0' + c.internal_path) || [],
+    ...extra,
+  })
+
+  const contents = (contentByPackage.get(filename) || []).filter((c) => isVisible(c.type)).map((c) => mapContentRow(c))
+
+  // Append presets extracted from this package's scenes. They're loose
+  // (`__local__`) files, so they never live in `contentByPackage`; surfacing
+  // them here gives the detail panel + "More from this package" the linkage.
+  // Their real store-row `id`s make ContentView's related-item lookup work.
+  for (const c of extractedByPackage.get(filename) || []) {
+    contents.push(
+      mapContentRow(c, { extracted: true, extractedFrom: c.extractedFrom ?? null, localDisabled: !!c.localDisabled }),
+    )
+  }
 
   const { removableFilenames, removableSize } = computeRemovableDeps(filename, packageIndex, forwardDeps, reverseDeps)
 
@@ -739,6 +866,8 @@ export function getFilteredContents(filters = {}) {
     hidden: c.hidden,
     favorite: c.favorite,
     thumbnailPath: c.thumbnail_path,
+    extractedFrom: c.extractedFrom ?? null,
+    localDisabled: !!c.localDisabled,
     hasExtractedAppearancePreset:
       c.type === 'legacyLook' &&
       contentHasExtractedAppearance({

@@ -7,6 +7,7 @@ import { isVarFilename, canonicalVarFilename } from './scanner/var-reader.js'
 import { scanAndUpsert } from './scanner/ingest.js'
 import { computeAutoHidePathsForNewPackage } from './scanner/index.js'
 import { inheritFromOlderVersion } from './scanner/inherit.js'
+import { refreshExtractedPresetsForUpdates } from './scenes/extract-refresh.js'
 import { runLocalScan } from './scanner/local.js'
 import { deletePackage, getPackageCacheInfo, setStorageState } from './db.js'
 import { buildFromDb, getPrefsMap, setPrefsMap, getPackageIndex, getForwardDeps } from './store.js'
@@ -546,6 +547,7 @@ async function processBatch() {
       // and `hidePackageContent` both wrap themselves in `withBulkWindow`
       // (nested with the outer one — depth-counted) and `recordOwnedPath`
       // their writes, so the resulting sidecar events get filtered out.
+      const extractRefreshAdditions = []
       if (autoHideCandidates.length > 0 && vamDirPath) {
         let sidecarsTouched = false
         for (const { filename, pkgType, contentItems, packageName, isNewInstall } of autoHideCandidates) {
@@ -559,6 +561,9 @@ async function processBatch() {
               })
               if (inherited) {
                 sidecarsTouched = true
+                if (inherited.donor) {
+                  extractRefreshAdditions.push({ filename, donorFilename: inherited.donor, contentItems })
+                }
                 continue
               }
             } catch (err) {
@@ -575,6 +580,9 @@ async function processBatch() {
           }
         }
         if (sidecarsTouched) setPrefsMap(await readAllPrefs(vamDirPath))
+        // buildFromDb already ran above (packagesChanged), so the new .var is
+        // resolvable; regenerate extracted presets for strictly-newer versions.
+        await refreshExtractedPresetsForUpdates(extractRefreshAdditions, vamDirPath)
       }
 
       // Cascade-enable disabled/offloaded deps needed by newly enabled packages

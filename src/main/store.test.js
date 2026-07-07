@@ -570,6 +570,85 @@ describe('buildFromDb — counts / filters', () => {
   })
 })
 
+describe('buildFromDb — extracted-preset ownership', () => {
+  const EXTRACTED_DIR = 'Custom/Atom/Person/Appearance/extracted'
+
+  function seedSceneWithPerson(db, filename, { version = '1', scene = 'Demo' } = {}) {
+    seedPackage(db, { filename, creator: 'Author', package_name: 'Author.Pkg', version, is_direct: 1 })
+    seedContent(db, {
+      package_filename: filename,
+      internal_path: `Saves/scene/${scene}.json`,
+      display_name: scene,
+      type: 'scene',
+      person_atom_ids: '["Person"]',
+    })
+  }
+
+  function seedLocalLook(db, internalPath) {
+    seedContent(db, {
+      package_filename: '__local__',
+      internal_path: internalPath,
+      display_name: 'Demo',
+      type: 'look',
+    })
+  }
+
+  it('attributes a local extracted look to the source package that produced it', async () => {
+    const db = getDb()
+    seedSceneWithPerson(db, 'Author.Pkg.1.var')
+    seedLocalLook(db, `${EXTRACTED_DIR}/Preset_Author - Demo.vap`)
+    buildFromDb()
+
+    const local = getFilteredContents().find((c) => c.internalPath === `${EXTRACTED_DIR}/Preset_Author - Demo.vap`)
+    expect(local?.extractedFrom).toBe('Author.Pkg.1.var')
+    expect(local?.localDisabled).toBe(false)
+
+    const detail = getPackageDetail('Author.Pkg.1.var')
+    const ex = detail.contents.find((c) => c.extracted)
+    expect(ex?.internalPath).toBe(`${EXTRACTED_DIR}/Preset_Author - Demo.vap`)
+    expect(ex?.extractedFrom).toBe('Author.Pkg.1.var')
+  })
+
+  it('attributes to the highest installed version and lists it under every version', async () => {
+    const db = getDb()
+    seedSceneWithPerson(db, 'Author.Pkg.1.var', { version: '1' })
+    seedSceneWithPerson(db, 'Author.Pkg.2.var', { version: '2' })
+    seedLocalLook(db, `${EXTRACTED_DIR}/Preset_Author - Demo.vap`)
+    buildFromDb()
+
+    const local = getFilteredContents().find((c) => c.internalPath === `${EXTRACTED_DIR}/Preset_Author - Demo.vap`)
+    expect(local?.extractedFrom).toBe('Author.Pkg.2.var')
+
+    // Indexed under both candidate versions' detail panels.
+    expect(getPackageDetail('Author.Pkg.1.var').contents.some((c) => c.extracted)).toBe(true)
+    expect(getPackageDetail('Author.Pkg.2.var').contents.some((c) => c.extracted)).toBe(true)
+  })
+
+  it('leaves an orphan extracted look unattributed (no matching scene)', async () => {
+    const db = getDb()
+    seedSceneWithPerson(db, 'Author.Pkg.1.var', { scene: 'Other' })
+    seedLocalLook(db, `${EXTRACTED_DIR}/Preset_Author - NoMatch.vap`)
+    buildFromDb()
+
+    const local = getFilteredContents().find((c) => c.internalPath === `${EXTRACTED_DIR}/Preset_Author - NoMatch.vap`)
+    expect(local?.extractedFrom).toBeNull()
+    expect(getPackageDetail('Author.Pkg.1.var').contents.some((c) => c.extracted)).toBe(false)
+  })
+
+  it('derives localDisabled and still attributes a `.vap.disabled` preset', async () => {
+    const db = getDb()
+    seedSceneWithPerson(db, 'Author.Pkg.1.var')
+    seedLocalLook(db, `${EXTRACTED_DIR}/Preset_Author - Demo.vap.disabled`)
+    buildFromDb()
+
+    const local = getFilteredContents().find(
+      (c) => c.internalPath === `${EXTRACTED_DIR}/Preset_Author - Demo.vap.disabled`,
+    )
+    expect(local?.localDisabled).toBe(true)
+    expect(local?.extractedFrom).toBe('Author.Pkg.1.var')
+  })
+})
+
 describe('buildFromDb — package summary enrichment', () => {
   it('noLookPresetTag when type is Looks but no look items', async () => {
     const db = getDb()
