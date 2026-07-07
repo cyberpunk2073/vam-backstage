@@ -122,13 +122,22 @@ function packageMatchesSelectedLabels(p, selectedLabelIds) {
   return true
 }
 
-/** True when an update entry is on the hub but not directly downloadable (paid/external),
- *  i.e. enrichment finished and reported no `downloadUrl`. While enrichment is still in
- *  flight, callers should treat this as `false` (still checking) by passing `detailsLoading`. */
-function isUpdateUnavailable(updateInfo, detailsLoading) {
+/** True when an update entry has been definitively marked as not directly
+ *  downloadable — paid/external, or hub couldn't be reached and enrichment
+ *  marked it null as the fallback state. `downloadUrl === undefined` means
+ *  enrichment hasn't completed yet and is treated as "checking" by the UI
+ *  (separate state, not unavailable). */
+function isUpdateUnavailable(updateInfo) {
   if (!updateInfo || updateInfo.localNewerFilename) return false
-  if (detailsLoading) return false
   return updateInfo.downloadUrl === null
+}
+
+/** True when the update entry hasn't been enriched yet — only happens on the
+ *  first check before findPackages returns, since later checks merge prior
+ *  enrichment forward. */
+function isUpdateChecking(updateInfo) {
+  if (!updateInfo || updateInfo.localNewerFilename) return false
+  return updateInfo.downloadUrl === undefined
 }
 
 function filterPackagesByStatus(items, statusFilter, updateCheckResults) {
@@ -180,7 +189,6 @@ export default function LibraryView({ onNavigate, navContext }) {
     updateCheckResults,
     updateCheckLoading,
     updateCheckLastChecked,
-    updateDetailsLoading,
     backendCounts,
     packagesLoaded,
     setSearch,
@@ -986,7 +994,6 @@ export default function LibraryView({ onNavigate, navContext }) {
               updateCheckResults={updateCheckResults}
               updateCheckLoading={updateCheckLoading}
               updateCheckLastChecked={updateCheckLastChecked}
-              updateDetailsLoading={updateDetailsLoading}
               missingDeps={missingDeps}
               missingDepsLoading={missingDepsLoading}
               hubDetailsLoading={hubDetailsLoading}
@@ -1068,8 +1075,7 @@ export default function LibraryView({ onNavigate, navContext }) {
             onEmptyAreaPointerDown={bulkActive ? () => clearBulkSelection() : undefined}
             renderItem={(pkg) => {
               const updateInfo = updateCheckResults?.[pkg.filename]
-              const dimUpdateUnavailable =
-                statusFilter === 'updates' && isUpdateUnavailable(updateInfo, updateDetailsLoading)
+              const dimUpdateUnavailable = statusFilter === 'updates' && isUpdateUnavailable(updateInfo)
               return (
                 <LibraryPackageContextMenu key={pkg.filename} pkg={pkg} updateInfo={updateInfo} onNavigate={onNavigate}>
                   <LibraryCard
@@ -1121,8 +1127,7 @@ export default function LibraryView({ onNavigate, navContext }) {
                 scrollResetKey={scrollResetKey}
                 renderRow={(pkg) => {
                   const updateInfo = updateCheckResults?.[pkg.filename]
-                  const dimUpdateUnavailable =
-                    statusFilter === 'updates' && isUpdateUnavailable(updateInfo, updateDetailsLoading)
+                  const dimUpdateUnavailable = statusFilter === 'updates' && isUpdateUnavailable(updateInfo)
                   return (
                     <LibraryPackageContextMenu
                       key={pkg.filename}
@@ -1213,7 +1218,6 @@ function ToolbarActions({
   updateCheckResults,
   updateCheckLoading,
   updateCheckLastChecked,
-  updateDetailsLoading,
   missingDeps,
   missingDepsLoading,
   hubDetailsLoading,
@@ -1255,7 +1259,7 @@ function ToolbarActions({
     let pausedFlag = false
     for (const update of Object.values(updateCheckResults)) {
       if (update.localNewerFilename) continue
-      if (isUpdateUnavailable(update, updateDetailsLoading)) continue
+      if (isUpdateUnavailable(update)) continue
       if (!update.hubResourceId && !update.packageName) continue
       try {
         const r = await store.install(update.hubResourceId, null, true, update.packageName, !!update.isDepUpdate)
@@ -1354,9 +1358,7 @@ function ToolbarActions({
   if (statusFilter === 'updates') {
     const downloadableCount =
       updateCheckResults != null
-        ? Object.values(updateCheckResults).filter(
-            (u) => !u.localNewerFilename && !isUpdateUnavailable(u, updateDetailsLoading),
-          ).length
+        ? Object.values(updateCheckResults).filter((u) => !u.localNewerFilename && !isUpdateUnavailable(u)).length
         : null
     return (
       <>
@@ -1664,7 +1666,7 @@ function LibraryPackageTypeBadgeMenu({ pkg, kindLabel, kindIsCore }) {
 function UpdateActions({ pkg, updateInfo }) {
   const [promoting, setPromoting] = useState(false)
   const updateState = useLibraryUpdateState(pkg, updateInfo)
-  const updateDetailsLoading = useLibraryStore((s) => s.updateDetailsLoading)
+  const checking = isUpdateChecking(updateInfo)
 
   const handlePromote = async () => {
     if (promoting) return
@@ -1715,7 +1717,7 @@ function UpdateActions({ pkg, updateInfo }) {
     )
   }
 
-  if (isUpdateUnavailable(updateInfo, updateDetailsLoading)) {
+  if (isUpdateUnavailable(updateInfo)) {
     return (
       <div className="rounded border border-border bg-elevated/40 px-2.5 py-2">
         <div className="flex items-center gap-1.5 text-[11px] font-medium text-text-secondary">
@@ -1735,10 +1737,14 @@ function UpdateActions({ pkg, updateInfo }) {
       variant="gradient"
       size="sm"
       onClick={() => useDownloadStore.getState().installUpdate(pkg, updateInfo)}
-      disabled={busy || (!updateInfo.hubResourceId && !updateInfo.packageName)}
+      disabled={busy || checking || (!updateInfo.hubResourceId && !updateInfo.packageName)}
       className="w-full text-[11px]"
     >
-      {updateState.state === 'pending' ? (
+      {checking ? (
+        <>
+          <Loader2 size={11} className="animate-spin" /> Checking v{updateInfo.hubVersion}…
+        </>
+      ) : updateState.state === 'pending' ? (
         <>
           <Loader2 size={11} className="animate-spin" /> Queuing…
         </>

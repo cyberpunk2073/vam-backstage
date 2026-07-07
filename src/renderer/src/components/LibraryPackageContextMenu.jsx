@@ -170,7 +170,6 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
   const bulkSelectedFilenames = useLibraryStore((s) => s.bulkSelectedFilenames)
   const packages = useLibraryStore((s) => s.packages)
   const labels = useLabelsStore((s) => s.labels)
-  const updateDetailsLoading = useLibraryStore((s) => s.updateDetailsLoading)
   const [detail, setDetail] = useState(null)
   const [probe, setProbe] = useState(null)
   const [fileTreeOpen, setFileTreeOpen] = useState(false)
@@ -550,9 +549,14 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                     Go to v{updateInfo.hubVersion}
                   </ContextMenuItem>
                 </>
-              ) : updateInfo && updateInfo.downloadUrl === null && !updateDetailsLoading ? (
+              ) : updateInfo && updateInfo.downloadUrl === null ? (
                 <ContextMenuItem disabled title="Listed on the hub but not directly downloadable (paid or external)">
                   <ArrowUpCircle size={12} className="shrink-0" />v{updateInfo.hubVersion} unavailable
+                </ContextMenuItem>
+              ) : updateInfo && updateInfo.downloadUrl === undefined ? (
+                <ContextMenuItem disabled title="Verifying availability with the hub…">
+                  <ArrowUpCircle size={12} className="shrink-0" />
+                  Checking v{updateInfo.hubVersion}…
                 </ContextMenuItem>
               ) : (
                 (updateInfo?.hubResourceId || updateInfo?.packageName) && (

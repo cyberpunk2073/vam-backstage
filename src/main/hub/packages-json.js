@@ -157,7 +157,16 @@ export function getPackagesIndexAge() {
 
 /**
  * Check for updates by comparing installed packages against the CDN index.
- * Returns { [localFilename]: { currentVersion, hubVersion, hubFilename, hubResourceId, downloadUrl, localNewerFilename?, isDepUpdate?, neededBy? } }
+ * Returns { [localFilename]: { currentVersion, hubVersion, hubFilename, hubResourceId, localNewerFilename?, isDepUpdate?, neededBy? } }
+ *
+ * `downloadUrl` / `fileSize` are intentionally absent here — they're populated
+ * later by the renderer-side `packages:enrich-from-hub` round-trip. Callers
+ * distinguish three states: `undefined` (not yet enriched), `null` (enrichment
+ * confirmed nothing directly downloadable: paid/external or hub error), and a
+ * string URL (available). Seeding `null` here would conflate "not yet checked"
+ * with "confirmed unavailable", which caused the Library/Updates button to
+ * briefly render as actionable during a re-enrichment cycle even when the
+ * prior check had marked the entry unavailable.
  *
  * When a newer version already exists locally (e.g. pulled in as a dependency),
  * `localNewerFilename` is set so the UI can navigate to it instead of downloading.
@@ -205,7 +214,6 @@ export function checkUpdatesFromIndex(packageIndex, groupIndex, forwardDeps) {
       hubFilename: hubEntry.filename,
       hubResourceId: String(hubEntry.resourceId),
       packageName,
-      downloadUrl: null,
       localNewerFilename,
     }
   }
@@ -257,7 +265,6 @@ export function checkUpdatesFromIndex(packageIndex, groupIndex, forwardDeps) {
         hubFilename: hubEntry.filename,
         hubResourceId: String(hubEntry.resourceId),
         packageName: depName,
-        downloadUrl: null,
         localNewerFilename,
         isDepUpdate: true,
         neededBy: [...depInfo.neededBy],

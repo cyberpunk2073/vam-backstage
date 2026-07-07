@@ -18,6 +18,19 @@ let updateCheckNonce = 0
 let packagesFetchInFlight = null
 let packagesFetchQueued = false
 
+/**
+ * Carry forward `downloadUrl` / `fileSize` from a previous `updateCheckResults`
+ * onto a fresh response from `packages:check-updates` (which deliberately leaves
+ * those fields absent — see `checkUpdatesFromIndex`). Mutates `next` in place.
+ *
+ * Always invoked, not just on the no-enrich event-driven path: re-mounting
+ * LibraryView reissues an enriching `checkForUpdates`, and without preserving
+ * the prior state the UI would otherwise blink every entry to "checking" for the
+ * duration of the in-flight findPackages call — including entries the previous
+ * check had definitively marked unavailable. That brief window let the user
+ * click an Update button whose install path then failed with hub "Resource not
+ * found".
+ */
 function _mergeUpdateEnrichment(prev, next) {
   if (!prev) return
   for (const [filename, entry] of Object.entries(next)) {
@@ -36,10 +49,7 @@ async function _enrichUpdateCheck(nonce, set, get) {
   for (const entry of Object.values(results)) {
     if (!entry.localNewerFilename) stems.push(entry.hubFilename.replace(/\.var$/i, ''))
   }
-  if (!stems.length) {
-    set({ updateDetailsLoading: false })
-    return
-  }
+  if (!stems.length) return
   try {
     const details = await window.api.packages.enrichFromHub(stems)
     if (nonce !== updateCheckNonce) return
@@ -51,11 +61,28 @@ async function _enrichUpdateCheck(nonce, set, get) {
       const detail = details[stem]
       updated[filename] = detail ? { ...entry, downloadUrl: detail.downloadUrl, fileSize: detail.fileSize } : entry
     }
-    set({ updateCheckResults: updated, updateDetailsLoading: false })
+    set({ updateCheckResults: updated })
   } catch (err) {
     if (nonce !== updateCheckNonce) return
     console.warn('Update details enrichment failed:', err)
-    set({ updateDetailsLoading: false })
+    // Hub round-trip failed wholesale (server outage, network down, etc.).
+    // Mark every still-unknown entry as `downloadUrl: null` so the UI lands on a
+    // definitive "unavailable" state instead of leaving the button stuck in its
+    // "checking" rendering. Entries that already carry a known value (string or
+    // null) from a prior successful enrichment are preserved.
+    const current = get().updateCheckResults
+    if (!current) return
+    const updated = {}
+    let dirty = false
+    for (const [filename, entry] of Object.entries(current)) {
+      if (entry.downloadUrl === undefined) {
+        updated[filename] = { ...entry, downloadUrl: null }
+        dirty = true
+      } else {
+        updated[filename] = entry
+      }
+    }
+    if (dirty) set({ updateCheckResults: updated })
   }
 }
 
@@ -97,9 +124,6 @@ export const useLibraryStore = create(
       updateCheckResults: null,
       updateCheckLoading: false,
       updateCheckLastChecked: null,
-      /** True while hub `downloadUrl`/`fileSize` enrichment for update entries is in flight.
-       *  Used to distinguish "still checking" from "checked, not directly downloadable" in the UI. */
-      updateDetailsLoading: false,
 
       // Backend-provided counts for fields that can't be computed client-side
       backendCounts: null,
@@ -267,15 +291,17 @@ export const useLibraryStore = create(
         try {
           const data = await window.api.packages.checkUpdates()
           if (nonce !== updateCheckNonce) return
-          if (!enrich) _mergeUpdateEnrichment(get().updateCheckResults, data)
-          // Set updateDetailsLoading=true atomically with the results so the UI never sees
-          // an interim state where every entry has downloadUrl=null but the loading flag is
-          // false (which would briefly mark all updates as "unavailable").
+          // Always carry forward any prior `downloadUrl`/`fileSize` so the UI
+          // keeps showing the previously-resolved availability while the
+          // (optional) re-enrichment runs in the background. Without this merge,
+          // every remount-driven recheck would flip entries back to "checking"
+          // and render Update buttons as actionable for the duration of the
+          // in-flight findPackages — even ones a prior check confirmed unavailable.
+          _mergeUpdateEnrichment(get().updateCheckResults, data)
           set({
             updateCheckResults: data,
             updateCheckLoading: false,
             updateCheckLastChecked: Date.now(),
-            updateDetailsLoading: enrich ? true : get().updateDetailsLoading,
           })
         } catch (err) {
           if (nonce !== updateCheckNonce) return
@@ -292,11 +318,11 @@ export const useLibraryStore = create(
         try {
           const data = await window.api.packages.checkUpdates({ forceRefresh: true })
           if (nonce !== updateCheckNonce) return
+          _mergeUpdateEnrichment(get().updateCheckResults, data)
           set({
             updateCheckResults: data,
             updateCheckLoading: false,
             updateCheckLastChecked: Date.now(),
-            updateDetailsLoading: true,
           })
         } catch (err) {
           if (nonce !== updateCheckNonce) return
