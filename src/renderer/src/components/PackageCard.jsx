@@ -15,6 +15,8 @@ import {
   Clock,
   ExternalLink,
   Check,
+  Pin,
+  Trash2,
 } from 'lucide-react'
 import {
   getGradient,
@@ -42,6 +44,7 @@ import { useThumbnail } from '@/hooks/useThumbnail'
 import { useHubInstallState } from '@/hooks/useHubInstallState'
 import { useDownloadStore } from '@/stores/useDownloadStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
+import { useWishlistStore } from '@/stores/useWishlistStore'
 import { useAvatar } from '@/hooks/useAvatar'
 import { LabelDots } from '@/components/labels/LabelDots'
 import { useLabelObjects } from '@/components/labels/useLabelObjects'
@@ -151,6 +154,10 @@ export function HubCard({
   const rid = String(resource.resource_id)
   const { state: installState, dlInfo, installStatus } = useHubInstallState(rid, { isExternal })
   const libRef = installStatus.filename || resource._localFilename
+
+  const wishlisted = useWishlistStore((s) => s.ids.has(rid))
+  const toggleWishlist = useWishlistStore((s) => s.toggle)
+  const showWishlistToggle = !linkAction
 
   let actionBtn
   if (installState === 'downloading') {
@@ -324,7 +331,7 @@ export function HubCard({
 
   return (
     <div
-      className={`@container w-full min-w-0 bg-surface border rounded-lg overflow-hidden text-left transition-all duration-150 flex flex-col border-border ${
+      className={`@container group w-full min-w-0 bg-surface border rounded-lg overflow-hidden text-left transition-all duration-150 flex flex-col border-border ${
         linkAction ? '' : 'card-glow cursor-pointer hover:bg-elevated'
       }`}
     >
@@ -342,29 +349,54 @@ export function HubCard({
             />
           ) : null}
           <div className="absolute inset-0 bg-linear-to-t from-black/40 to-transparent" />
-          {unavailable ? (
-            <div
-              className={`absolute top-2 left-2 ${THUMB_OVERLAY_CHIP} bg-warning/25 text-warning backdrop-blur-sm`}
-              title="No longer available on the Hub — showing your saved snapshot"
-            >
-              unavailable
+          {(unavailable || !hideType || isPaid) && (
+            <div className="absolute top-2 left-2 z-2 flex max-w-[calc(100%-2.75rem)] items-center gap-1 overflow-x-auto scrollbar-hide flex-nowrap">
+              {unavailable ? (
+                <div
+                  className={`${THUMB_OVERLAY_CHIP} bg-warning/25 text-warning backdrop-blur-sm`}
+                  title="No longer available on the Hub — showing your saved snapshot"
+                >
+                  unavailable
+                </div>
+              ) : (
+                !hideType && (
+                  <div className={`${THUMB_OVERLAY_CHIP} text-white`} style={{ background: typeColor + 'cc' }}>
+                    {resource.type}
+                  </div>
+                )
+              )}
+              {isPaid && (
+                <div
+                  className={`${THUMB_OVERLAY_CHIP} text-white`}
+                  style={{ background: HUB_CATEGORY_COLORS.Paid + 'cc' }}
+                >
+                  Paid
+                </div>
+              )}
             </div>
-          ) : (
-            !hideType && (
-              <div
-                className={`absolute top-2 left-2 ${THUMB_OVERLAY_CHIP} text-white`}
-                style={{ background: typeColor + 'cc' }}
-              >
-                {resource.type}
-              </div>
-            )
           )}
-          {isPaid && (
-            <div
-              className={`absolute top-2 right-2 ${THUMB_OVERLAY_CHIP} text-white`}
-              style={{ background: HUB_CATEGORY_COLORS.Paid + 'cc' }}
-            >
-              Paid
+          {showWishlistToggle && (
+            <div className="absolute top-1.5 right-1.5 z-2">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  toggleWishlist(resource)
+                }}
+                title={wishlist || wishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
+                aria-label={wishlist || wishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
+                className={
+                  wishlist
+                    ? 'size-7 shrink-0 inline-flex items-center justify-center rounded transition cursor-pointer text-white/70 bg-black/50 backdrop-blur-sm opacity-0 group-hover:opacity-100 hover:text-error'
+                    : `size-7 shrink-0 inline-flex items-center justify-center rounded transition cursor-pointer ${
+                        wishlisted
+                          ? `text-accent-blue opacity-100 bg-transparent ${THUMB_FILLED_ICON_SHADOW} group-hover:bg-black/50 group-hover:backdrop-blur-sm`
+                          : 'text-white/60 bg-black/50 backdrop-blur-sm opacity-0 group-hover:opacity-100'
+                      }`
+                }
+              >
+                {wishlist ? <Trash2 size={13} /> : <Pin size={13} fill={wishlisted ? 'currentColor' : 'none'} />}
+              </button>
             </div>
           )}
           {minimal && (
