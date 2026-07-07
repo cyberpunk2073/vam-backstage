@@ -9,6 +9,7 @@ import {
 import {
   findLocalByHubResourceId,
   findLocalByFilename,
+  annotateInstallState,
   getCreatorsNeedingUserId,
   getPackageIndex,
   getGroupIndex,
@@ -40,16 +41,7 @@ export function registerHubHandlers() {
     // Annotate resources with local install status (for renderer)
     const locals = []
     for (const resource of result.resources) {
-      const local = findLocalByHubResourceId(resource.resource_id)
-      if (local) {
-        resource._installed = true
-        resource._isDirect = !!local.is_direct
-        resource._localFilename = local.filename
-      } else {
-        resource._installed = false
-        resource._isDirect = false
-      }
-      locals.push(local)
+      locals.push(annotateInstallState(resource))
     }
 
     // Batch all DB writes in a single transaction (search_json auto-persisted by searchResources)

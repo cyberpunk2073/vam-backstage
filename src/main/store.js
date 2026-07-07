@@ -1065,6 +1065,26 @@ export function findLocalByHubResourceId(resourceId) {
   return null
 }
 
+/**
+ * Tag a hub resource / wishlist snapshot with local install state
+ * (`_installed` / `_isDirect` / `_localFilename`). Matched by resource id, so it's
+ * version-agnostic. Returns the matched local package row (or null) for callers
+ * that need it. NOTE: the `hub:detail` handler does its own richer resolution
+ * (hubFiles-first, then id fallback) and deliberately doesn't use this.
+ */
+export function annotateInstallState(target, resourceId = target?.resource_id) {
+  const local = findLocalByHubResourceId(resourceId)
+  if (local) {
+    target._installed = true
+    target._isDirect = !!local.is_direct
+    target._localFilename = local.filename
+  } else {
+    target._installed = false
+    target._isDirect = false
+  }
+  return local
+}
+
 export function findLocalByFilename(filename) {
   if (isLocalPackage(filename)) return null
   return packageIndex.get(filename) || null

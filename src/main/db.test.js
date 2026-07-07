@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { mkTempVamDir, openTestDatabase } from '../../test/fixtures/index.js'
 import {
+  MIGRATIONS,
+  SCHEMA_VERSION,
   closeDatabase,
   getDb,
   insertDownload,
@@ -57,7 +59,7 @@ describe('migrate v22 (hub_name_checked_at)', () => {
   })
 
   it('retries cleanly when the column exists but schema_version is still 21', () => {
-    expect(getDb().pragma('user_version', { simple: true })).toBe(24)
+    expect(getDb().pragma('user_version', { simple: true })).toBe(SCHEMA_VERSION)
   })
 
   it('adopts the legacy schema_version table into user_version and drops it', () => {
@@ -73,12 +75,14 @@ describe('unsupported newer schema', () => {
   beforeEach(async () => {
     tmp = await mkTempVamDir()
     const raw = new Database(tmp.dbPath)
-    raw.pragma('user_version = 25')
+    raw.pragma(`user_version = ${SCHEMA_VERSION + 1}`)
     raw.close()
   })
 
   it('refuses to open a database migrated by a newer app', async () => {
-    await expect(openTestDatabase(tmp.dbPath)).rejects.toThrow(/newer than this app supports \(v24\)/)
+    await expect(openTestDatabase(tmp.dbPath)).rejects.toThrow(
+      new RegExp(`newer than this app supports \\(v${SCHEMA_VERSION}\\)`),
+    )
   })
 })
 
@@ -91,7 +95,7 @@ describe('fresh database', () => {
   })
 
   it('builds the latest schema in one step and stamps user_version', () => {
-    expect(getDb().pragma('user_version', { simple: true })).toBe(24)
+    expect(getDb().pragma('user_version', { simple: true })).toBe(SCHEMA_VERSION)
   })
 
   it('never creates the legacy schema_version table', () => {
@@ -181,8 +185,8 @@ describe('migrate v23 (hub-id cleanup)', () => {
     await openTestDatabase(tmp.dbPath)
   })
 
-  it('bumps schema_version to the latest (24)', () => {
-    expect(getDb().pragma('user_version', { simple: true })).toBe(24)
+  it('bumps schema_version to the latest', () => {
+    expect(getDb().pragma('user_version', { simple: true })).toBe(SCHEMA_VERSION)
   })
 
   it('nulls non-numeric ids in packages without dropping rows', () => {
@@ -262,6 +266,232 @@ describe('migrate v24 (package subpath)', () => {
 
   it('sets needs_rescan so the next scan re-derives nested subpaths', () => {
     expect(getDb().prepare(`SELECT value FROM settings WHERE key = 'needs_rescan'`).get()?.value).toBe('1')
+  })
+})
+
+// ── schema parity: createSchema() ↔ sum of MIGRATIONS ──────────────────────────
+//
+// createSchema() (fresh install) and the incremental MIGRATIONS are two
+// hand-maintained descriptions of the same schema; they silently drift when a
+// migration is added but not mirrored into createSchema (or vice versa). This
+// replays every migration on top of a frozen v22 baseline and asserts the result
+// is schema-identical to a fresh install.
+//
+// The comparison is order-independent on purpose: `ALTER TABLE ADD COLUMN`
+// appends to the CREATE text stored in sqlite_master, so a migrated table lists
+// its columns in a different order than a freshly-created one. A raw SQL string
+// diff would flag that as drift. `schemaFingerprint` instead reduces each table
+// to the *set* of its top-level definitions (columns + table constraints),
+// whitespace-normalized, so only content matters — not column order or the
+// `IF NOT EXISTS` / rename cosmetics migrations leave behind.
+
+/** Split a CREATE-TABLE body on top-level commas (respecting nested parens + quotes). */
+function splitTopLevelCommas(body) {
+  const parts = []
+  let depth = 0
+  let quote = null
+  let cur = ''
+  for (const ch of body) {
+    if (quote) {
+      cur += ch
+      if (ch === quote) quote = null
+      continue
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch
+      cur += ch
+      continue
+    }
+    if (ch === '(') depth++
+    else if (ch === ')') depth--
+    if (ch === ',' && depth === 0) {
+      parts.push(cur)
+      cur = ''
+    } else cur += ch
+  }
+  if (cur.trim()) parts.push(cur)
+  return parts
+}
+
+/** Column/constraint definitions of a table, whitespace-normalized and sorted (order-independent). */
+function canonicalTableDefs(sql) {
+  const body = sql.slice(sql.indexOf('(') + 1, sql.lastIndexOf(')'))
+  return splitTopLevelCommas(body)
+    .map((d) => d.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .sort()
+}
+
+function normalizeSql(sql) {
+  return sql
+    .replace(/\bIF NOT EXISTS\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** { tables: name→sorted defs, indexes: name→normalized sql } for every user object in `db`. */
+function schemaFingerprint(db) {
+  const rows = db
+    .prepare(`SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'`)
+    .all()
+  const tables = {}
+  const indexes = {}
+  for (const { type, name, sql } of rows) {
+    if (type === 'table') tables[name] = canonicalTableDefs(sql)
+    else if (type === 'index') indexes[name] = normalizeSql(sql)
+  }
+  return { tables, indexes }
+}
+
+/**
+ * Frozen, complete v22 schema — this is *history*, copied verbatim from the
+ * createSchema() at commit 24c8447^ (the last v22 build, before the v23 bump).
+ * Do NOT edit it when createSchema() changes: new schema changes ship as new
+ * migrations, which the parity test replays on top of this baseline. Only
+ * re-baseline (to a newer verbatim snapshot) when old migrations are pruned.
+ * The v22→head deltas: hub-id CHECK (v23), packages.subpath (v24), hub_wishlist
+ * (v25). idx_hub_users_username already existed at v22 (v23 only re-ensures it).
+ */
+function buildV22Schema(dbPath) {
+  const raw = new Database(dbPath)
+  raw.exec(`
+    CREATE TABLE library_dirs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      path TEXT UNIQUE NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE packages (
+      filename TEXT PRIMARY KEY,
+      creator TEXT NOT NULL,
+      package_name TEXT NOT NULL,
+      version TEXT NOT NULL,
+      type TEXT,
+      title TEXT,
+      description TEXT,
+      license TEXT,
+      size_bytes INTEGER NOT NULL,
+      file_mtime REAL NOT NULL,
+      is_direct INTEGER NOT NULL DEFAULT 0,
+      storage_state TEXT NOT NULL DEFAULT 'enabled',
+      library_dir_id INTEGER NULL REFERENCES library_dirs(id) ON DELETE RESTRICT,
+      hub_resource_id TEXT,
+      dep_refs TEXT NOT NULL DEFAULT '[]',
+      first_seen_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      scanned_at INTEGER,
+      image_url TEXT,
+      thumb_checked INTEGER NOT NULL DEFAULT 0,
+      hub_user_id TEXT,
+      hub_display_name TEXT,
+      hub_tags TEXT,
+      promotional_link TEXT,
+      type_override TEXT,
+      is_corrupted INTEGER NOT NULL DEFAULT 0,
+      hub_detail_applied_at INTEGER,
+      hub_name_checked_at INTEGER
+    );
+    CREATE INDEX idx_packages_package_name ON packages(package_name);
+    CREATE INDEX idx_packages_creator ON packages(creator);
+
+    CREATE TABLE contents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      package_filename TEXT NOT NULL REFERENCES packages(filename) ON DELETE CASCADE,
+      internal_path TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      thumbnail_path TEXT,
+      person_atom_ids TEXT,
+      file_mtime REAL NOT NULL DEFAULT 0,
+      size_bytes INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(package_filename, internal_path)
+    );
+    CREATE INDEX idx_contents_package ON contents(package_filename);
+    CREATE INDEX idx_contents_type ON contents(type);
+
+    CREATE TABLE downloads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      package_ref TEXT NOT NULL UNIQUE,
+      hub_resource_id TEXT,
+      download_url TEXT,
+      file_size INTEGER,
+      priority TEXT NOT NULL DEFAULT 'dependency',
+      parent_ref TEXT,
+      status TEXT NOT NULL DEFAULT 'queued',
+      temp_path TEXT,
+      error TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      completed_at INTEGER,
+      display_name TEXT,
+      auto_queue_deps INTEGER NOT NULL DEFAULT 1
+    );
+
+    CREATE TABLE hub_resources (
+      resource_id TEXT PRIMARY KEY,
+      hub_json TEXT,
+      search_json TEXT,
+      find_json TEXT,
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE hub_users (
+      user_id TEXT PRIMARY KEY,
+      username TEXT,
+      hub_json TEXT,
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX idx_hub_users_username ON hub_users(username);
+
+    CREATE TABLE settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+
+    CREATE TABLE labels (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      color INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE label_packages (
+      label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+      package_filename TEXT NOT NULL REFERENCES packages(filename) ON DELETE CASCADE,
+      PRIMARY KEY (label_id, package_filename)
+    );
+    CREATE INDEX idx_label_packages_pkg ON label_packages(package_filename);
+
+    CREATE TABLE label_contents (
+      label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+      package_filename TEXT NOT NULL REFERENCES packages(filename) ON DELETE CASCADE,
+      internal_path TEXT NOT NULL,
+      PRIMARY KEY (label_id, package_filename, internal_path)
+    );
+    CREATE INDEX idx_label_contents_pkgpath ON label_contents(package_filename, internal_path);
+  `)
+  raw.pragma('user_version = 22')
+  raw.close()
+}
+
+describe('schema parity (createSchema ↔ migrations)', () => {
+  it('MIGRATIONS ends exactly at SCHEMA_VERSION', () => {
+    expect(MIGRATIONS.at(-1)[0]).toBe(SCHEMA_VERSION)
+  })
+
+  it('a v22 DB migrated to head is schema-identical to a fresh install', async () => {
+    tmp = await mkTempVamDir()
+    await openTestDatabase(tmp.dbPath)
+    const fresh = schemaFingerprint(getDb())
+    closeDatabase()
+
+    const migratedTmp = await mkTempVamDir()
+    try {
+      buildV22Schema(migratedTmp.dbPath)
+      await openTestDatabase(migratedTmp.dbPath)
+      expect(schemaFingerprint(getDb())).toEqual(fresh)
+    } finally {
+      closeDatabase()
+      await migratedTmp.cleanup()
+    }
   })
 })
 

@@ -17,6 +17,8 @@ export default function FilterPanel({
   defaultWidth = 220,
   minWidth = 160,
   maxWidth = 340,
+  /** Render the panel in place but inert (e.g. hub wishlist mode has no filters yet). */
+  disabled = false,
 }) {
   const [width, setWidth] = usePersistedPanelWidth('panel_width_filters', {
     min: minWidth,
@@ -34,8 +36,10 @@ export default function FilterPanel({
   )
 
   return (
-    <div className="flex shrink-0" style={{ width }}>
-      <div className="flex-1 min-w-0 bg-surface border-r border-border flex flex-col overflow-y-auto">
+    <div className="flex shrink-0" style={{ width }} aria-hidden={disabled}>
+      <div
+        className={`flex-1 min-w-0 bg-surface border-r border-border flex flex-col overflow-y-auto ${disabled ? 'opacity-40 pointer-events-none select-none' : ''}`}
+      >
         {/* Search */}
         <div className="p-3 pb-2">
           <div className="relative">

@@ -918,9 +918,9 @@ This replaces the previous TTL-based `suppressPath`/`suppressPrefsStem` mechanis
 
 **Main process**:
 
-- On-demand extraction from `.var` ZIPs via IPC
-- Hub CDN download with local disk cache in `{userData}/thumb-cache/{filename}.jpg`
-- Background batch resolution for packages without thumbnails
+- On-demand extraction from `.var` ZIPs via IPC, disk-cached in `{userData}/thumb-cache/`
+- Two cache-file schemes: `hub-icon-{rid}.jpg` (Hub CDN icon, keyed by resource id, shared by installed packages and wishlist cards) and `{filename}__{hash}.jpg` (thumb extracted from a `.var`, keyed by file + internal path; a package's own thumb reuses its representative content entry)
+- Background batch resolution (`thumb-resolver.js`) downloads Hub icons for packages without one; a one-time `thumb-cache-migrate.js` pass upgrades the pre-unification `{filename}.jpg` layout
 
 **Renderer**:
 

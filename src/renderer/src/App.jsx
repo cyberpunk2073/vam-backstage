@@ -160,6 +160,10 @@ export default function App() {
     (targetView, context) => {
       if (targetView === 'hub') {
         if (context?.openResource) {
+          // Arriving from another view to a specific hub resource is a hub-search
+          // action — snap to hub mode so the gallery behind the detail (and
+          // prev/next stepping) is the hub, not the wishlist the user last viewed.
+          useHubStore.getState().setGalleryMode('hub')
           useHubStore.getState().openDetail(context.openResource)
         } else {
           useHubStore.getState().closeDetail()

@@ -87,6 +87,12 @@ const api = {
     localSnapshot: (resourceIds) => invoke('hub:localSnapshot', resourceIds),
     scanPackages: () => invoke('hub:scan-packages'),
   },
+  wishlist: {
+    list: () => invoke('wishlist:list'),
+    ids: () => invoke('wishlist:ids'),
+    add: (resourceId, snapshot) => invoke('wishlist:add', resourceId, snapshot),
+    remove: (resourceId) => invoke('wishlist:remove', resourceId),
+  },
   downloads: {
     list: () => invoke('downloads:list'),
     cancel: (id) => invoke('downloads:cancel', id),
@@ -172,6 +178,7 @@ const api = {
   on: (channel, callback) => transport.on(channel, callback),
   // Convenience: well-known event channels
   onPackagesUpdated: (cb) => transport.on('packages:updated', () => cb()),
+  onWishlistUpdated: (cb) => transport.on('wishlist:updated', () => cb()),
   onContentsUpdated: (cb) => transport.on('contents:updated', () => cb()),
   onLabelsUpdated: (cb) => transport.on('labels:updated', () => cb()),
   onDownloadsUpdated: (cb) => transport.on('downloads:updated', () => cb()),

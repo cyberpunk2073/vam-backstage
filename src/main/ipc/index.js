@@ -5,6 +5,7 @@ import { registerScanHandlers } from './scanner.js'
 import { registerSettingsHandlers } from './settings.js'
 import { registerThumbnailHandlers } from './thumbnails.js'
 import { registerHubHandlers } from './hub.js'
+import { registerWishlistHandlers } from './wishlist.js'
 import { registerDownloadHandlers } from './downloads.js'
 import { registerAvatarHandlers } from './avatars.js'
 import { registerDevHandlers } from './dev.js'
@@ -23,6 +24,7 @@ export function registerAllHandlers() {
   registerSettingsHandlers()
   registerThumbnailHandlers()
   registerHubHandlers()
+  registerWishlistHandlers()
   registerDownloadHandlers()
   registerAvatarHandlers()
   registerDevHandlers()

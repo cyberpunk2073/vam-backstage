@@ -5,9 +5,9 @@ import { getPackagesNeedingThumbnail, setPackageThumbnail, setHubResourceId } fr
 import { getPackagesIndex } from './hub/packages-json.js'
 import { notify } from './notify.js'
 import { pLimit } from './p-limit.js'
-import { invalidateThumbnailCache } from './thumbnails.js'
+import { invalidateThumbnailCache, hubIconCacheFile } from './thumbnails.js'
+import { hubResourceIconUrl } from '@shared/hub-http.js'
 
-const IMAGE_CDN = 'https://1424104733.rsc.cdn77.org/data/resource_icons'
 const CDN_CONCURRENCY = 20
 const PROGRESS_NOTIFY_EVERY = 25
 
@@ -15,11 +15,6 @@ let running = false
 
 function getCacheDir() {
   return join(app.getPath('userData'), 'thumb-cache')
-}
-
-function imageUrlForResource(resourceId) {
-  const rid = Number(resourceId)
-  return `${IMAGE_CDN}/${Math.floor(rid / 1000)}/${rid}.jpg`
 }
 
 /**
@@ -55,6 +50,18 @@ export async function resolvePackageThumbnails() {
       }
     }
 
+    // The icon is per-resource, so group versions that share a resource id: one
+    // fetch and one hub-icon-{rid}.jpg file serves every installed version (and
+    // any wishlist card for the same resource).
+    const byRid = new Map()
+    for (const p of pending) {
+      if (!p.hub_resource_id) continue
+      const rid = String(p.hub_resource_id)
+      const group = byRid.get(rid)
+      if (group) group.push(p)
+      else byRid.set(rid, [p])
+    }
+
     // CDN can handle heavy parallelism, so we don't throttle like the Hub JSON API.
     const limit = pLimit(CDN_CONCURRENCY)
     // Keys resolved since the last notify — flushed in batches so the UI can
@@ -69,17 +76,19 @@ export async function resolvePackageThumbnails() {
       notify('thumbnails:updated', { keys })
     }
     await Promise.all(
-      pending.map((pkg) =>
+      [...byRid.entries()].map(([rid, pkgs]) =>
         limit(async () => {
-          if (!pkg.hub_resource_id) return
+          const imageUrl = hubResourceIconUrl(rid)
+          if (!imageUrl) return
           try {
-            const imageUrl = imageUrlForResource(pkg.hub_resource_id)
             const res = await net.fetch(imageUrl)
             if (!res.ok) return
             const buf = Buffer.from(await res.arrayBuffer())
-            await writeFile(join(cacheDir, pkg.filename + '.jpg'), buf)
-            setPackageThumbnail(pkg.filename, imageUrl)
-            pendingBatch.push('pkg:' + pkg.filename)
+            await writeFile(hubIconCacheFile(cacheDir, rid), buf)
+            for (const pkg of pkgs) {
+              setPackageThumbnail(pkg.filename, imageUrl)
+              pendingBatch.push('pkg:' + pkg.filename)
+            }
             if (pendingBatch.length >= PROGRESS_NOTIFY_EVERY) flushBatch()
           } catch {}
         }),

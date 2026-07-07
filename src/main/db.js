@@ -4,7 +4,7 @@ import { app } from 'electron'
 import { join } from 'path'
 import { LOCAL_PACKAGE_FILENAME, LOCAL_PACKAGE_DISPLAY_NAME } from '@shared/local-package.js'
 
-const SCHEMA_VERSION = 24
+export const SCHEMA_VERSION = 25
 
 /**
  * Normalize a value to a non-negative integer string, or null. Hub resource/user
@@ -134,7 +134,7 @@ function adoptLegacySchemaVersion() {
  * half-applied step layered on a partially-mutated table. To add a migration,
  * append a row here and reflect the same shape in createSchema().
  */
-const MIGRATIONS = [
+export const MIGRATIONS = [
   [17, applyV17],
   [18, applyV18],
   [19, applyV19],
@@ -143,6 +143,7 @@ const MIGRATIONS = [
   [22, applyV22],
   [23, applyV23],
   [24, applyV24],
+  [25, applyV25],
 ]
 
 function migrate() {
@@ -393,6 +394,29 @@ function applyV24() {
 }
 
 /**
+ * v25 — local wishlist for hub packages. Unlike `hub_resources` (a disposable,
+ * regenerable cache), this table is the feature's own durable copy of the
+ * detail-shaped resource JSON: paid/removed packages have no `.var` filename and
+ * can vanish from the Hub, so we can't re-fetch a gallery from ids alone.
+ * `snapshot_json` stores raw hub fields only (app-injected `_`-prefixed
+ * annotations are stripped at write time and recomputed at read time).
+ * `unavailable_at` is stamped when the Hub definitively reports the resource
+ * gone, and cleared on any later successful refresh. Numeric-only PK CHECK
+ * matches the hub-id hygiene of the other hub tables.
+ */
+function applyV25() {
+  db.exec(`
+    CREATE TABLE hub_wishlist (
+      resource_id TEXT PRIMARY KEY CHECK (${intCheckSql('resource_id')}),
+      snapshot_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      snapshot_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      unavailable_at INTEGER
+    );
+  `)
+}
+
+/**
  * Ensure the synthetic "local content" package row exists. Loose files under
  * `vamDir/Saves` and `vamDir/Custom` are stored as `contents` rows that point
  * at this sentinel so the foreign key holds without nullable columns. The
@@ -501,6 +525,14 @@ function createSchema() {
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
     CREATE INDEX IF NOT EXISTS idx_hub_users_username ON hub_users(username);
+
+    CREATE TABLE IF NOT EXISTS hub_wishlist (
+      resource_id TEXT PRIMARY KEY CHECK (${intCheckSql('resource_id')}),
+      snapshot_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      snapshot_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      unavailable_at INTEGER
+    );
 
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
@@ -998,6 +1030,11 @@ export function getPackagesNeedingThumbnail() {
   return stmt('SELECT filename, package_name, hub_resource_id FROM packages WHERE image_url IS NULL').all()
 }
 
+/** filename → hub_resource_id for every package. Used by the thumb-cache layout migration. */
+export function getAllPackageHubIds() {
+  return stmt('SELECT filename, hub_resource_id FROM packages').all()
+}
+
 export function setPackageThumbnail(filename, imageUrl) {
   stmt('UPDATE packages SET image_url = ?, thumb_checked = 1 WHERE filename = ?').run(imageUrl, filename)
 }
@@ -1073,13 +1110,32 @@ export function clearAllCorrupted() {
 
 export function upsertHubResourceDetail(resourceId, json) {
   const rid = toIntString(resourceId)
-  if (rid === null) return
+  if (rid === null) return false
+
+  // The scanner writes `_unavailable` tombstones for failed fetches purely to make
+  // hub_json non-NULL (so the row drops out of getPackagesNeedingHubDetailFetch).
+  // The extra `hub_json IS NULL` clause enforces that a stub only fills an empty
+  // slot, never overwrites real detail.
+  const isUnavailableStub = !!(json && json._unavailable)
   stmt(`INSERT INTO hub_resources (resource_id, hub_json, updated_at)
     VALUES (?, ?, unixepoch())
     ON CONFLICT(resource_id) DO UPDATE SET
       hub_json = excluded.hub_json, updated_at = excluded.updated_at
     WHERE hub_resources.hub_json IS NOT excluded.hub_json
+      ${isUnavailableStub ? 'AND hub_resources.hub_json IS NULL' : ''}
   `).run(rid, JSON.stringify(json))
+
+  // Piggyback wishlist maintenance: a real payload refreshes the durable snapshot;
+  // a stub must never reach refreshWishlistSnapshot (would clobber it). Returns
+  // whether a wishlist row changed so the caller can emit `wishlist:updated` —
+  // db stays event-free. (The stub branch is a safety net: wishlisting requires
+  // opening the detail, which caches hub_json non-NULL, so the scanner never
+  // re-stubs a wishlisted rid.)
+  try {
+    return isUnavailableStub ? markWishlistItemUnavailable(rid) : refreshWishlistSnapshot(rid, json)
+  } catch {
+    return false
+  }
 }
 
 export function upsertHubResourceSearch(resourceId, json) {
@@ -1106,6 +1162,96 @@ export function upsertHubResourceFind(resourceId, json) {
 
 export function getAllHubResourceJsons() {
   return stmt('SELECT resource_id, hub_json, search_json, find_json FROM hub_resources').all()
+}
+
+// --- Wishlist (local, durable snapshots of hub resources) ---
+//
+// This is NOT a cache: paid/removed packages can't be re-fetched from ids alone,
+// so the wishlist owns its copy of the detail-shaped resource JSON. The renderer
+// passes the fully-annotated detail object on add; `_`-prefixed annotations are
+// stripped here and recomputed at read time (see ipc/wishlist.js).
+//
+// Background mutations (refresh / unavailability stamp) return whether a row
+// changed; the hub client emits `wishlist:updated` on that so the renderer
+// re-lists — no manual refresh, and db stays event-free.
+
+/** JSON.stringify replacer dropping every `_`-prefixed key at any depth. */
+function stripUnderscoreKeys(key, value) {
+  return key.startsWith('_') ? undefined : value
+}
+
+function stringifyWishlistSnapshot(snapshot) {
+  return JSON.stringify(snapshot, stripUnderscoreKeys)
+}
+
+/** Add or replace a wishlist item, refreshing its snapshot and clearing any prior unavailability. */
+export function addWishlistItem(resourceId, snapshot) {
+  const rid = toIntString(resourceId)
+  if (rid === null) return
+  stmt(`INSERT INTO hub_wishlist (resource_id, snapshot_json, created_at, snapshot_at)
+    VALUES (?, ?, unixepoch(), unixepoch())
+    ON CONFLICT(resource_id) DO UPDATE SET
+      snapshot_json = excluded.snapshot_json,
+      snapshot_at = excluded.snapshot_at,
+      unavailable_at = NULL
+  `).run(rid, stringifyWishlistSnapshot(snapshot))
+}
+
+export function removeWishlistItem(resourceId) {
+  const rid = toIntString(resourceId)
+  if (rid === null) return
+  stmt('DELETE FROM hub_wishlist WHERE resource_id = ?').run(rid)
+}
+
+/** All wishlist rows, newest first. Snapshot JSON is returned raw for the caller to parse + annotate. */
+export function getAllWishlistItems() {
+  return stmt(
+    'SELECT resource_id, snapshot_json, created_at, unavailable_at FROM hub_wishlist ORDER BY created_at DESC',
+  ).all()
+}
+
+export function getWishlistIds() {
+  return stmt('SELECT resource_id FROM hub_wishlist')
+    .all()
+    .map((r) => r.resource_id)
+}
+
+export function isWishlisted(resourceId) {
+  const rid = toIntString(resourceId)
+  if (rid === null) return false
+  return !!stmt('SELECT 1 FROM hub_wishlist WHERE resource_id = ?').get(rid)
+}
+
+/**
+ * Refresh an existing wishlist item's snapshot (no-op if not wishlisted). Called
+ * opportunistically from `upsertHubResourceDetail` on every fresh detail payload,
+ * so a wishlisted resource that reappears also clears its unavailability flag.
+ * Returns true when a row actually changed (caller emits `wishlist:updated`).
+ */
+export function refreshWishlistSnapshot(resourceId, snapshot) {
+  const rid = toIntString(resourceId)
+  if (rid === null) return false
+  const json = stringifyWishlistSnapshot(snapshot)
+  // Only write on a real change (or when clearing unavailability) so a
+  // byte-identical detail re-open doesn't churn snapshot_at or the event.
+  const info = stmt(`UPDATE hub_wishlist
+    SET snapshot_json = ?, snapshot_at = unixepoch(), unavailable_at = NULL
+    WHERE resource_id = ? AND (snapshot_json IS NOT ? OR unavailable_at IS NOT NULL)
+  `).run(json, rid, json)
+  return info.changes > 0
+}
+
+/**
+ * Stamp a wishlisted item as gone from the Hub (no-op if not wishlisted or already
+ * stamped). Returns true when a row changed (caller emits `wishlist:updated`).
+ */
+export function markWishlistItemUnavailable(resourceId) {
+  const rid = toIntString(resourceId)
+  if (rid === null) return false
+  const info = stmt(
+    'UPDATE hub_wishlist SET unavailable_at = unixepoch() WHERE resource_id = ? AND unavailable_at IS NULL',
+  ).run(rid)
+  return info.changes > 0
 }
 
 export function upsertHubUser(userId, username, json) {

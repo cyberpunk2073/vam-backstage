@@ -4,6 +4,9 @@ import { toast } from '@/components/Toast'
 import { useInstalledStore } from './useInstalledStore'
 import { persistViewState, oneOf, asArray, asString, asCardWidth } from './persistViewState'
 
+/** Gallery data sources. Extend this (and the toolbar segmented control) to add future modes. */
+export const GALLERY_MODES = ['hub', 'wishlist']
+
 let fetchSeq = 0
 
 function syncInstalledFromResources(resources) {
@@ -71,6 +74,11 @@ export const useHubStore = create(
       cardMode: 'medium',
       cardWidth: 220,
 
+      // Gallery data source (see GALLERY_MODES): 'hub' search or local 'wishlist'.
+      // Persisted so the mode restores across restarts; switching it never touches
+      // hub search state (filters/results/page), so switching back is lossless.
+      galleryMode: 'hub',
+
       filterOptions: null,
 
       setSearch: (search) => set({ search }),
@@ -82,6 +90,7 @@ export const useHubStore = create(
       setLicense: (license) => set({ license }),
       setCardMode: (cardMode) => set({ cardMode }),
       setCardWidth: (cardWidth) => set({ cardWidth }),
+      setGalleryMode: (galleryMode) => set({ galleryMode }),
       setPage: (page) => set({ page }),
 
       fetchFilters: async (force) => {
@@ -269,6 +278,7 @@ export const useHubStore = create(
       sort: asString,
       cardMode: oneOf(['minimal', 'medium']),
       cardWidth: asCardWidth,
+      galleryMode: oneOf(GALLERY_MODES),
     }),
   ),
 )

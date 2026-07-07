@@ -140,6 +140,8 @@ export function HubCard({
   mode = 'medium',
   hideType,
   linkAction,
+  /** Wishlist gallery card: render from the disk-cached hub thumbnail and show an "unavailable" chip. */
+  wishlist = false,
 }) {
   const minimal = mode === 'minimal'
   const isPaid = resource.category === 'Paid'
@@ -313,6 +315,12 @@ export function HubCard({
   useEffect(() => {
     setThumbFailed(false)
   }, [imgUrl])
+  // Wishlist cards read the disk-cached (resource-id keyed) thumbnail so they
+  // still render after the resource disappears from the Hub; hub search cards
+  // hotlink image_url with a gradient fallback on load error.
+  const hubResThumb = useThumbnail(wishlist ? `hub-icon:${rid}` : null)
+  const shownThumb = wishlist ? hubResThumb : imgUrl && !thumbFailed ? imgUrl : null
+  const unavailable = wishlist && !!resource._unavailable
 
   return (
     <div
@@ -323,24 +331,33 @@ export function HubCard({
       <div onClick={linkAction ? undefined : () => onClick?.(resource)} className="flex-1">
         <div className="relative aspect-square">
           <div className="absolute inset-0" style={{ background: getGradient(String(gradientId)) }} />
-          {imgUrl && !thumbFailed ? <div className="absolute inset-0 bg-elevated" /> : null}
-          {imgUrl && !thumbFailed ? (
+          {shownThumb ? <div className="absolute inset-0 bg-elevated" /> : null}
+          {shownThumb ? (
             <img
-              src={imgUrl}
-              className="thumb absolute inset-0 w-full h-full object-cover"
+              src={shownThumb}
+              className={`thumb absolute inset-0 w-full h-full object-cover ${unavailable ? 'grayscale opacity-60' : ''}`}
               alt=""
               loading="lazy"
-              onError={() => setThumbFailed(true)}
+              onError={wishlist ? undefined : () => setThumbFailed(true)}
             />
           ) : null}
           <div className="absolute inset-0 bg-linear-to-t from-black/40 to-transparent" />
-          {!hideType && (
+          {unavailable ? (
             <div
-              className={`absolute top-2 left-2 ${THUMB_OVERLAY_CHIP} text-white`}
-              style={{ background: typeColor + 'cc' }}
+              className={`absolute top-2 left-2 ${THUMB_OVERLAY_CHIP} bg-warning/25 text-warning backdrop-blur-sm`}
+              title="No longer available on the Hub — showing your saved snapshot"
             >
-              {resource.type}
+              unavailable
             </div>
+          ) : (
+            !hideType && (
+              <div
+                className={`absolute top-2 left-2 ${THUMB_OVERLAY_CHIP} text-white`}
+                style={{ background: typeColor + 'cc' }}
+              >
+                {resource.type}
+              </div>
+            )
           )}
           {isPaid && (
             <div

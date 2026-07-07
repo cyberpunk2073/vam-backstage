@@ -35,7 +35,7 @@ async function fetchOneDetail({ rid, filename }) {
   } catch (e) {
     console.warn('[hub-scan] getResourceDetail failed for', rid, e.message)
     try {
-      upsertHubResourceDetail(rid, { _unavailable: true, _error: e.message })
+      if (upsertHubResourceDetail(rid, { _unavailable: true, _error: e.message })) notify('wishlist:updated')
       applyHubDetailToPackage(filename, { _unavailable: true })
     } catch {}
   }

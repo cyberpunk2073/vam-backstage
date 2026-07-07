@@ -22,6 +22,7 @@ import {
   Plus,
   Loader2,
   RefreshCw,
+  Pin,
   X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -41,6 +42,7 @@ import {
   openExternalLink,
 } from '@/lib/utils'
 import { useHubStore } from '@/stores/useHubStore'
+import { useWishlistStore } from '@/stores/useWishlistStore'
 import { useDownloadStore } from '@/stores/useDownloadStore'
 import { useInstalledStore } from '@/stores/useInstalledStore'
 import { useHubInstallState } from '@/hooks/useHubInstallState'
@@ -81,6 +83,8 @@ export default function HubView({ onNavigate }) {
     detailNonce,
     cardMode,
     cardWidth,
+    galleryMode,
+    setGalleryMode,
     filterOptions,
     setSearch,
     setSelectedType,
@@ -96,6 +100,8 @@ export default function HubView({ onNavigate }) {
     openDetail,
     closeDetail,
   } = useHubStore()
+
+  const wishlistMode = galleryMode === 'wishlist'
 
   const [searchDraft, setSearchDraft] = useState(search)
   const searchDraftRef = useRef(search)
@@ -160,6 +166,26 @@ export default function HubView({ onNavigate }) {
     useHubStore.getState().fetchFilters()
   }, [])
 
+  // Wishlist: id set drives the segmented-control count + detail toggle state
+  // (loaded once on mount); the full list is loaded lazily on entering the mode.
+  const wishlistItems = useWishlistStore((s) => s.items)
+  const wishlistCount = useWishlistStore((s) => s.ids.size)
+  const wishlistLoading = useWishlistStore((s) => s.loading)
+  const wishlistLoaded = useWishlistStore((s) => s.loaded)
+  useEffect(() => {
+    useWishlistStore.getState().loadIds()
+  }, [])
+  useEffect(() => {
+    if (wishlistMode) useWishlistStore.getState().load()
+  }, [wishlistMode])
+  // Main fires `wishlist:updated` on background snapshot/unavailability changes;
+  // re-list so the gallery stays live without a manual refresh.
+  useEffect(() => {
+    return window.api.onWishlistUpdated(() => {
+      if (useWishlistStore.getState().loaded) useWishlistStore.getState().load()
+    })
+  }, [])
+
   // Track gallery container width for the zoom slider
   const galleryRef = useRef(null)
   const [availableWidth, setAvailableWidth] = useState(0)
@@ -190,6 +216,10 @@ export default function HubView({ onNavigate }) {
     if (fullRowCount === 0) return resources
     return resources.slice(0, fullRowCount)
   }, [resources, page, totalPages, columnCount])
+
+  // Gallery data source: wishlist mode reads the local store (fixed created_at
+  // DESC order, no pagination); hub mode reads the paged search results.
+  const galleryItems = wishlistMode ? wishlistItems : visibleResources
 
   // Filter changes → reset to page 1 and fetch
   useEffect(() => {
@@ -242,6 +272,10 @@ export default function HubView({ onNavigate }) {
   // gallery's resource objects + the global installed-state store.
   useEffect(() => {
     return window.api.onPackagesUpdated(async () => {
+      // Re-list the wishlist so its cards' installed/dep badges reconcile too
+      // (wishlist items aren't part of hub `resources`, so the block below misses them).
+      if (useWishlistStore.getState().loaded) useWishlistStore.getState().load()
+
       const { resources } = useHubStore.getState()
       if (resources.length === 0) return
 
@@ -305,9 +339,13 @@ export default function HubView({ onNavigate }) {
 
   const handleFilterAuthor = useCallback(
     (author) => {
+      // An author filter only applies to hub search — snap to hub mode so the
+      // filter is visible and takes effect (otherwise the user is left on the
+      // wishlist tab wondering why nothing happened).
+      setGalleryMode('hub')
       setAuthorSearch(author)
     },
-    [setAuthorSearch],
+    [setAuthorSearch, setGalleryMode],
   )
 
   const handlePromote = useCallback((filename, hubResourceId) => {
@@ -321,21 +359,28 @@ export default function HubView({ onNavigate }) {
     }))
   }, [])
 
-  // --- Prev/Next navigation through the search results list ---
+  // --- Prev/Next navigation through the current gallery list ---
   // The currently shown package: detailData once loaded, else the opening stub.
-  // Only meaningful while a detail opened from Hub search is on screen.
+  // The list stepped through is the wishlist in wishlist mode, else hub search.
+  const detailList = wishlistMode ? wishlistItems : resources
   const currentDetailId = detailResource ? String(detailData?.resource_id ?? detailResource.resource_id ?? '') : ''
-  const detailIdx = currentDetailId ? resources.findIndex((r) => String(r.resource_id) === currentDetailId) : -1
+  const detailIdx = currentDetailId ? detailList.findIndex((r) => String(r.resource_id) === currentDetailId) : -1
   const canPrevDetail = detailIdx > 0
-  const canNextDetail = detailIdx >= 0 && (detailIdx < resources.length - 1 || (page < totalPages && !loading))
-  // null → pager hidden (we did not arrive from Hub search, or neighbor unknown)
-  const detailPosition = detailIdx >= 0 ? { n: detailIdx + 1, total: totalFound || resources.length } : null
+  const canNextDetail = wishlistMode
+    ? detailIdx >= 0 && detailIdx < detailList.length - 1
+    : detailIdx >= 0 && (detailIdx < resources.length - 1 || (page < totalPages && !loading))
+  // null → pager hidden (neighbor unknown)
+  const detailPosition =
+    detailIdx >= 0
+      ? { n: detailIdx + 1, total: wishlistMode ? detailList.length : totalFound || resources.length }
+      : null
 
   const handleDetailPrev = useCallback(() => {
-    const { resources, detailResource, detailData } = useHubStore.getState()
+    const { galleryMode, resources, detailResource, detailData } = useHubStore.getState()
+    const list = galleryMode === 'wishlist' ? useWishlistStore.getState().items : resources
     const cur = detailResource ? String(detailData?.resource_id ?? detailResource.resource_id ?? '') : ''
-    const idx = cur ? resources.findIndex((r) => String(r.resource_id) === cur) : -1
-    if (idx > 0) openDetail(resources[idx - 1])
+    const idx = cur ? list.findIndex((r) => String(r.resource_id) === cur) : -1
+    if (idx > 0) openDetail(list[idx - 1])
   }, [openDetail])
 
   // Enabled after the first Next within a panel-open session; gates neighbor detail
@@ -350,8 +395,14 @@ export default function HubView({ onNavigate }) {
   const pendingNextFromRef = useRef(null)
   const handleDetailNext = useCallback(() => {
     detailPrefetchRef.current = true
-    const { resources, detailResource, detailData, page, totalPages } = useHubStore.getState()
+    const { galleryMode, resources, detailResource, detailData, page, totalPages } = useHubStore.getState()
     const cur = detailResource ? String(detailData?.resource_id ?? detailResource.resource_id ?? '') : ''
+    if (galleryMode === 'wishlist') {
+      const list = useWishlistStore.getState().items
+      const idx = cur ? list.findIndex((r) => String(r.resource_id) === cur) : -1
+      if (idx >= 0 && idx < list.length - 1) openDetail(list[idx + 1])
+      return
+    }
     const idx = cur ? resources.findIndex((r) => String(r.resource_id) === cur) : -1
     if (idx < 0) return
     if (idx < resources.length - 1) {
@@ -375,18 +426,18 @@ export default function HubView({ onNavigate }) {
   // Proactively load the next search page when the shown item nears the end of the
   // loaded list, so Next is rarely a dead wait.
   useEffect(() => {
-    if (detailIdx < 0 || loading) return
+    if (wishlistMode || detailIdx < 0 || loading) return
     if (detailIdx >= resources.length - 2 && page < totalPages) fetchNextPage()
-  }, [detailIdx, resources.length, page, totalPages, loading, fetchNextPage])
+  }, [wishlistMode, detailIdx, resources.length, page, totalPages, loading, fetchNextPage])
 
   // Once stepping through, warm the next item's detail into the main-process LRU
   // cache so the upcoming Next resolves without a network round-trip. The previous
   // item is already cached from having been viewed.
   useEffect(() => {
-    if (!detailPrefetchRef.current || detailIdx < 0) return
+    if (wishlistMode || !detailPrefetchRef.current || detailIdx < 0) return
     const next = resources[detailIdx + 1]
     if (next?.resource_id) useHubStore.getState().prefetchDetail(next.resource_id)
-  }, [detailIdx, resources])
+  }, [wishlistMode, detailIdx, resources])
 
   const sections = useMemo(
     () => [
@@ -461,25 +512,61 @@ export default function HubView({ onNavigate }) {
     ],
   )
 
+  const refreshBusy = loading && resources.length === 0
+
   return (
     <div className="h-full flex min-w-0 relative">
-      <FilterPanel search={searchDraft} onSearchChange={handleSearchChange} sections={sections} />
+      {/* Filters apply to hub search only. In wishlist mode the panel stays in place
+          (no layout shift) but is disabled — wishlist-specific filters come later. */}
+      <FilterPanel
+        search={searchDraft}
+        onSearchChange={handleSearchChange}
+        sections={sections}
+        disabled={wishlistMode}
+      />
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {/* Toolbar */}
         <div className="h-10 flex items-center px-4 border-b border-border shrink-0 gap-2">
+          <div className="flex items-center gap-px bg-elevated rounded p-0.5 text-[11px]">
+            <button
+              type="button"
+              onClick={() => setGalleryMode('hub')}
+              className={`px-2 py-1 rounded cursor-pointer transition-colors ${!wishlistMode ? 'bg-hover text-text-primary' : 'text-text-tertiary hover:text-text-secondary'}`}
+            >
+              Hub
+            </button>
+            <button
+              type="button"
+              onClick={() => setGalleryMode('wishlist')}
+              className={`px-2 py-1 rounded cursor-pointer transition-colors flex items-center gap-1 ${wishlistMode ? 'bg-hover text-text-primary' : 'text-text-tertiary hover:text-text-secondary'}`}
+            >
+              Wishlist
+              {wishlistCount > 0 && <span className="tabular-nums opacity-70">{wishlistCount}</span>}
+            </button>
+          </div>
           <span className="text-[11px] text-text-tertiary">
-            {loading && resources.length === 0 ? 'Searching…' : `${totalFound.toLocaleString()} packages`}
+            {wishlistMode
+              ? wishlistLoading && !wishlistLoaded
+                ? 'Loading…'
+                : `${wishlistItems.length.toLocaleString()} wishlisted`
+              : loading && resources.length === 0
+                ? 'Searching…'
+                : `${totalFound.toLocaleString()} packages`}
           </span>
-          <button
-            type="button"
-            onClick={() => fetchResources(true, { forceRefresh: true })}
-            disabled={loading}
-            title="Refresh"
-            className="p-1 rounded text-text-tertiary hover:text-text-secondary disabled:opacity-30 cursor-pointer disabled:cursor-default"
-          >
-            <RefreshCw size={13} className={loading && resources.length === 0 ? 'animate-spin' : ''} />
-          </button>
+          {/* Network-backed hub search gets a cache-busting refresh; the wishlist
+              is local + live, so it needs none. */}
+          {!wishlistMode && (
+            <button
+              type="button"
+              onClick={() => fetchResources(true, { forceRefresh: true })}
+              disabled={refreshBusy}
+              title="Refresh"
+              className="p-1 rounded text-text-tertiary hover:text-text-secondary disabled:opacity-30 cursor-pointer disabled:cursor-default"
+            >
+              <RefreshCw size={13} className={refreshBusy ? 'animate-spin' : ''} />
+            </button>
+          )}
           <div className="flex-1" />
           <ThumbnailSizeSlider cardWidth={cardWidth} availableWidth={availableWidth} onCardWidthChange={setCardWidth} />
           <div className="flex items-center gap-px bg-elevated rounded p-0.5">
@@ -504,12 +591,16 @@ export default function HubView({ onNavigate }) {
 
         {/* Gallery */}
         <div ref={galleryRef} className="flex-1 overflow-y-auto p-4 relative">
-          {error && (
+          {!wishlistMode && error && (
             <div className="mb-4 px-4 py-3 rounded-lg bg-error/10 border border-error/20 text-error text-xs select-text cursor-text">
               {error}
             </div>
           )}
-          {resources.length === 0 && (loading || !sort) ? (
+          {(
+            wishlistMode
+              ? wishlistItems.length === 0 && wishlistLoading && !wishlistLoaded
+              : resources.length === 0 && (loading || !sort)
+          ) ? (
             <div
               className="grid gap-3 content-start"
               style={{ gridTemplateColumns: `repeat(auto-fill,minmax(min(${cardWidth}px,100%),1fr))` }}
@@ -524,7 +615,7 @@ export default function HubView({ onNavigate }) {
                 className="grid gap-3 content-start"
                 style={{ gridTemplateColumns: `repeat(auto-fill,minmax(min(${cardWidth}px,100%),1fr))` }}
               >
-                {visibleResources.map((r) => (
+                {galleryItems.map((r) => (
                   <HubCard
                     key={r.resource_id}
                     resource={r}
@@ -534,20 +625,31 @@ export default function HubView({ onNavigate }) {
                     onPromote={handlePromote}
                     onFilterAuthor={handleFilterAuthor}
                     mode={cardMode}
-                    hideType={selectedType !== 'All'}
+                    hideType={!wishlistMode && selectedType !== 'All'}
+                    wishlist={wishlistMode}
                   />
                 ))}
               </div>
-              {/* Infinite scroll sentinel */}
-              {page < totalPages && <div ref={sentinelRef} className="h-1" />}
-              {loading && resources.length > 0 && (
+              {/* Infinite scroll sentinel (hub search only — the wishlist loads all rows at once) */}
+              {!wishlistMode && page < totalPages && <div ref={sentinelRef} className="h-1" />}
+              {!wishlistMode && loading && resources.length > 0 && (
                 <div className="flex items-center justify-center py-6">
                   <Loader2 size={20} className="animate-spin text-accent-blue" />
                   <span className="text-[11px] text-text-tertiary ml-2">Loading more…</span>
                 </div>
               )}
-              {!loading && sort && resources.length === 0 && (
+              {!wishlistMode && !loading && sort && resources.length === 0 && (
                 <div className="text-center py-16 text-text-tertiary text-sm">No packages found</div>
+              )}
+              {wishlistMode && wishlistLoaded && wishlistItems.length === 0 && (
+                <div className="max-w-sm mx-auto text-center py-16 text-text-tertiary text-sm flex flex-col items-center gap-2">
+                  <Pin size={28} className="opacity-40" />
+                  <p>Your wishlist is empty.</p>
+                  <p className="text-[12px] text-text-tertiary/80">
+                    Open a package and tap the <Pin size={12} className="inline align-[-1px]" /> button in its details
+                    to add it here.
+                  </p>
+                </div>
               )}
             </>
           )}
@@ -908,6 +1010,8 @@ function HubDetail({
 
   const rid = String(resourceId)
   const { state: installState, dlInfo, installStatus } = useHubInstallState(rid, { isExternal })
+  const wishlisted = useWishlistStore((s) => s.ids.has(rid))
+  const toggleWishlist = useWishlistStore((s) => s.toggle)
   const librarySelectRef = installStatus.filename || dlInfo?.packageRef || pkg._localFilename
   const dlInstallDep = useDownloadStore((s) => s.installDep)
 
@@ -1209,6 +1313,15 @@ function HubDetail({
                   {formatNumber(parseInt(pkg.reaction_score || '0', 10))}
                 </span>
               </span>
+              <button
+                type="button"
+                onClick={() => toggleWishlist(pkg)}
+                title={wishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
+                aria-label={wishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
+                className={`ml-auto -my-1 p-1 rounded cursor-pointer transition-colors ${wishlisted ? 'text-accent-blue' : 'text-text-tertiary hover:text-text-secondary'}`}
+              >
+                <Pin size={15} fill={wishlisted ? 'currentColor' : 'none'} />
+              </button>
             </div>
 
             {/* Dates */}

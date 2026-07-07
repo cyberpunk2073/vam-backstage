@@ -5,8 +5,10 @@ import {
   upsertHubResourceDetail,
   upsertHubResourceSearch,
   upsertHubResourceFind,
+  markWishlistItemUnavailable,
   transact,
 } from '../db.js'
+import { notify } from '../notify.js'
 import { invalidatePackagesJsonCache } from './packages-json.js'
 import {
   canonicalizeLicense,
@@ -181,14 +183,29 @@ export async function getResourceDetail(resourceId) {
   const cached = lruGet(cache.details, key)
   if (cached) return cached
 
-  const data = await hubPost({
-    action: 'getResourceDetail',
-    latest_image: 'Y',
-    resource_id: key,
-  })
+  let data
+  try {
+    data = await hubPost({
+      action: 'getResourceDetail',
+      latest_image: 'Y',
+      resource_id: key,
+    })
+  } catch (err) {
+    // The Hub returns `{status:'error', error:'Resource not found.'}` for a gone
+    // resource (see docs/API.md) — hubPost rethrows that as the error message.
+    // That's distinct from a transient network/HTTP failure ("Hub API <status>"),
+    // so only the definitive not-found stamps a wishlisted item unavailable; a
+    // later successful fetch clears the flag via the refresh hook.
+    if (/resource not found/i.test(err.message)) {
+      try {
+        if (markWishlistItemUnavailable(key)) notify('wishlist:updated')
+      } catch {}
+    }
+    throw err
+  }
 
   try {
-    upsertHubResourceDetail(key, data)
+    if (upsertHubResourceDetail(key, data)) notify('wishlist:updated')
   } catch {}
   lruSet(cache.details, key, data, MAX_DETAILS)
   return data
@@ -216,7 +233,7 @@ export async function getResourceDetailByName(packageName) {
   )
 
   try {
-    if (data?.resource_id) upsertHubResourceDetail(String(data.resource_id), data)
+    if (data?.resource_id && upsertHubResourceDetail(String(data.resource_id), data)) notify('wishlist:updated')
   } catch {}
   lruSet(cache.details, key, data, MAX_DETAILS)
   if (data?.resource_id) lruSet(cache.details, String(data.resource_id), data, MAX_DETAILS)

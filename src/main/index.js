@@ -10,6 +10,7 @@ import { initDownloadManager, onNetworkOnline } from './downloads/manager.js'
 import { startWatcher, stopWatcher } from './watcher.js'
 import { warmFileWatcherBackend } from './watcher-warm.js'
 import { resolvePackageThumbnails } from './thumb-resolver.js'
+import { runStartupMigrations } from './startup-migrations.js'
 import { initNotify, notify } from './notify.js'
 import { initLogForward, forwardLogToRenderer, flushBufferedLogs } from './log-forward.js'
 import { runScan } from './scanner/index.js'
@@ -281,6 +282,7 @@ function initBackend() {
   if (IS_CLIENT) return
 
   openDatabase()
+  runStartupMigrations()
   try {
     const removed = gcOrphanLabels()
     if (removed > 0) console.info(`[labels] gc removed ${removed} orphan label${removed === 1 ? '' : 's'} at startup`)
