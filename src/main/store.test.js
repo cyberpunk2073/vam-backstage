@@ -16,6 +16,7 @@ import {
   getStats,
   isRealUrl,
   resolveHubDownloadUrl,
+  setPrefsMap,
 } from './store.js'
 import { setPackagesIndexForTests } from './hub/packages-json.js'
 
@@ -635,6 +636,25 @@ describe('buildFromDb — extracted-preset ownership', () => {
     const local = getFilteredContents().find((c) => c.internalPath === `${EXTRACTED_DIR}/Preset_Author - NoMatch.vap`)
     expect(local?.extractedFrom).toBeNull()
     expect(getPackageDetail('Author.Pkg.1.var').contents.some((c) => c.extracted)).toBe(false)
+  })
+
+  it("rolls a favorited extracted preset into the owner package's card aggregate", async () => {
+    const db = getDb()
+    seedSceneWithPerson(db, 'Author.Pkg.1.var')
+    const presetPath = `${EXTRACTED_DIR}/Preset_Author - Demo.vap`
+    seedLocalLook(db, presetPath)
+    try {
+      setPrefsMap(new Map([[`__local__/${presetPath}`, { hidden: false, favorite: true }]]))
+      buildFromDb()
+
+      // Extracted presets stay out of contentCount (they'd double-count across
+      // versions), but their favorite state surfaces on the owner card.
+      const pkg = getFilteredPackages().find((p) => p.filename === 'Author.Pkg.1.var')
+      expect(pkg?.favoriteContentCount).toBe(1)
+      expect(pkg?.contentCount).toBe(1) // just the scene, not the extracted preset
+    } finally {
+      setPrefsMap(new Map())
+    }
   })
 
   it('derives localDisabled and still attributes a `.vap.disabled` preset', async () => {

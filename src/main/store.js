@@ -696,6 +696,13 @@ function enrichPackageSummary(pkg) {
       if (c.favorite) favoriteContentCount++
     }
   }
+  // Presets extracted from this package's scenes are loose (`__local__`) files, so
+  // they're kept out of `contentByPackage`/`contentCount` to avoid cross-version
+  // double counting. Their favorite state is still this package's content, though,
+  // so roll it into the owner's card aggregate.
+  for (const c of extractedByPackage.get(pkg.filename) || []) {
+    if (c.favorite) favoriteContentCount++
+  }
   const removableSize = removableSizeMap.get(pkg.filename) || 0
   const derivedType = pkg.type ?? null
   const effectiveType = effectivePackageType(pkg)

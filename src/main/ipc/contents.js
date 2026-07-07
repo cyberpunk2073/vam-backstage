@@ -52,6 +52,8 @@ export function registerContentHandlers() {
     await setFavorite(vamDir, packageFilename, internalPath, newFav)
     updatePref(packageFilename, internalPath, 'favorite', newFav)
     notify('contents:updated')
+    // Package cards show a per-package favorite aggregate, so refresh them too.
+    notify('packages:updated')
     return { ok: true, favorite: newFav }
   })
 
@@ -78,6 +80,8 @@ export function registerContentHandlers() {
       updatePref(packageFilename, internalPath, 'favorite', favorite)
     }
     notify('contents:updated')
+    // Package cards show a per-package favorite aggregate, so refresh them too.
+    notify('packages:updated')
     return { ok: true }
   })
 }

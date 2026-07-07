@@ -62,12 +62,28 @@ import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
 import { StorageStateChip } from '@/components/StorageStateChip'
 
 const SORT_OPTIONS = ['Recently installed', 'Name A-Z', 'Package', 'Type']
+
+/** The package whose install / type / storage state governs a content row.
+ *  Extracted presets are loose (`__local__`) files owned by a real `.var`, so they
+ *  defer to that source package; everything else uses its own package. Plain local
+ *  content resolves to `undefined` (the `__local__` sentinel isn't in the package
+ *  map) and callers apply sane defaults for it. */
+const governingPackage = (c) => c.sourcePackage ?? c.package
+
 /** Extracted presets follow their owning (source) package's state; a `.vap.disabled`
- *  loose file is disabled on its own. Plain rows use their own package. */
+ *  loose file is disabled on its own. Plain local content has no real package and
+ *  defaults to enabled. */
 const isPackageDisabled = (c) => {
   if (c.localDisabled) return true
-  const owner = c.sourcePackage ?? c.package
-  return !isPackageActive(owner?.storageState ?? 'enabled')
+  return !isPackageActive(governingPackage(c)?.storageState ?? 'enabled')
+}
+
+/** Installed = governed by a direct (leaf) install. Extracted presets defer to their
+ *  source package; plain local content has no real package and counts as installed. */
+const contentIsInstalled = (c) => {
+  const owner = governingPackage(c)
+  if (owner) return !!owner.isDirect
+  return isLocalPackage(c.packageFilename)
 }
 
 function matchesContentPackageStatus(c, packageStatusFilter) {
@@ -109,9 +125,8 @@ function contentMatchesSelectedLabels(c, selectedLabelIds) {
 function matchesContentPackageFilter(c, packageFilter) {
   if (packageFilter === 'all') return true
   if (packageFilter === 'local') return isLocalPackage(c.packageFilename)
-  if (isLocalPackage(c.packageFilename)) return false
-  if (packageFilter === 'installed') return !!c.package?.isDirect
-  return !c.package?.isDirect
+  if (packageFilter === 'installed') return contentIsInstalled(c)
+  return !contentIsInstalled(c)
 }
 
 /** Shared sidebar facet pipeline; pass `omit` to skip one dimension being counted/filtered. */
@@ -126,7 +141,11 @@ function applyContentSidebarFilters(baseItems, ctx, omit = {}) {
   if (!omit.selectedPackageTypes && ctx.selectedPackageTypes.length > 0) {
     const ptSet = new Set(ctx.selectedPackageTypes)
     items = items.filter((c) => {
-      const t = c.package?.type
+      // Plain local content isn't from a package, so it has no package type and
+      // counts as matching any type facet. Extracted presets use their owner's type.
+      const owner = governingPackage(c)
+      if (!owner && isLocalPackage(c.packageFilename)) return true
+      const t = owner?.type
       if (ptSet.has('Other') && !isCoreLibraryCategory(t)) return true
       return ptSet.has(libraryTypeBadgeLabel(t))
     })
@@ -316,10 +335,18 @@ export default function ContentView({ onNavigate, navContext }) {
       { selectedPackageTypes: true },
     )
     const counts = { _total: items.length }
+    // Plain local content matches any type facet, so it's added to every bucket.
+    let anyType = 0
     for (const c of items) {
-      const label = libraryTypeBadgeLabel(c.package?.type)
+      const owner = governingPackage(c)
+      if (!owner && isLocalPackage(c.packageFilename)) {
+        anyType++
+        continue
+      }
+      const label = libraryTypeBadgeLabel(owner?.type)
       counts[label] = (counts[label] || 0) + 1
     }
+    if (anyType) for (const t of LIBRARY_FILTER_TYPES) counts[t] = (counts[t] || 0) + anyType
     return counts
   }, [
     baseFiltered,
@@ -346,13 +373,16 @@ export default function ContentView({ onNavigate, navContext }) {
       },
       { packageFilter: true },
     )
+    // Buckets overlap by design: extracted presets and plain local content are
+    // installed-by-default yet also count as Local, so each facet is tallied
+    // independently against the same predicate the filter uses.
     let installed = 0,
       dependency = 0,
       local = 0
     for (const c of items) {
-      if (isLocalPackage(c.packageFilename)) local++
-      else if (c.package?.isDirect) installed++
+      if (contentIsInstalled(c)) installed++
       else dependency++
+      if (isLocalPackage(c.packageFilename)) local++
     }
     return { all: items.length, installed, dependency, local }
   }, [
