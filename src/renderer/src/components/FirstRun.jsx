@@ -252,12 +252,9 @@ function BetaWarningStep({ onContinue }) {
       </div>
 
       <p className="m-0 mb-4 text-[13px] text-white/50 leading-[1.7] text-left">
-        This is untested beta software. Before using, copy your <strong className="text-white/55">AddonPackages</strong>{' '}
-        and <strong className="text-white/55">AddonPackagesFilePrefs</strong> folders somewhere safe.
-      </p>
-
-      <p className="m-0 mb-7 text-[13px] text-white/45 leading-[1.7] text-left">
-        Like, seriously, you may lose all your shit. You&apos;ve been warned.
+        This is a beta software. Before using, we recommend to backup your{' '}
+        <strong className="text-white/55">AddonPackages</strong> and{' '}
+        <strong className="text-white/55">AddonPackagesFilePrefs</strong> folders.
       </p>
 
       <Button variant="gradient" size="lg" onClick={onContinue} className="w-full rounded-[10px] text-[13px]">
