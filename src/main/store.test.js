@@ -14,6 +14,8 @@ import {
   getTagCounts,
   getAuthorCounts,
   getStats,
+  isRealUrl,
+  resolveHubDownloadUrl,
 } from './store.js'
 import { setPackagesIndexForTests } from './hub/packages-json.js'
 
@@ -700,5 +702,29 @@ describe('buildFromDb — package summary enrichment', () => {
     buildFromDb()
     const p = getFilteredPackages().find((x) => x.filename === 'Rem.A.1.var')
     expect(p?.removableSize).toBe(15)
+  })
+})
+
+describe('resolveHubDownloadUrl', () => {
+  it('rejects broken ?file= URLs on both downloadUrl and urlHosted', () => {
+    expect(isRealUrl('https://hub.virtamate.com/resources/66186/download?file=')).toBe(false)
+    expect(
+      resolveHubDownloadUrl({
+        downloadUrl: 'null',
+        urlHosted: 'https://hub.virtamate.com/resources/66186/download?file=',
+      }),
+    ).toBe(null)
+    expect(
+      resolveHubDownloadUrl({
+        downloadUrl: 'https://hub.virtamate.com/resources/66186/download?file=584887',
+        urlHosted: 'https://hub.virtamate.com/resources/66186/download?file=',
+      }),
+    ).toBe('https://hub.virtamate.com/resources/66186/download?file=584887')
+    expect(
+      resolveHubDownloadUrl({
+        downloadUrl: 'null',
+        urlHosted: 'https://cdn.example.com/pkg.var',
+      }),
+    ).toBe('https://cdn.example.com/pkg.var')
   })
 })

@@ -258,7 +258,11 @@ export const useLibraryStore = create(
       },
 
       checkForUpdates: async ({ enrich = true } = {}) => {
-        const nonce = ++updateCheckNonce
+        // Only bump the nonce when starting a fresh enrichment pass. Background
+        // `packages:updated` refreshes pass enrich=false and must not abort an
+        // in-flight enrichment (which would leave downloadUrl stuck at null and
+        // then flip to "available" on the next full enrich with stale hub data).
+        const nonce = enrich ? ++updateCheckNonce : updateCheckNonce
         set({ updateCheckLoading: true })
         try {
           const data = await window.api.packages.checkUpdates()
@@ -271,7 +275,7 @@ export const useLibraryStore = create(
             updateCheckResults: data,
             updateCheckLoading: false,
             updateCheckLastChecked: Date.now(),
-            updateDetailsLoading: enrich,
+            updateDetailsLoading: enrich ? true : get().updateDetailsLoading,
           })
         } catch (err) {
           if (nonce !== updateCheckNonce) return

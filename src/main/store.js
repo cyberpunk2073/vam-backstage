@@ -127,8 +127,15 @@ function tryParse(json) {
   }
 }
 
-function isRealUrl(v) {
+export function isRealUrl(v) {
   return v && v !== 'null' && !String(v).endsWith('?file=')
+}
+
+/** Resolve a fetchable download URL from a Hub findPackages / hubFiles entry. */
+export function resolveHubDownloadUrl(hubFile) {
+  if (isRealUrl(hubFile?.downloadUrl)) return hubFile.downloadUrl
+  if (isRealUrl(hubFile?.urlHosted)) return hubFile.urlHosted
+  return null
 }
 
 function buildNonDownloadableRids() {

@@ -13,6 +13,7 @@ import {
   getPackageIndex,
   getGroupIndex,
   buildFromDb,
+  resolveHubDownloadUrl,
 } from '../store.js'
 import { resolveRef } from '../scanner/graph.js'
 import { setHubResourceId, setHubUserId, setHubDisplayName, upsertHubUser, setPackageHubMeta, transact } from '../db.js'
@@ -122,11 +123,7 @@ export function registerHubHandlers() {
     const out = {}
     const isReal = (v) => v && v !== 'null'
     for (const [ref, hubFile] of Object.entries(hubResults)) {
-      const url = isReal(hubFile.downloadUrl)
-        ? hubFile.downloadUrl
-        : isReal(hubFile.urlHosted)
-          ? hubFile.urlHosted
-          : null
+      const url = resolveHubDownloadUrl(hubFile)
       const available = !!(isReal(hubFile.filename) && url)
       out[ref] = {
         available,

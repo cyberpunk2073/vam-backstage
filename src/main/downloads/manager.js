@@ -41,6 +41,7 @@ import {
   getPackageIndex,
   getTransitiveMissingRefs,
   findLocalByFilename,
+  resolveHubDownloadUrl,
 } from '../store.js'
 import { readAllPrefs, hidePackageContent } from '../vam-prefs.js'
 import { recordOwnedPath } from '../watcher.js'
@@ -556,13 +557,7 @@ async function enqueueMissingDeps(detail, parentRef, autoQueueDeps = true) {
 }
 
 function resolveDownloadUrl(hubFile) {
-  if (hubFile.downloadUrl && hubFile.downloadUrl !== 'null' && !hubFile.downloadUrl.endsWith('?file=')) {
-    return hubFile.downloadUrl
-  }
-  if (hubFile.urlHosted && hubFile.urlHosted !== 'null') {
-    return hubFile.urlHosted
-  }
-  return null
+  return resolveHubDownloadUrl(hubFile)
 }
 
 export function getDownloadList() {

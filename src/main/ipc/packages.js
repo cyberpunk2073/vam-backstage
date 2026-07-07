@@ -35,6 +35,7 @@ import {
   patchTypeOverride,
   getFilteredContents,
   isNotDownloadable,
+  resolveHubDownloadUrl,
   getExtractedByPackage,
 } from '../store.js'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
@@ -546,14 +547,9 @@ export function registerPackageHandlers() {
     // can't actually serve, and the install IPC then fails with "No download URL".
     for (const stem of packageStems) enriched[stem] = { fileSize: null, downloadUrl: null }
     for (const [stem, hubFile] of Object.entries(results)) {
-      const url = isReal(hubFile.downloadUrl)
-        ? hubFile.downloadUrl
-        : isReal(hubFile.urlHosted)
-          ? hubFile.urlHosted
-          : null
       enriched[stem] = {
         fileSize: isReal(hubFile.file_size) ? parseInt(hubFile.file_size, 10) || null : null,
-        downloadUrl: url,
+        downloadUrl: resolveHubDownloadUrl(hubFile),
       }
     }
     return enriched
