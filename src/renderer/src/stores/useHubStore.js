@@ -59,6 +59,18 @@ export const useHubStore = create(
       sort: '',
       license: 'Any',
 
+      // Wishlist gallery filters/sort — client-side only (the wishlist is a local
+      // list, never a hub query), independent from the hub search filters above so
+      // the two modes never clobber each other. `wlSort` values are the local sort
+      // keys defined in HubView (WISHLIST_SORTS); default 'added' = created_at DESC.
+      wlSearch: '',
+      wlType: 'All',
+      wlTags: [],
+      wlPaid: 'all',
+      wlAuthor: '',
+      wlLicense: 'Any',
+      wlSort: 'added',
+
       detailResource: null,
       detailData: null,
       detailLoading: false,
@@ -88,6 +100,13 @@ export const useHubStore = create(
       setSelectedHubTags: (selectedHubTags) => set({ selectedHubTags }),
       setSort: (sort) => set({ sort }),
       setLicense: (license) => set({ license }),
+      setWlSearch: (wlSearch) => set({ wlSearch }),
+      setWlType: (wlType) => set({ wlType }),
+      setWlTags: (wlTags) => set({ wlTags }),
+      setWlPaid: (wlPaid) => set({ wlPaid }),
+      setWlAuthor: (wlAuthor) => set({ wlAuthor }),
+      setWlLicense: (wlLicense) => set({ wlLicense }),
+      setWlSort: (wlSort) => set({ wlSort }),
       setCardMode: (cardMode) => set({ cardMode }),
       setCardWidth: (cardWidth) => set({ cardWidth }),
       setGalleryMode: (galleryMode) => set({ galleryMode }),
@@ -276,6 +295,12 @@ export const useHubStore = create(
       authorSearch: asString,
       license: asString,
       sort: asString,
+      wlType: asString,
+      wlTags: asArray,
+      wlPaid: oneOf(['all', 'free', 'paid']),
+      wlAuthor: asString,
+      wlLicense: asString,
+      wlSort: asString,
       cardMode: oneOf(['minimal', 'medium']),
       cardWidth: asCardWidth,
       galleryMode: oneOf(GALLERY_MODES),

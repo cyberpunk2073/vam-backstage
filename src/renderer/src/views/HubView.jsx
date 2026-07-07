@@ -51,7 +51,16 @@ import FilterPanel from '@/components/FilterPanel'
 import ResizeHandle from '@/components/ResizeHandle'
 import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
 import { useIsDev } from '@/hooks/useIsDev'
-import { LICENSE_FILTER_OPTIONS, getHubResourceLicense } from '@/lib/licenses'
+import {
+  LICENSE_FILTER_OPTIONS,
+  COMMERCIAL_USE_ALLOWED_LICENSE_FILTER,
+  NONCOMMERCIAL_USE_ALLOWED_LICENSE_FILTER,
+  getHubResourceLicense,
+  canonicalizeLicense,
+  isCommercialUseAllowed,
+  isNonCommercialUseAllowed,
+} from '@/lib/licenses'
+import { searchAndTerms, haystacksMatchAllTerms } from '@shared/search-text.js'
 import { LicenseTag } from '@/components/LicenseTag'
 import { Tag } from '@/components/ui/tag'
 import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
@@ -62,6 +71,102 @@ const HUB_SEARCH_DEBOUNCE_MS = 320
 const HUB_GALLERY_GRID_GAP_PX = 12
 /** IntersectionObserver rootMargin (bottom): load next page before user reaches the list end */
 const HUB_LOAD_MORE_MARGIN_BOTTOM_PX = 1600
+
+/**
+ * Local sort options for the wishlist gallery. Unlike the hub sort list (which
+ * comes from the server and includes server-only notions like relevance), these
+ * all map to fields present in the stored snapshot, so sorting is client-side.
+ * `added` (default) reproduces the original fixed created_at DESC order.
+ *
+ * Deliberately NO "recently updated": `last_update` is frozen in the snapshot at
+ * add / last-detail-open time, so a package updated afterward would sort as if it
+ * never changed — the one field whose staleness corrupts the sort's own premise.
+ * Downloads/rating/likes are also snapshot-stale, but only in magnitude (accepted
+ * staleness policy) — relative order stays broadly right, so they're kept.
+ */
+const WISHLIST_SORTS = [
+  { value: 'added', label: 'Recently added' },
+  { value: 'author', label: 'Author (A–Z)' },
+  { value: 'name', label: 'Name (A–Z)' },
+  { value: 'downloads', label: 'Downloads' },
+  { value: 'rating', label: 'Rating' },
+  { value: 'likes', label: 'Reaction Score' },
+]
+
+const wlNum = (v) => parseInt(v || '0', 10) || 0
+/** Tiebreaker: most recently wishlisted first (matches the default order). */
+const wlByAdded = (a, b) => (b._wishlistedAt || 0) - (a._wishlistedAt || 0)
+const WISHLIST_SORT_FNS = {
+  added: wlByAdded,
+  downloads: (a, b) => wlNum(b.download_count) - wlNum(a.download_count) || wlByAdded(a, b),
+  rating: (a, b) => (parseFloat(b.rating_avg) || 0) - (parseFloat(a.rating_avg) || 0) || wlByAdded(a, b),
+  likes: (a, b) => wlNum(b.reaction_score) - wlNum(a.reaction_score) || wlByAdded(a, b),
+  name: (a, b) => String(a.title || '').localeCompare(String(b.title || '')) || wlByAdded(a, b),
+  author: (a, b) => String(a.username || '').localeCompare(String(b.username || '')) || wlByAdded(a, b),
+}
+
+/**
+ * Tags on the stored snapshot mirror the hub detail `tags` field: a single
+ * comma-separated string (same shape the library persists to `hub_tags`). Parse
+ * to a lowercased list, matching the library's `packageMatchesSelectedTags`.
+ */
+function parseSnapshotTags(r) {
+  if (!r.tags) return []
+  return String(r.tags)
+    .toLowerCase()
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean)
+}
+
+function wishlistMatchesLicense(r, license) {
+  if (license === 'Any') return true
+  const lic = getHubResourceLicense(r)
+  if (license === COMMERCIAL_USE_ALLOWED_LICENSE_FILTER) return isCommercialUseAllowed(lic) === true
+  if (license === NONCOMMERCIAL_USE_ALLOWED_LICENSE_FILTER) return isNonCommercialUseAllowed(lic) === true
+  return canonicalizeLicense(lic) === canonicalizeLicense(license)
+}
+
+/** All wishlist filter dimensions, in a fixed key order for facet cross-filtering. */
+const WISHLIST_FILTER_KEYS = ['search', 'type', 'tags', 'paid', 'author', 'license']
+
+/**
+ * Build one predicate per filter dimension bound to the current filter state.
+ * Keeping them separate lets the gallery AND each facet reuse the same logic:
+ * the gallery ANDs them all, while a facet's counts AND every dimension *except*
+ * its own (standard cross-filtered faceting).
+ */
+function wishlistPredicates({ search, type, tags, paid, author, license }) {
+  const terms = searchAndTerms(search)
+  const wantTags = (tags || []).map((t) => t.toLowerCase())
+  const aq = author ? author.toLowerCase() : ''
+  return {
+    search: (r) => !terms.length || haystacksMatchAllTerms([r.title, r.username, r.tag_line], terms),
+    type: (r) => type === 'All' || r.type === type,
+    tags: (r) => {
+      if (!wantTags.length) return true
+      const rt = parseSnapshotTags(r)
+      return wantTags.every((t) => rt.includes(t))
+    },
+    paid: (r) => paid === 'all' || (paid === 'free' ? r.category === 'Free' : r.category === 'Paid'),
+    author: (r) => !aq || (r.username || '').toLowerCase().includes(aq),
+    license: (r) => wishlistMatchesLicense(r, license),
+  }
+}
+
+/** Items passing every filter dimension except `exclude` — the input set for that facet's counts. */
+function wishlistItemsExcept(items, preds, exclude) {
+  const keys = WISHLIST_FILTER_KEYS.filter((k) => k !== exclude)
+  return items.filter((r) => keys.every((k) => preds[k](r)))
+}
+
+/** Apply the full wishlist filter/sort state to the raw snapshot list. */
+function filterAndSortWishlist(items, state) {
+  const preds = wishlistPredicates(state)
+  // `.filter` always returns a fresh array, so sorting never mutates the store's.
+  const result = items.filter((r) => WISHLIST_FILTER_KEYS.every((k) => preds[k](r)))
+  return result.sort(WISHLIST_SORT_FNS[state.sort] || WISHLIST_SORT_FNS.added)
+}
 
 export default function HubView({ onNavigate }) {
   const {
@@ -78,6 +183,13 @@ export default function HubView({ onNavigate }) {
     selectedHubTags,
     sort,
     license,
+    wlSearch,
+    wlType,
+    wlTags,
+    wlPaid,
+    wlAuthor,
+    wlLicense,
+    wlSort,
     detailResource,
     detailData,
     detailNonce,
@@ -93,6 +205,13 @@ export default function HubView({ onNavigate }) {
     setSelectedHubTags,
     setSort,
     setLicense,
+    setWlSearch,
+    setWlType,
+    setWlTags,
+    setWlPaid,
+    setWlAuthor,
+    setWlLicense,
+    setWlSort,
     setCardMode,
     setCardWidth,
     fetchResources,
@@ -217,9 +336,24 @@ export default function HubView({ onNavigate }) {
     return resources.slice(0, fullRowCount)
   }, [resources, page, totalPages, columnCount])
 
-  // Gallery data source: wishlist mode reads the local store (fixed created_at
-  // DESC order, no pagination); hub mode reads the paged search results.
-  const galleryItems = wishlistMode ? wishlistItems : visibleResources
+  // Wishlist filtering/sorting is client-side over the locally stored snapshots.
+  const wishlistFiltered = useMemo(
+    () =>
+      filterAndSortWishlist(wishlistItems, {
+        search: wlSearch,
+        type: wlType,
+        tags: wlTags,
+        paid: wlPaid,
+        author: wlAuthor,
+        license: wlLicense,
+        sort: wlSort,
+      }),
+    [wishlistItems, wlSearch, wlType, wlTags, wlPaid, wlAuthor, wlLicense, wlSort],
+  )
+
+  // Gallery data source: wishlist mode reads the filtered local snapshots; hub
+  // mode reads the paged search results.
+  const galleryItems = wishlistMode ? wishlistFiltered : visibleResources
 
   // Filter changes → reset to page 1 and fetch
   useEffect(() => {
@@ -339,13 +473,14 @@ export default function HubView({ onNavigate }) {
 
   const handleFilterAuthor = useCallback(
     (author) => {
-      // An author filter only applies to hub search — snap to hub mode so the
-      // filter is visible and takes effect (otherwise the user is left on the
-      // wishlist tab wondering why nothing happened).
-      setGalleryMode('hub')
-      setAuthorSearch(author)
+      // Filter within the current mode: in wishlist mode this drives the local
+      // wishlist author filter, in hub mode the hub search. The gallery mode can't
+      // change while a detail overlay is open (the toggle sits behind it), so
+      // reading it live also correctly reflects where the detail was opened from.
+      if (useHubStore.getState().galleryMode === 'wishlist') setWlAuthor(author)
+      else setAuthorSearch(author)
     },
-    [setAuthorSearch, setGalleryMode],
+    [setAuthorSearch, setWlAuthor],
   )
 
   const handlePromote = useCallback((filename, hubResourceId) => {
@@ -361,8 +496,12 @@ export default function HubView({ onNavigate }) {
 
   // --- Prev/Next navigation through the current gallery list ---
   // The currently shown package: detailData once loaded, else the opening stub.
-  // The list stepped through is the wishlist in wishlist mode, else hub search.
-  const detailList = wishlistMode ? wishlistItems : resources
+  // The list stepped through is the filtered wishlist in wishlist mode, else hub
+  // search. A ref mirrors the filtered list so the pager callbacks (which read
+  // fresh state to dodge stale closures) can step through exactly what's shown.
+  const detailList = wishlistMode ? wishlistFiltered : resources
+  const wishlistViewRef = useRef(wishlistFiltered)
+  wishlistViewRef.current = wishlistFiltered
   const currentDetailId = detailResource ? String(detailData?.resource_id ?? detailResource.resource_id ?? '') : ''
   const detailIdx = currentDetailId ? detailList.findIndex((r) => String(r.resource_id) === currentDetailId) : -1
   const canPrevDetail = detailIdx > 0
@@ -377,7 +516,7 @@ export default function HubView({ onNavigate }) {
 
   const handleDetailPrev = useCallback(() => {
     const { galleryMode, resources, detailResource, detailData } = useHubStore.getState()
-    const list = galleryMode === 'wishlist' ? useWishlistStore.getState().items : resources
+    const list = galleryMode === 'wishlist' ? wishlistViewRef.current : resources
     const cur = detailResource ? String(detailData?.resource_id ?? detailResource.resource_id ?? '') : ''
     const idx = cur ? list.findIndex((r) => String(r.resource_id) === cur) : -1
     if (idx > 0) openDetail(list[idx - 1])
@@ -398,7 +537,7 @@ export default function HubView({ onNavigate }) {
     const { galleryMode, resources, detailResource, detailData, page, totalPages } = useHubStore.getState()
     const cur = detailResource ? String(detailData?.resource_id ?? detailResource.resource_id ?? '') : ''
     if (galleryMode === 'wishlist') {
-      const list = useWishlistStore.getState().items
+      const list = wishlistViewRef.current
       const idx = cur ? list.findIndex((r) => String(r.resource_id) === cur) : -1
       if (idx >= 0 && idx < list.length - 1) openDetail(list[idx + 1])
       return
@@ -512,17 +651,139 @@ export default function HubView({ onNavigate }) {
     ],
   )
 
+  // Wishlist facets. The displayed counts are proper cross-filtered facets: each
+  // dimension counts items matching all the OTHER active filters, so they update
+  // as filters toggle (standard filter-panel behaviour).
+  const wishlistFacets = useMemo(() => {
+    const preds = wishlistPredicates({
+      search: wlSearch,
+      type: wlType,
+      tags: wlTags,
+      paid: wlPaid,
+      author: wlAuthor,
+      license: wlLicense,
+    })
+    const bucket = (items, fn) => {
+      const m = new Map()
+      for (const r of items) fn(r, m)
+      return m
+    }
+    const addType = (r, m) => r.type && m.set(r.type, (m.get(r.type) || 0) + 1)
+    const typeFacet = bucket(wishlistItemsExcept(wishlistItems, preds, 'type'), addType)
+
+    const tagCounts = {}
+    for (const r of wishlistItemsExcept(wishlistItems, preds, 'tags'))
+      for (const t of parseSnapshotTags(r)) tagCounts[t] = (tagCounts[t] || 0) + 1
+
+    const authorCounts = {}
+    for (const r of wishlistItemsExcept(wishlistItems, preds, 'author'))
+      if (r.username) authorCounts[r.username] = (authorCounts[r.username] || 0) + 1
+
+    let free = 0
+    let paid = 0
+    for (const r of wishlistItemsExcept(wishlistItems, preds, 'paid')) {
+      if (r.category === 'Free') free++
+      else if (r.category === 'Paid') paid++
+    }
+
+    // Type list mirrors the hub shape: the fixed core categories always come
+    // first in canonical order, then extra hub types fall into the "N more"
+    // spoiler. That tail's membership + order use OVERALL counts (across the
+    // whole wishlist, not the facet) so it stays put as filters toggle; only the
+    // number shown on each row is the live facet count. With All + the core
+    // categories filling the collapse threshold, the tail hides by default like
+    // the hub sidebar.
+    const coreSet = new Set(CONTENT_TYPES)
+    const typeOverall = bucket(wishlistItems, addType)
+    const typeItems = [
+      { value: 'All', label: 'All' },
+      ...CONTENT_TYPES.map((t) => ({ value: t, label: t, color: getTypeColor(t), count: typeFacet.get(t) || 0 })),
+      ...[...typeOverall.entries()]
+        .filter(([t]) => !coreSet.has(t))
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .map(([t]) => ({ value: t, label: t, color: getTypeColor(t), count: typeFacet.get(t) || 0 })),
+    ]
+    const paidItems = [
+      { value: 'all', label: 'All' },
+      { value: 'free', label: 'Free', count: free },
+      { value: 'paid', label: 'Paid', count: paid },
+    ]
+    return { typeItems, paidItems, authorCounts, tagCounts }
+  }, [wishlistItems, wlSearch, wlType, wlTags, wlPaid, wlAuthor, wlLicense])
+
+  const wishlistSections = useMemo(
+    () => [
+      {
+        key: 'wl-type',
+        label: 'Type',
+        type: 'list',
+        value: wlType,
+        onChange: setWlType,
+        items: wishlistFacets.typeItems,
+      },
+      {
+        key: 'wl-paid',
+        label: 'Pricing',
+        type: 'list',
+        value: wlPaid,
+        onChange: setWlPaid,
+        items: wishlistFacets.paidItems,
+      },
+      {
+        key: 'wl-tags',
+        label: 'Tags',
+        type: 'tags-autocomplete',
+        value: wlTags,
+        onChange: setWlTags,
+        suggestions: wishlistFacets.tagCounts,
+        placeholder: 'Filter by tags…',
+      },
+      {
+        key: 'wl-author',
+        label: 'Author',
+        type: 'text-autocomplete',
+        value: wlAuthor,
+        onChange: setWlAuthor,
+        suggestions: wishlistFacets.authorCounts,
+        placeholder: 'Filter by author…',
+      },
+      {
+        key: 'wl-license',
+        label: 'License',
+        type: 'select',
+        value: wlLicense,
+        onChange: setWlLicense,
+        options: LICENSE_FILTER_OPTIONS,
+      },
+      { key: 'wl-sort', label: 'Sort by', type: 'select', value: wlSort, onChange: setWlSort, options: WISHLIST_SORTS },
+    ],
+    [
+      wlType,
+      wlTags,
+      wlPaid,
+      wlAuthor,
+      wlLicense,
+      wlSort,
+      wishlistFacets,
+      setWlType,
+      setWlTags,
+      setWlPaid,
+      setWlAuthor,
+      setWlLicense,
+      setWlSort,
+    ],
+  )
+
   const refreshBusy = loading && resources.length === 0
 
   return (
     <div className="h-full flex min-w-0 relative">
-      {/* Filters apply to hub search only. In wishlist mode the panel stays in place
-          (no layout shift) but is disabled — wishlist-specific filters come later. */}
+      {/* Both modes use the same panel; hub filters drive the server query while
+          wishlist filters run client-side over the local snapshots. */}
       <FilterPanel
-        search={searchDraft}
-        onSearchChange={handleSearchChange}
-        sections={sections}
-        disabled={wishlistMode}
+        search={wishlistMode ? wlSearch : searchDraft}
+        onSearchChange={wishlistMode ? setWlSearch : handleSearchChange}
+        sections={wishlistMode ? wishlistSections : sections}
       />
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
@@ -549,7 +810,9 @@ export default function HubView({ onNavigate }) {
             {wishlistMode
               ? wishlistLoading && !wishlistLoaded
                 ? 'Loading…'
-                : `${wishlistItems.length.toLocaleString()} wishlisted`
+                : wishlistFiltered.length !== wishlistItems.length
+                  ? `${wishlistFiltered.length.toLocaleString()} of ${wishlistItems.length.toLocaleString()} wishlisted`
+                  : `${wishlistItems.length.toLocaleString()} wishlisted`
               : loading && resources.length === 0
                 ? 'Searching…'
                 : `${totalFound.toLocaleString()} packages`}
@@ -625,7 +888,7 @@ export default function HubView({ onNavigate }) {
                     onPromote={handlePromote}
                     onFilterAuthor={handleFilterAuthor}
                     mode={cardMode}
-                    hideType={!wishlistMode && selectedType !== 'All'}
+                    hideType={wishlistMode ? wlType !== 'All' : selectedType !== 'All'}
                     wishlist={wishlistMode}
                   />
                 ))}
@@ -649,6 +912,11 @@ export default function HubView({ onNavigate }) {
                     Open a package and tap the <Pin size={12} className="inline align-[-1px]" /> button in its details
                     to add it here.
                   </p>
+                </div>
+              )}
+              {wishlistMode && wishlistItems.length > 0 && wishlistFiltered.length === 0 && (
+                <div className="text-center py-16 text-text-tertiary text-sm">
+                  No wishlisted packages match your filters
                 </div>
               )}
             </>
