@@ -259,6 +259,10 @@ export function enrichNewPackages(filenames) {
 
   const toFetch = []
   const toResolveByName = []
+  // The watcher calls this AFTER its own buildFromDb(), so synchronous writes
+  // below (id link + cached-detail apply) won't reach the in-memory store — and
+  // thus packages:list — without the rebuild+notify gated on this flag.
+  let syncChanged = false
   for (const filename of filenames) {
     const parts = filename.replace(/\.var$/i, '').split('.')
     if (parts.length < 3) continue
@@ -273,13 +277,14 @@ export function enrichNewPackages(filenames) {
 
     const rid = String(entry.resourceId)
     try {
-      setHubResourceId(filename, rid)
+      if (setHubResourceId(filename, rid) > 0) syncChanged = true
     } catch {}
 
     const cached = getHubResource(rid)
     if (cached?.hub_json) {
       try {
         applyHubDetailToPackage(filename, JSON.parse(cached.hub_json))
+        syncChanged = true
       } catch {}
       continue
     }
@@ -287,10 +292,22 @@ export function enrichNewPackages(filenames) {
     toFetch.push({ rid, filename })
   }
 
-  if (toFetch.length > 0) runDetailFetches(toFetch)
+  if (syncChanged) {
+    buildFromDb({ skipGraph: true })
+    notify('packages:updated')
+    resolvePackageThumbnails()
+  }
+
+  // On any completion, surface it: refresh the in-memory store, repaint the
+  // library, and fetch the now-linked Hub thumbnail.
+  if (toFetch.length > 0) {
+    runDetailFetches(toFetch).then(() => {
+      buildFromDb({ skipGraph: true })
+      notify('packages:updated')
+      resolvePackageThumbnails()
+    })
+  }
   if (toResolveByName.length > 0) {
-    // On any hit, surface it: refresh the in-memory store, repaint the library,
-    // and fetch the now-linked Hub thumbnail.
     runNameResolution(toResolveByName).then((hits) => {
       if (hits > 0) {
         buildFromDb({ skipGraph: true })
