@@ -1,13 +1,29 @@
 import { Eye, EyeOff, Star, ChevronDown, ChevronRight } from 'lucide-react'
 import { toast } from './Toast'
-import { openLightbox } from './ThumbnailLightbox'
+import { openLightbox, openLightboxGallery } from './ThumbnailLightbox'
 import { getContentGradient } from '@/lib/utils'
 import { useThumbnail } from '@/hooks/useThumbnail'
 import { useContentCategoryExpandedStore } from '@/stores/useContentCategoryExpandedStore'
 
-export function ContentRow({ item, onSelect, suppressHiddenStyle = false }) {
-  const thumbKey = item.thumbnailPath ? `ct:${item.packageFilename}\0${item.thumbnailPath}` : null
+export function contentThumbKey(item) {
+  return item.thumbnailPath ? `ct:${item.packageFilename}\0${item.thumbnailPath}` : null
+}
+
+/** Flat, display-ordered list of thumbnail entries for lightbox gallery navigation.
+ *  Only items with a thumbnail are included. */
+export function buildContentGallery(itemsInOrder) {
+  const out = []
+  for (const c of itemsInOrder) {
+    const key = contentThumbKey(c)
+    if (key) out.push({ key, id: c.id, label: c.displayName })
+  }
+  return out
+}
+
+export function ContentRow({ item, onSelect, gallery, suppressHiddenStyle = false }) {
+  const thumbKey = contentThumbKey(item)
   const thumbUrl = useThumbnail(thumbKey)
+  const galleryIndex = gallery ? gallery.findIndex((g) => g.id === item.id) : -1
 
   const handleToggleHidden = async (e) => {
     e.stopPropagation()
@@ -45,7 +61,8 @@ export function ContentRow({ item, onSelect, suppressHiddenStyle = false }) {
           thumbUrl
             ? (e) => {
                 e.stopPropagation()
-                openLightbox(thumbUrl)
+                if (galleryIndex >= 0) openLightboxGallery(gallery, galleryIndex)
+                else openLightbox(thumbUrl)
               }
             : undefined
         }
@@ -86,7 +103,7 @@ export function ContentRow({ item, onSelect, suppressHiddenStyle = false }) {
   )
 }
 
-export function ContentCategory({ items, label, onSelectRow, suppressHiddenRowStyle = false }) {
+export function ContentCategory({ items, label, onSelectRow, gallery, suppressHiddenRowStyle = false }) {
   const expanded = useContentCategoryExpandedStore((s) => s.expandedByType[label] ?? true)
   const toggleCategory = useContentCategoryExpandedStore((s) => s.toggle)
   const allHidden = items.every((i) => i.hidden)
@@ -146,7 +163,13 @@ export function ContentCategory({ items, label, onSelectRow, suppressHiddenRowSt
       {expanded && (
         <div className="border border-border rounded overflow-hidden divide-y divide-border">
           {items.map((item) => (
-            <ContentRow key={item.id} item={item} onSelect={onSelectRow} suppressHiddenStyle={suppressHiddenRowStyle} />
+            <ContentRow
+              key={item.id}
+              item={item}
+              onSelect={onSelectRow}
+              gallery={gallery}
+              suppressHiddenStyle={suppressHiddenRowStyle}
+            />
           ))}
         </div>
       )}

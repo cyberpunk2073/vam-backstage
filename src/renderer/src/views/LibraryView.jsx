@@ -74,7 +74,7 @@ import { LibraryCard, LibraryTableRow, DepRow, AuthorAvatar, AuthorLink } from '
 import { LabelsRow } from '@/components/labels/LabelsRow'
 import { AddLabelButton } from '@/components/labels/AddLabelButton'
 import { StorageStateChip } from '@/components/StorageStateChip'
-import { ContentCategory } from '@/components/ContentCategory'
+import { ContentCategory, buildContentGallery } from '@/components/ContentCategory'
 import FileTreeDialog from '@/components/FileTreeDialog'
 import { openLightbox } from '@/components/ThumbnailLightbox'
 import { VirtualGrid, VirtualList } from '@/components/VirtualGrid'
@@ -1788,6 +1788,17 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
     if (!grouped[c.category]) grouped[c.category] = []
     grouped[c.category].push(c)
   })
+  // Flat, display-ordered gallery so arrow keys step through every content
+  // thumbnail in the section (across categories) once the lightbox is open.
+  const contentGallery = useMemo(() => {
+    const g = {}
+    ;(pkg.contents || []).forEach((c) => {
+      if (!g[c.category]) g[c.category] = []
+      g[c.category].push(c)
+    })
+    const types = Object.keys(g).sort(compareContentTypes)
+    return buildContentGallery(types.flatMap((t) => g[t]))
+  }, [pkg.contents])
 
   const hasDependents = pkg.dependents?.length > 0
   const suppressDisablePackageWarning = useLibraryStore((s) => s.suppressDisablePackageWarning)
@@ -2195,6 +2206,7 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                     key={type}
                     items={items}
                     label={type}
+                    gallery={contentGallery}
                     suppressHiddenRowStyle={galleryVisibilityFilter === 'hidden'}
                   />
                 ))}

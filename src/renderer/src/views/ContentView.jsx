@@ -47,7 +47,7 @@ import { LabelApplyPopover } from '@/components/labels/LabelApplyPopover'
 import { useAddLabel } from '@/components/labels/useAddLabel'
 import { useLabelObjects } from '@/components/labels/useLabelObjects'
 import { bulkStateMap } from '@/components/labels/labelApplyState'
-import { ContentCategory } from '@/components/ContentCategory'
+import { ContentCategory, buildContentGallery } from '@/components/ContentCategory'
 import FilterPanel from '@/components/FilterPanel'
 import ResizeHandle from '@/components/ResizeHandle'
 import { VirtualGrid, VirtualList } from '@/components/VirtualGrid'
@@ -1625,7 +1625,10 @@ function PackageEnableButton({ pkg, pkgTitle }) {
 }
 
 function MoreFromPackage({ grouped, onSelectRelated, suppressHiddenRowStyle = false }) {
-  const types = Object.keys(grouped).sort(compareContentTypes)
+  const types = useMemo(() => Object.keys(grouped).sort(compareContentTypes), [grouped])
+  // Flat, display-ordered gallery so arrow keys step through every thumbnail in
+  // the section (across categories) once the lightbox is open.
+  const gallery = useMemo(() => buildContentGallery(types.flatMap((type) => grouped[type])), [types, grouped])
 
   return (
     <div className="space-y-2">
@@ -1635,6 +1638,7 @@ function MoreFromPackage({ grouped, onSelectRelated, suppressHiddenRowStyle = fa
           items={grouped[type]}
           label={type}
           onSelectRow={onSelectRelated}
+          gallery={gallery}
           suppressHiddenRowStyle={suppressHiddenRowStyle}
         />
       ))}
