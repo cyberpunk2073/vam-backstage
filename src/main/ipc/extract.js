@@ -1,5 +1,12 @@
 import { ipcMain } from 'electron'
-import { probeScene, probePackage, resolveExtractedSource, runExtract, runExtractBatch } from '../scenes/extract.js'
+import {
+  probeScene,
+  probePackage,
+  resolveExtractedSource,
+  runExtract,
+  runExtractBatch,
+  runExtractForPackageFilenames,
+} from '../scenes/extract.js'
 import { runLocalScan } from '../scanner/local.js'
 import { buildFromDb } from '../store.js'
 import { getSetting } from '../db.js'
@@ -51,6 +58,15 @@ export function registerExtractHandlers() {
           kind,
           mode,
         })
+    if (result.written.length > 0) await refreshAfterExtract()
+    return result
+  })
+
+  ipcMain.handle('extract:run-for-packages', async (_, { filenames, kind, sourceTypes }) => {
+    if (!Array.isArray(filenames) || !filenames.length) throw new Error('filenames required')
+    if (kind !== 'appearance' && kind !== 'outfit') throw new Error('kind must be appearance|outfit')
+    if (!Array.isArray(sourceTypes) || !sourceTypes.length) throw new Error('sourceTypes required')
+    const result = await runExtractForPackageFilenames({ filenames, kind, sourceTypes })
     if (result.written.length > 0) await refreshAfterExtract()
     return result
   })

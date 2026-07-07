@@ -137,6 +137,7 @@ const api = {
     probePackage: (fn) => invoke('extract:probe-package', fn),
     resolveSource: (p) => invoke('extract:resolve-source', p),
     run: (p) => invoke('extract:run', p),
+    runForPackages: (p) => invoke('extract:run-for-packages', p),
   },
   shell: {
     openExternal: (url) => invoke('shell:openExternal', url),

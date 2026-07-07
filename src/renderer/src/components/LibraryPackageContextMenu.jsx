@@ -43,10 +43,14 @@ import { useDownloadStore } from '@/stores/useDownloadStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
 import { useLabelsStore } from '@/stores/useLabelsStore'
 
+function bulkSelectedPackagesFromStore() {
+  const { bulkSelectedFilenames, packageByFilename } = useLibraryStore.getState()
+  return bulkSelectedFilenames.map((fn) => packageByFilename.get(fn)).filter(Boolean)
+}
+
 async function runLibraryBulkToggleEnabledFromStore() {
   if (useLibraryStore.getState().bulkToggleIntent) return
-  const { packages, bulkSelectedFilenames } = useLibraryStore.getState()
-  const items = packages.filter((p) => bulkSelectedFilenames.includes(p.filename))
+  const items = bulkSelectedPackagesFromStore()
   if (!items.length) return
   const nEnabled = items.filter((p) => isPackageActive(p.storageState)).length
   const allEnabled = nEnabled === items.length
@@ -71,8 +75,7 @@ async function runLibraryBulkToggleEnabledFromStore() {
 }
 
 async function runLibraryBulkRemoveFromStore() {
-  const { packages, bulkSelectedFilenames } = useLibraryStore.getState()
-  const items = packages.filter((p) => bulkSelectedFilenames.includes(p.filename))
+  const items = bulkSelectedPackagesFromStore()
   const direct = items.filter((p) => p.isDirect)
   const dep = items.filter((p) => !p.isDirect)
   try {
@@ -117,34 +120,32 @@ async function runExtractAndToast(actionLabel, payload) {
 }
 
 async function runLibraryBulkExtract({ kind, sources, sourceNoun, actionLabel }) {
-  const { packages, bulkSelectedFilenames } = useLibraryStore.getState()
-  const selected = packages.filter((p) => bulkSelectedFilenames.includes(p.filename))
-  if (!selected.length) return
+  const { bulkSelectedFilenames } = useLibraryStore.getState()
+  if (!bulkSelectedFilenames.length) return
   try {
-    const details = await Promise.all(selected.map((p) => window.api.packages.detail(p.filename).catch(() => null)))
-    const items = []
-    for (const d of details) {
-      if (!d?.contents) continue
-      for (const c of d.contents) {
-        if (sources.has(c.type)) {
-          items.push({ packageFilename: c.packageFilename, internalPath: c.internalPath })
-        }
-      }
-    }
-    if (!items.length) {
-      toast(`No ${sourceNoun} in selected package${selected.length === 1 ? '' : 's'}`, 'info')
+    const r = await window.api.extract.runForPackages({
+      filenames: bulkSelectedFilenames,
+      kind,
+      sourceTypes: [...sources],
+    })
+    const w = r.written?.length ?? 0
+    const s = r.skipped?.length ?? 0
+    if (w === 0 && s === 0 && !(r.errors?.length ?? 0)) {
+      toast(
+        `No ${sourceNoun} to ${actionLabel.toLowerCase()} in selected package${bulkSelectedFilenames.length === 1 ? '' : 's'}`,
+        'info',
+      )
       return
     }
-    await runExtractAndToast(actionLabel, { items, kind })
+    toastExtractResult(`${actionLabel} presets`, r)
   } catch (err) {
     toast(`${actionLabel} failed: ${err.message}`)
   }
 }
 
 async function runLibraryBulkPromoteFromStore() {
-  const { packages, bulkSelectedFilenames } = useLibraryStore.getState()
-  const fnames = packages
-    .filter((p) => bulkSelectedFilenames.includes(p.filename) && !p.isDirect)
+  const fnames = bulkSelectedPackagesFromStore()
+    .filter((p) => !p.isDirect)
     .map((p) => p.filename)
   if (!fnames.length) return
   try {

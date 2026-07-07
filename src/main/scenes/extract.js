@@ -387,3 +387,44 @@ export async function runExtractBatch({ items, kind, mode = 'create' }) {
   }
   return { written, skipped, errors }
 }
+
+function outputKeyForKind(kind) {
+  return kind === 'appearance' ? 'appearance' : 'clothing'
+}
+
+/**
+ * Collect per-scene extract rows with missing outputs across many packages.
+ * Uses `probePackage` (lightweight) rather than full package detail.
+ */
+export async function collectMissingExtractItems({ filenames, kind, sourceTypes }) {
+  if (kind !== 'appearance' && kind !== 'outfit') throw new Error(`Unknown kind: ${kind}`)
+  const sources = sourceTypes instanceof Set ? sourceTypes : new Set(sourceTypes)
+  const outKey = outputKeyForKind(kind)
+  const items = []
+  for (const filename of filenames) {
+    if (!filename) continue
+    const { scenes } = await probePackage(filename)
+    for (const scene of scenes || []) {
+      if (!sources.has(scene.type)) continue
+      const atomIds = []
+      for (const atom of scene.atoms || []) {
+        if (!atom.outputs?.[outKey]?.exists) atomIds.push(atom.atomId)
+      }
+      if (atomIds.length) {
+        items.push({
+          packageFilename: scene.packageFilename,
+          internalPath: scene.internalPath,
+          atomIds,
+        })
+      }
+    }
+  }
+  return items
+}
+
+/** Extract missing presets for every matching scene/look inside the given packages. */
+export async function runExtractForPackageFilenames({ filenames, kind, sourceTypes }) {
+  const items = await collectMissingExtractItems({ filenames, kind, sourceTypes })
+  if (!items.length) return { written: [], skipped: [], errors: [] }
+  return runExtractBatch({ items, kind })
+}
