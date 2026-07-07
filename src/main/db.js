@@ -576,6 +576,10 @@ export function setPackageDirect(filename, isDirect) {
   stmt('UPDATE packages SET is_direct = ? WHERE filename = ?').run(isDirect ? 1 : 0, filename)
 }
 
+export function touchPackageFirstSeen(filename) {
+  stmt('UPDATE packages SET first_seen_at = unixepoch() WHERE filename = ?').run(filename)
+}
+
 /** @param {string | null} typeOverride — null clears override (use scanned / Hub type) */
 export function setPackageTypeOverride(filename, typeOverride) {
   stmt('UPDATE packages SET type_override = ? WHERE filename = ?').run(

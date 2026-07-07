@@ -5,6 +5,7 @@ import { dirname, join } from 'path'
 import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
 import {
   setPackageDirect,
+  touchPackageFirstSeen,
   deletePackage,
   getSetting,
   setPackageTypeOverride,
@@ -374,6 +375,7 @@ export function registerPackageHandlers() {
     const filenames = normalizeFilenameArgs(filenameOrFilenames)
     for (const filename of filenames) {
       setPackageDirect(filename, true)
+      touchPackageFirstSeen(filename)
       const contents = getFilteredContents({ packageFilename: filename })
       const paths = contents.map((c) => c.internalPath)
       await unhidePackageContent(vamDir, filename, paths)
