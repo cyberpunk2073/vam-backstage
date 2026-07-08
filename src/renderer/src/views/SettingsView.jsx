@@ -816,28 +816,27 @@ export default function SettingsView() {
                   </div>
                 )}
                 <div className="flex items-end gap-2">
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-0" title={HOST_SERVE_TOOLTIP}>
                     <div className="text-xs text-text-primary font-medium flex items-center gap-1.5">
                       <Network size={14} className="text-text-tertiary shrink-0" />
                       Host this library
                     </div>
                     <div className="text-[11px] text-text-tertiary mt-0.5">
                       {remoteStatus?.running ? (
-                        <span
-                          title={
-                            localIps.all.length > 1
-                              ? `Enter one of these on the other device:\n${localIps.all.map((a) => `${a.address}:${remoteStatus.port} (${a.name})`).join('\n')}`
-                              : undefined
-                          }
-                        >
+                        <>
                           Reachable at{' '}
-                          <span className="font-mono text-text-secondary select-text cursor-text">
-                            {localIps.primary || 'this-pc'}
-                            {remoteStatus.port === DEFAULT_REMOTE_PORT ? '' : `:${remoteStatus.port}`}
-                          </span>
-                          {localIps.all.length > 1 && ` (+${localIps.all.length - 1} more)`} · {remoteStatus.clients}{' '}
-                          client{remoteStatus.clients === 1 ? '' : 's'} connected
-                        </span>
+                          <span
+                            className="select-text cursor-text"
+                            title={getLocalReachabilityTooltip(localIps, remoteStatus.port)}
+                          >
+                            <span className="font-mono text-text-secondary">
+                              {localIps.primary || 'this-pc'}
+                              {remoteStatus.port === DEFAULT_REMOTE_PORT ? '' : `:${remoteStatus.port}`}
+                            </span>
+                            {localIps.all.length > 1 && ` (+${localIps.all.length - 1} more)`}
+                          </span>{' '}
+                          · {remoteStatus.clients} client{remoteStatus.clients === 1 ? '' : 's'} connected
+                        </>
                       ) : (
                         'Run this on the PC that holds your library so other devices can connect to it.'
                       )}
@@ -864,10 +863,7 @@ export default function SettingsView() {
                   )}
                 </div>
 
-                <label
-                  className="flex items-center gap-3 cursor-pointer"
-                  title="Runs the normal app and hosts at the same time. For a headless server with no window, launch with --serve (or set VAM_SERVE)."
-                >
+                <label className="flex items-center gap-3 cursor-pointer" title={HOST_SERVE_TOOLTIP}>
                   <div className="flex-1 min-w-0">
                     <div className="text-xs text-text-primary font-medium">Start server on launch</div>
                     <div className="text-[11px] text-text-tertiary mt-0.5">
@@ -1129,6 +1125,14 @@ function getDisableBehaviorLabel(value, auxDirs) {
   const parts = dir.path.split(/[\\/]/).filter(Boolean)
   const basename = parts[parts.length - 1] || dir.path
   return `Move to ${basename}`
+}
+
+const HOST_SERVE_TOOLTIP =
+  'Runs the normal app and hosts at the same time. For a headless server with no window, launch with --serve (or set VAM_SERVE).'
+
+function getLocalReachabilityTooltip(localIps, port) {
+  if (localIps.all.length <= 1) return undefined
+  return `Enter one of these on the other device:\n${localIps.all.map((a) => `${a.address}:${port} (${a.name})`).join('\n')}`
 }
 
 function getDisableBehaviorTooltip(value, auxDirs) {
