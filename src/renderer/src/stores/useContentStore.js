@@ -189,8 +189,14 @@ export const useContentStore = create(
 
       toggleBulkSelect: (id) =>
         set((s) => {
-          const had = s.bulkSelectedIds.includes(id)
-          const next = had ? s.bulkSelectedIds.filter((x) => x !== id) : [...s.bulkSelectedIds, id]
+          // Seed the bulk list from the current single selection so Ctrl+Click extends it
+          // instead of starting from scratch (Card A stays selected when Ctrl+Clicking Card B).
+          const base =
+            s.bulkSelectedIds.length === 0 && s.selectedItem && s.selectedItem.id !== id
+              ? [s.selectedItem.id]
+              : s.bulkSelectedIds
+          const had = base.includes(id)
+          const next = had ? base.filter((x) => x !== id) : [...base, id]
           return {
             bulkSelectedIds: next,
             bulkAnchorId: id,

@@ -350,10 +350,14 @@ export const useLibraryStore = create(
 
       toggleBulkSelect: (filename) =>
         set((s) => {
-          const had = s.bulkSelectedFilenames.includes(filename)
-          const next = had
-            ? s.bulkSelectedFilenames.filter((x) => x !== filename)
-            : [...s.bulkSelectedFilenames, filename]
+          // Seed the bulk list from the current single selection so Ctrl+Click extends it
+          // instead of starting from scratch (Card A stays selected when Ctrl+Clicking Card B).
+          const base =
+            s.bulkSelectedFilenames.length === 0 && s.selectedDetail && s.selectedDetail.filename !== filename
+              ? [s.selectedDetail.filename]
+              : s.bulkSelectedFilenames
+          const had = base.includes(filename)
+          const next = had ? base.filter((x) => x !== filename) : [...base, filename]
           return {
             bulkSelectedFilenames: next,
             bulkAnchorFilename: filename,
