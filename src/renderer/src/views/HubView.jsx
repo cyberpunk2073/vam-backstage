@@ -1749,10 +1749,7 @@ function HubDetail({
                 value={addressDraft}
                 spellCheck={false}
                 onChange={(e) => setAddressDraft(e.target.value)}
-                onFocus={(e) => {
-                  setAddressFocused(true)
-                  e.target.select()
-                }}
+                onFocus={() => setAddressFocused(true)}
                 onBlur={() => {
                   setAddressFocused(false)
                   setAddressDraft(displayUrl)
