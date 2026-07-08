@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { create } from 'zustand'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useThumbnail } from '@/hooks/useThumbnail'
@@ -26,6 +26,11 @@ export function openLightboxGallery(items, index = 0) {
 }
 
 const NAV_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'j', 'k'])
+
+const OPEN_OVERLAY = 'animate-in fade-in-0 duration-100'
+const CLOSE_OVERLAY = 'animate-out fade-out-0 duration-100'
+const OPEN_PHOTO = 'animate-in zoom-in-90 fade-in duration-100'
+const CLOSE_PHOTO = 'animate-out zoom-out-90 fade-out duration-100'
 
 export function ThumbnailLightbox() {
   const src = useLightboxStore((s) => s.src)
@@ -70,9 +75,24 @@ export function ThumbnailLightbox() {
     return () => window.removeEventListener('keydown', onKey, true)
   }, [open])
 
-  if (!open) return null
+  const lastSrcRef = useRef(null)
+  // 'closed' unmounts; 'open' shows the enter state; 'closing' plays the exit
+  // animation while the store has already cleared, then returns to 'closed'.
+  const [phase, setPhase] = useState('closed')
+  const closing = phase === 'closing'
 
-  const displaySrc = isGallery ? galleryUrl : src
+  useEffect(() => {
+    setPhase((p) => (open ? 'open' : p === 'closed' ? 'closed' : 'closing'))
+  }, [open])
+
+  if (phase === 'closed') return null
+
+  const resolvedSrc = isGallery ? galleryUrl : src
+  if (resolvedSrc) lastSrcRef.current = resolvedSrc
+  // Hold the last image whenever the live src is unavailable: while the next
+  // gallery thumb loads, and through the close animation (the store clears src
+  // synchronously). Otherwise the overlay flashes through to the window behind.
+  const displaySrc = resolvedSrc || lastSrcRef.current
   const step = (delta) => {
     const st = useLightboxStore.getState()
     const list = st.items
@@ -82,8 +102,20 @@ export function ThumbnailLightbox() {
     st.setIndex((cur + delta + n) % n)
   }
 
+  const overlayAnim = closing ? CLOSE_OVERLAY : OPEN_OVERLAY
+  const photoAnim = closing ? CLOSE_PHOTO : OPEN_PHOTO
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={close}>
+    <div
+      className={`fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm${closing ? ' pointer-events-none' : ''} ${overlayAnim}`}
+      onClick={closing ? undefined : close}
+      onAnimationEnd={(e) => {
+        if (closing && e.target === e.currentTarget) {
+          setPhase('closed')
+          lastSrcRef.current = null
+        }
+      }}
+    >
       {isGallery && total > 1 && (
         <button
           type="button"
@@ -99,16 +131,15 @@ export function ThumbnailLightbox() {
       )}
       {displaySrc ? (
         <img
-          key={displaySrc}
           src={displaySrc}
-          className="thumb max-w-[80vw] max-h-[80vh] rounded-lg shadow-2xl object-contain animate-in zoom-in-90 fade-in duration-100"
+          className={`thumb max-w-[80vw] max-h-[80vh] rounded-lg shadow-2xl object-contain ${photoAnim}`}
           onClick={(e) => e.stopPropagation()}
           alt={label || ''}
           draggable={false}
         />
       ) : (
         <div
-          className="flex items-center justify-center w-64 h-64 rounded-lg bg-white/5 text-white/50 text-sm"
+          className={`flex items-center justify-center w-64 h-64 rounded-lg bg-white/5 text-white/50 text-sm ${photoAnim}`}
           onClick={(e) => e.stopPropagation()}
         >
           No preview
