@@ -36,8 +36,8 @@ export const CHANGELOG = [
       },
       {
         kind: 'fixed',
-        title: 'Bulk preset extraction',
-        body: 'Extracting presets from many packages at once works reliably again.',
+        title: 'Bulk right-click actions',
+        body: 'Right-click menu actions now reliably apply to every selected item.',
       },
       {
         kind: 'fixed',
