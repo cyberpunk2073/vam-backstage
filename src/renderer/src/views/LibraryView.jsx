@@ -69,6 +69,7 @@ import { useLabelsStore } from '@/stores/useLabelsStore'
 import { useContentStore } from '@/stores/useContentStore'
 import { useDownloadStore } from '@/stores/useDownloadStore'
 import FilterPanel from '@/components/FilterPanel'
+import { SearchOnHubButton } from '@/components/SearchOnHubButton'
 import ResizeHandle from '@/components/ResizeHandle'
 import { LibraryCard, LibraryTableRow, DepRow, AuthorAvatar, AuthorLink } from '@/components/PackageCard'
 import { LabelsRow } from '@/components/labels/LabelsRow'
@@ -525,6 +526,7 @@ export default function LibraryView({ onNavigate, navContext }) {
         onChange: setAuthorSearch,
         suggestions: authorCounts,
         placeholder: 'Filter by author…',
+        titleAction: authorSearch ? <SearchOnHubButton author={authorSearch} onNavigate={onNavigate} /> : null,
       },
       {
         key: 'license',
@@ -581,6 +583,7 @@ export default function LibraryView({ onNavigate, navContext }) {
       setLicense,
       setPrimarySort,
       setSecondarySort,
+      onNavigate,
     ],
   )
 

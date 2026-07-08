@@ -49,6 +49,7 @@ import { useLabelObjects } from '@/components/labels/useLabelObjects'
 import { bulkStateMap } from '@/components/labels/labelApplyState'
 import { ContentCategory, buildContentGallery } from '@/components/ContentCategory'
 import FilterPanel from '@/components/FilterPanel'
+import { SearchOnHubButton } from '@/components/SearchOnHubButton'
 import ResizeHandle from '@/components/ResizeHandle'
 import { VirtualGrid, VirtualList } from '@/components/VirtualGrid'
 import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
@@ -604,6 +605,7 @@ export default function ContentView({ onNavigate, navContext }) {
         onChange: setAuthorSearch,
         suggestions: authorCounts,
         placeholder: 'Filter by author…',
+        titleAction: authorSearch ? <SearchOnHubButton author={authorSearch} onNavigate={onNavigate} /> : null,
       },
       {
         key: 'primarySort',
@@ -654,6 +656,7 @@ export default function ContentView({ onNavigate, navContext }) {
       setSelectedLabelIds,
       setPrimarySort,
       setSecondarySort,
+      onNavigate,
     ],
   )
 

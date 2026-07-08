@@ -725,20 +725,29 @@ function SectionWrapper({ section, children }) {
 
   return (
     <div className="px-3 pb-3">
-      {isCollapsible ? (
-        <button
-          type="button"
-          onClick={toggleCollapsed}
-          className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-text-tertiary font-medium mb-1.5 cursor-pointer hover:text-text-secondary transition-colors w-full"
-        >
-          {collapsed ? <ChevronRight size={11} className="shrink-0" /> : <ChevronDown size={11} className="shrink-0" />}
-          {section.label}
-        </button>
-      ) : (
-        <div className="text-[10px] uppercase tracking-wider text-text-tertiary font-medium mb-1.5">
-          {section.label}
-        </div>
-      )}
+      <div className="flex items-center gap-1 mb-1.5">
+        {isCollapsible ? (
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            className={`flex items-center gap-1 text-[10px] uppercase tracking-wider text-text-tertiary font-medium cursor-pointer hover:text-text-secondary transition-colors min-w-0 ${section.titleAction ? '' : 'flex-1'}`}
+          >
+            {collapsed ? (
+              <ChevronRight size={11} className="shrink-0" />
+            ) : (
+              <ChevronDown size={11} className="shrink-0" />
+            )}
+            <span className="truncate">{section.label}</span>
+          </button>
+        ) : (
+          <div
+            className={`min-w-0 text-[10px] uppercase tracking-wider text-text-tertiary font-medium ${section.titleAction ? '' : 'flex-1'}`}
+          >
+            {section.label}
+          </div>
+        )}
+        {section.titleAction}
+      </div>
       {(!isCollapsible || !collapsed) && children}
     </div>
   )

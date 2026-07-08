@@ -118,10 +118,12 @@ export const useHubStore = create(
         try {
           const options = await window.api.hub.filters()
           set({ filterOptions: options })
-          const list = options.sort || []
+          const list = options?.sort || []
           let nextSort = get().sort
-          if (!nextSort && list.length) nextSort = list[0]
-          else if (nextSort && !list.includes(nextSort)) nextSort = list[0] || ''
+          // Only adopt/repair sort from a non-empty option list; never wipe a
+          // valid persisted sort just because the list came back empty (that
+          // would stall the search effect, which bails on an empty sort).
+          if (list.length && (!nextSort || !list.includes(nextSort))) nextSort = list[0]
           set({ sort: nextSort })
         } catch (err) {
           console.error('Failed to fetch hub filters:', err)
@@ -286,6 +288,16 @@ export const useHubStore = create(
           license: 'Any',
           page: 1,
         })
+      },
+
+      // Jump to a Hub search scoped to one author. Only sets the author and
+      // switches to hub mode — the other hub filters are left as-is (the wishlist
+      // filters that were narrowing the view are deliberately NOT mirrored, since
+      // the models aren't 1:1 and the intent is to broaden to the creator). The
+      // authorSearch change drives HubView's fetch effect.
+      searchHubForAuthor: (author) => {
+        if (!author) return
+        set({ authorSearch: author, page: 1, galleryMode: 'hub' })
       },
     }),
     persistViewState('hub-view', {

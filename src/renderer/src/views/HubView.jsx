@@ -63,6 +63,7 @@ import {
 import { searchAndTerms, haystacksMatchAllTerms } from '@shared/search-text.js'
 import { LicenseTag } from '@/components/LicenseTag'
 import { Tag } from '@/components/ui/tag'
+import { SearchOnHubButton } from '@/components/SearchOnHubButton'
 import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
 
 /** Hub text search: avoid a network request on every keystroke */
@@ -746,6 +747,7 @@ export default function HubView({ onNavigate }) {
         onChange: setWlAuthor,
         suggestions: wishlistFacets.authorCounts,
         placeholder: 'Filter by author…',
+        titleAction: wlAuthor ? <SearchOnHubButton author={wlAuthor} /> : null,
       },
       {
         key: 'wl-license',

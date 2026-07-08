@@ -95,16 +95,31 @@ async function hubPost(body, { throwOnApiError = true } = {}) {
   return data
 }
 
+/**
+ * A usable getInfo payload has at least the type + sort pickers populated. We
+ * gate caching on this so a malformed/partial response (e.g. a proxy error page
+ * that still parsed as JSON, or a truncated body) is never written to the memory
+ * or on-disk cache — otherwise both short-circuit forever and the filter sidebar
+ * stays stuck on the core-only fallback until an explicit cache bust.
+ */
+function isValidFilters(data) {
+  return !!data && Array.isArray(data.type) && data.type.length > 0 && Array.isArray(data.sort) && data.sort.length > 0
+}
+
 export async function getFilters() {
   if (cache.filters) return cache.filters
   const persisted = getSetting(FILTERS_SETTINGS_KEY)
   if (persisted) {
     try {
-      cache.filters = JSON.parse(persisted)
-      return cache.filters
+      const parsed = JSON.parse(persisted)
+      if (isValidFilters(parsed)) {
+        cache.filters = parsed
+        return cache.filters
+      }
     } catch {}
   }
   const data = await hubPost({ action: 'getInfo' })
+  if (!isValidFilters(data)) throw new Error('Hub getInfo returned an unexpected shape')
   cache.filters = data
   setSetting(FILTERS_SETTINGS_KEY, JSON.stringify(data))
   return data
@@ -113,6 +128,7 @@ export async function getFilters() {
 /** Force-fetch fresh filters from Hub (bypasses memory + DB cache). */
 export async function refreshFilters() {
   const data = await hubPost({ action: 'getInfo' })
+  if (!isValidFilters(data)) throw new Error('Hub getInfo returned an unexpected shape')
   cache.filters = data
   setSetting(FILTERS_SETTINGS_KEY, JSON.stringify(data))
   return data
