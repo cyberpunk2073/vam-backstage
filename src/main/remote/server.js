@@ -1,9 +1,23 @@
 import { WebSocketServer } from 'ws'
 import { app } from 'electron'
+import { is } from '@electron-toolkit/utils'
 import { encode, decode } from '@shared/net-codec.js'
 import { DEFAULT_REMOTE_PORT } from '@shared/remote-config.js'
 import { getHandler } from './registry.js'
 import { getWindow } from '../notify.js'
+import { getSetting } from '../db.js'
+
+// The version gate on the client relaxes when a peer reports `dev` — true for
+// unpackaged runs and for packaged builds where DevTools/developer options have
+// been unlocked (both signal a user who knowingly runs mixed versions).
+function isDevMode() {
+  if (is.dev) return true
+  try {
+    return getSetting('developer_options_unlocked') === '1'
+  } catch {
+    return false
+  }
+}
 
 /**
  * LAN WebSocket bridge that re-exposes the captured ipcMain handlers (see
@@ -70,7 +84,7 @@ export function startServer(port = DEFAULT_REMOTE_PORT) {
         emitStatus()
       })
       ws.on('message', (raw) => handleMessage(ws, raw))
-      send(ws, { t: 'hello', version: app.getVersion(), dev: !app.isPackaged })
+      send(ws, { t: 'hello', version: app.getVersion(), dev: isDevMode() })
     })
   })
 }

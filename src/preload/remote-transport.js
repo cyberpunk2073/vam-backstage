@@ -1,5 +1,6 @@
 import { ipcRenderer } from 'electron'
 import { encode, decode } from '@shared/net-codec.js'
+import { isDevVersion } from '@shared/version.js'
 
 /**
  * Client-side transport used when this instance runs as a pure head
@@ -130,12 +131,15 @@ export function createRemoteTransport(url) {
   }
 
   function onHello(msg) {
-    // Exact app-version match required, relaxed when either side is dev.
+    // Exact app-version match required, but relaxed when either side is a dev
+    // build (`-dev.N`, churns every CI run) or has dev mode / DevTools unlocked
+    // (`localDev` / `msg.dev`) — those users are expected to run mixed versions.
     const mismatch = localVersion && msg.version && localVersion !== msg.version
-    if (mismatch && (localDev || msg.dev)) {
-      log(`version mismatch (server ${msg.version}, client ${localVersion}) allowed — dev build on one side`)
+    const relaxed = localDev || msg.dev || isDevVersion(localVersion) || isDevVersion(msg.version)
+    if (mismatch && relaxed) {
+      log(`version mismatch (server ${msg.version}, client ${localVersion}) allowed — dev build/mode on one side`)
     }
-    if (mismatch && !localDev && !msg.dev) {
+    if (mismatch && !relaxed) {
       fatal = `Version mismatch: server ${msg.version}, client ${localVersion}. Update both to the same version.`
       ready = false
       emitStatus()

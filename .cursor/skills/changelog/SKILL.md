@@ -15,11 +15,17 @@ Every note describes what changed in the user's experience - not what the develo
 - Each notable change gets its own note: benefit-focused title, 1-2 sentence body on what the user will notice.
 - Minor ones aggregate into "Many small improvements" (`improved`) and "Many small fixes" (`fixed`), one sentence of highlights each. Refactors, tests, deps are invisible to the user - omit them.
 - Order notes by importance.
+- Title is a few word sharp headline highlighting the most important changes.
 
 ## BBcode
 
 After work on the changelog is approved by developer, generate the BBcode release notes, post into code block in the chat
 
 ```
+Title: <update headline>
+
+[LIST]
 [*][B]Feature title:[/B] Feature description
+...
+[/LIST]
 ```
