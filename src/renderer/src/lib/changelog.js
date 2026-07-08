@@ -6,6 +6,47 @@
  */
 export const CHANGELOG = [
   {
+    version: '0.3.0',
+    date: '2026-07-08',
+    notes: [
+      {
+        kind: 'new',
+        title: 'Use your library from other devices',
+        body: 'New client-server mode lets a second computer on your network connect to your main library and browse, download, and manage packages remotely. Set it up in Settings.',
+      },
+      {
+        kind: 'new',
+        title: 'Wishlist for Hub packages',
+        body: 'Pin packages you want to grab later, right from Hub cards or the details panel, then browse them in the new Wishlist tab with its own search, filters, and sorting. Wishlisted packages stay visible even if they disappear from the Hub.',
+      },
+      {
+        kind: 'new',
+        title: 'Find more from an author on the Hub',
+        body: 'When filtering your library, content, or wishlist by author, a new arrow button next to the filter jumps straight to a Hub search for that creator.',
+      },
+      {
+        kind: 'improved',
+        title: 'Extracted presets know where they came from',
+        body: 'Presets extracted from packages are now tied to their source: they show an "extracted" badge, follow the package when it is disabled or removed, and can be re-extracted from the right-click menu to update them.',
+      },
+      {
+        kind: 'improved',
+        title: 'Many small improvements',
+        body: "Type any address into the Hub browser's address bar; flip through content thumbnails with arrow keys.",
+      },
+      {
+        kind: 'fixed',
+        title: 'Bulk preset extraction',
+        body: 'Extracting presets from many packages at once works reliably again.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Many small fixes',
+        body: 'The macOS installer no longer has signature issues, plus fixes to Hub link refresh and update checks.',
+      },
+    ],
+  },
+  {
     version: '0.2.5',
     date: '2026-07-03',
     notes: [
