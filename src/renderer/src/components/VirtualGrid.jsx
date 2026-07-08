@@ -138,8 +138,15 @@ export function VirtualGrid({
     (e) => {
       if (!onEmptyAreaPointerDown) return
       if (e.metaKey || e.ctrlKey) return
+      // React synthetic events bubble through portals along the React tree, so a
+      // pointerdown inside a portaled overlay (e.g. a card's context menu) reaches
+      // this handler even though the overlay is not a DOM child of the scroll
+      // container. Only treat clicks that truly landed inside the scroll element
+      // as empty-area clicks; otherwise a right-click menu interaction would clear
+      // the bulk selection mid-flight.
       const el = e.target
-      if (el instanceof Element && el.closest('[data-grid-card]')) return
+      if (!(el instanceof Element) || !e.currentTarget.contains(el)) return
+      if (el.closest('[data-grid-card]')) return
       onEmptyAreaPointerDown()
     },
     [onEmptyAreaPointerDown],
