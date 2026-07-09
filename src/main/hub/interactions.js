@@ -176,12 +176,14 @@ function parseResourcePage(html, finalUrl) {
   const rated = elementClassHas(html, 'button--like', 'is-active-like')
   const ratedDown = elementClassHas(html, 'button--unlike', 'is-active-like')
 
-  // The emoji reaction bar (SV ContentRatings). A thumbs-up "Like" is reaction id
-  // 1; the visitor's own reaction (if any) is the id carried by the bar's "Remove"
-  // trigger. Reactions are scoped to a resource *update*, so capture the update id
-  // the bar targets — the emoji-like toggle POSTs against it.
+  // The emoji reaction bar (SV ContentRatings). The visitor "liked" it if they
+  // left ANY reaction — not just the default thumbs-up (id 1) — so we keep the
+  // actual id: un-liking must re-post that same id (XenForo only toggles a
+  // reaction off when re-posted). Reactions are scoped to a resource *update*, so
+  // capture the update id the bar targets — the emoji-like toggle POSTs against it.
   const reactionUpdateId = parseReactionUpdateId(html)
-  const liked = parseVisitorReactionId(html) === 1
+  const visitorReactionId = parseVisitorReactionId(html)
+  const liked = visitorReactionId != null
 
   // The sidebar stats block carries fresh, reliably-placed counts (none are in
   // api.php): `favorites` and `reactions` (the emoji total, == the API's
@@ -200,6 +202,7 @@ function parseResourcePage(html, finalUrl) {
     rated,
     ratedDown,
     liked,
+    visitorReactionId,
     reactionUpdateId,
     reactionScore,
   }
@@ -257,6 +260,7 @@ export async function getResourceUserState(id) {
       rated: parsed.rated,
       ratedDown: parsed.ratedDown,
       liked: parsed.liked,
+      reactionId: parsed.visitorReactionId,
       reactionUpdateId: parsed.reactionUpdateId,
     })
     return {
@@ -382,19 +386,23 @@ export async function toggleRate(id, currentlyRated) {
 }
 
 /**
- * Toggle the visitor's emoji "Like" reaction (reaction id 1). Posting a reaction
- * id that is already the visitor's clears it (XenForo toggles), while posting it
- * when unset — or when a different reaction was set — makes Like the current one.
- * The response echoes `reactionId` (1 when set, null when cleared). Reactions are
- * scoped to a resource *update*, so we need the update id captured from the page.
+ * Toggle the visitor's reaction on the resource's update. Any existing reaction
+ * counts as "liked", not just the default thumbs-up (id 1). Un-liking re-posts the
+ * visitor's *current* id, since XenForo only toggles a reaction off when re-posted;
+ * liking from scratch posts the default Like (id 1). The response echoes the new
+ * reaction id (null once cleared) which we cache — so, e.g., un-liking a Starstruck
+ * (8), re-liking (now 1), then un-liking again correctly posts 1 the second time.
+ * Reactions are scoped to a resource *update*, so we need the update id from the page.
  */
 export async function toggleLike(id) {
   if (!(await isLoggedIn())) throw new HubAuthError()
   if (!reactionUpdateIdFor(id)) await getResourceUserState(id)
   const updateId = reactionUpdateIdFor(id)
   if (!updateId) throw new Error('Could not find this resource’s reaction target')
+  const currentReactionId = reactionIdFor(id)
+  const targetReactionId = currentReactionId ?? 1
   const json = await postWithRecovery(id, () => ({
-    url: `${HUB_ORIGIN}/resources/${id}/update/${updateId}/react?reaction_id=1`,
+    url: `${HUB_ORIGIN}/resources/${id}/update/${updateId}/react?reaction_id=${targetReactionId}`,
     body: {
       _xfRequestUri: canonicalPathFor(id),
       _xfWithData: 1,
@@ -402,8 +410,9 @@ export async function toggleLike(id) {
       _xfResponseType: 'json',
     },
   }))
-  const liked = json.reactionId === 1
-  updateSnapshot(id, { liked })
+  const reactionId = json.reactionId ?? null
+  const liked = reactionId != null
+  updateSnapshot(id, { liked, reactionId })
   return { liked }
 }
 
@@ -414,6 +423,11 @@ function canonicalPathFor(id) {
 
 function reactionUpdateIdFor(id) {
   return resourceState.get(String(id))?.reactionUpdateId || null
+}
+
+/** The visitor's current reaction id (null if none) — drives which id an un-like posts. */
+function reactionIdFor(id) {
+  return resourceState.get(String(id))?.reactionId ?? null
 }
 
 function updateSnapshot(id, patch) {
