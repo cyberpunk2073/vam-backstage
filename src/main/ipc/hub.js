@@ -21,6 +21,15 @@ import { setHubResourceId, setHubUserId, setHubDisplayName, upsertHubUser, setPa
 import { cacheAvatarsFromResources } from '../avatar-cache.js'
 import { notify } from '../notify.js'
 import { scanHubDetails } from '../hub/scanner.js'
+import {
+  isLoggedIn,
+  getResourceUserState,
+  toggleFavorite,
+  toggleBookmark,
+  toggleLike,
+  neutralResourceState,
+  HubAuthError,
+} from '../hub/interactions.js'
 
 export function registerHubHandlers() {
   ipcMain.handle('hub:filters', async () => {
@@ -34,6 +43,45 @@ export function registerHubHandlers() {
   ipcMain.handle('hub:scan-packages', async () => {
     return await scanHubDetails((data) => notify('hub-scan:progress', data))
   })
+
+  ipcMain.handle('hub:isLoggedIn', async () => {
+    try {
+      return await isLoggedIn()
+    } catch {
+      return false
+    }
+  })
+
+  ipcMain.handle('hub:resourceUserState', async (_, id) => {
+    try {
+      return await getResourceUserState(id)
+    } catch (e) {
+      console.warn('hub:resourceUserState failed:', e.message)
+      return neutralResourceState({ statusUnknown: true })
+    }
+  })
+
+  // Each toggle returns exactly the renderer's response shape; the auth/error
+  // handling around it is identical, so wrap once.
+  const withAuthGuard =
+    (fn) =>
+    async (...args) => {
+      try {
+        return { ok: true, ...(await fn(...args)) }
+      } catch (e) {
+        if (e instanceof HubAuthError) {
+          notify('hub:auth-changed', { loggedIn: false })
+          return { ok: false, reason: 'auth' }
+        }
+        return { ok: false, reason: 'error', message: e.message }
+      }
+    }
+
+  ipcMain.handle('hub:toggleFavorite', (_, id) => withAuthGuard(toggleFavorite)(id))
+  ipcMain.handle('hub:toggleBookmark', (_, id, currentlyBookmarked) =>
+    withAuthGuard(toggleBookmark)(id, currentlyBookmarked),
+  )
+  ipcMain.handle('hub:toggleLike', (_, id, currentlyLiked) => withAuthGuard(toggleLike)(id, currentlyLiked))
 
   ipcMain.handle('hub:search', async (_, params) => {
     const result = await searchResources(params)
