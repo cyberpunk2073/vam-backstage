@@ -1158,6 +1158,7 @@ function HubDetail({
   const webviewRef = useRef(null)
   const [canGoBack, setCanGoBack] = useState(false)
   const [canGoForward, setCanGoForward] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
   const [urlCopied, setUrlCopied] = useState(false)
 
   const resourceId = detail?.resource_id || resource.resource_id
@@ -1316,6 +1317,8 @@ function HubDetail({
     const ignoreAbort = (e) => {
       if (e.errorCode === -3 || e.errorCode === -2) e.preventDefault()
     }
+    const onStartLoading = () => setIsLoading(true)
+    const onStopLoading = () => setIsLoading(false)
 
     // Inject a click-interceptor into the guest page so that:
     //  • External links (non-hub origin) open in the user's default browser via shell.openExternal.
@@ -1403,12 +1406,16 @@ function HubDetail({
     wv.addEventListener('did-navigate', syncNav)
     wv.addEventListener('did-navigate-in-page', syncNav)
     wv.addEventListener('did-fail-load', ignoreAbort)
+    wv.addEventListener('did-start-loading', onStartLoading)
+    wv.addEventListener('did-stop-loading', onStopLoading)
     wv.addEventListener('dom-ready', injectLinkHandler)
     wv.addEventListener('console-message', onConsoleMessage)
     return () => {
       wv.removeEventListener('did-navigate', syncNav)
       wv.removeEventListener('did-navigate-in-page', syncNav)
       wv.removeEventListener('did-fail-load', ignoreAbort)
+      wv.removeEventListener('did-start-loading', onStartLoading)
+      wv.removeEventListener('did-stop-loading', onStopLoading)
       wv.removeEventListener('dom-ready', injectLinkHandler)
       wv.removeEventListener('console-message', onConsoleMessage)
     }
@@ -1417,6 +1424,7 @@ function HubDetail({
   const goBack = useCallback(() => webviewRef.current?.goBack(), [])
   const goForward = useCallback(() => webviewRef.current?.goForward(), [])
   const reload = useCallback(() => webviewRef.current?.reload(), [])
+  const stop = useCallback(() => webviewRef.current?.stop(), [])
   const isDev = useIsDev()
   const openWebviewDevTools = useCallback(() => {
     const wv = webviewRef.current
@@ -1931,8 +1939,13 @@ function HubDetail({
             <Button variant="ghost" size="icon-sm" onClick={goForward} disabled={!canGoForward}>
               <ArrowRight size={14} />
             </Button>
-            <Button variant="ghost" size="icon-sm" onClick={reload}>
-              <RotateCw size={13} />
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={isLoading ? stop : reload}
+              title={isLoading ? 'Stop' : 'Reload'}
+            >
+              {isLoading ? <X size={14} /> : <RotateCw size={13} />}
             </Button>
             <div className="flex-1 min-w-0 h-7 bg-elevated border border-border rounded px-2.5 flex items-center gap-2 ml-1 focus-within:border-accent-blue/60 transition-colors">
               <Globe size={12} className="text-text-tertiary shrink-0" />

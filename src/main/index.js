@@ -133,6 +133,44 @@ function attachNativeTextContextMenu(webContents, popupHostWindow) {
   })
 }
 
+/** DevTools hotkeys are live whenever a dev build is running or the 7-tap unlock is set. */
+function devHotkeysEnabled() {
+  if (is.dev) return true
+  try {
+    return getSetting('developer_options_unlocked') === '1'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Reload (Cmd/Ctrl+R, Shift for force) and DevTools (F12 / Ctrl+Shift+I /
+ * Cmd+Alt+I) hotkeys match default app-menu accelerators that target the
+ * *top-level* window — so pressing them while the Hub <webview> guest is focused
+ * blows away the whole renderer / opens the host's DevTools instead of acting on
+ * the page you're looking at. Intercept at the guest: preventDefault also cancels
+ * the menu shortcut (per Electron's before-input-event contract), so these act on
+ * just the guest. Host-focused presses keep the default behavior. DevTools runs in
+ * dev too since `optimizer.watchWindowShortcuts` only wires the host window.
+ */
+function attachWebviewShortcuts(contents) {
+  contents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    if (input.code === 'KeyR' && (input.meta || input.control) && !input.alt) {
+      event.preventDefault()
+      if (input.shift) contents.reloadIgnoringCache()
+      else contents.reload()
+      return
+    }
+    const isF12 = input.code === 'F12'
+    const isInspector = input.code === 'KeyI' && input.shift && (input.control || input.meta || input.alt)
+    if ((isF12 || isInspector) && devHotkeysEnabled()) {
+      event.preventDefault()
+      contents.toggleDevTools()
+    }
+  })
+}
+
 /** Deny all popup windows from <webview> guests; open non-hub URLs externally. */
 function registerWebviewWindowOpenHandler() {
   app.on('web-contents-created', (_event, contents) => {
@@ -140,6 +178,7 @@ function registerWebviewWindowOpenHandler() {
     if (mainWindow) {
       attachNativeTextContextMenu(contents, mainWindow)
     }
+    attachWebviewShortcuts(contents)
     contents.setWindowOpenHandler(({ url }) => {
       if (url && url !== 'about:blank') {
         try {
