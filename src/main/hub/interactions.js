@@ -31,14 +31,17 @@ function getSession() {
   return session.fromPartition('persist:hub')
 }
 
-/** Neutral per-resource state: no personal flags, unknown favourite count. */
+/** Neutral per-resource state: no personal flags, unknown counts. */
 export function neutralResourceState(extra) {
   return {
     loggedIn: false,
     favorited: false,
     bookmarked: false,
+    // `rated`/`ratedDown`: the Hub thumbs up/down *rating* (its `/like/` endpoint).
+    rated: false,
+    ratedDown: false,
+    // `liked`: the visitor's emoji "Like" reaction (reaction id 1).
     liked: false,
-    disliked: false,
     favoriteCount: null,
     ...extra,
   }
@@ -166,15 +169,55 @@ function parseResourcePage(html, finalUrl) {
   const favorited = elementClassHas(html, 'button--favorite', 'is-favorited')
   const bookmarked = elementClassHas(html, 'button--icon--bookmark', 'is-bookmarked')
 
-  // The resource thumbs up/down rating: the two buttons gain `is-active-like` on
-  // the side the visitor picked (and lose the `add-like` affordance class).
-  const liked = elementClassHas(html, 'button--like', 'is-active-like')
-  const disliked = elementClassHas(html, 'button--unlike', 'is-active-like')
+  // The resource thumbs up/down *rating*: the two buttons gain `is-active-like` on
+  // the side the visitor picked (and lose the `add-like` affordance class). The
+  // Hub calls this endpoint "like", but it is a positive/negative rating distinct
+  // from the emoji reaction below — surfaced here as `rated` / `ratedDown`.
+  const rated = elementClassHas(html, 'button--like', 'is-active-like')
+  const ratedDown = elementClassHas(html, 'button--unlike', 'is-active-like')
 
-  // ...while the public favourite count lives in the sidebar stats (not in api.php).
+  // The emoji reaction bar (SV ContentRatings). A thumbs-up "Like" is reaction id
+  // 1; the visitor's own reaction (if any) is the id carried by the bar's "Remove"
+  // trigger. Reactions are scoped to a resource *update*, so capture the update id
+  // the bar targets — the emoji-like toggle POSTs against it.
+  const reactionUpdateId = parseReactionUpdateId(html)
+  const liked = parseVisitorReactionId(html) === 1
+
+  // The sidebar stats block carries fresh, reliably-placed counts (none are in
+  // api.php): `favorites` and `reactions` (the emoji total, == the API's
+  // `reaction_score`). We prefer the page's `reactions` over the API's cached
+  // `reaction_score` so the like button's base number can't lag the visitor's own
+  // just-made reaction. Each is null when its row is absent.
   const favoriteCount = parseSidebarStat(html, 'favorites')
+  const reactionScore = parseSidebarStat(html, 'reactions')
 
-  return { canonicalPath, token, favorited, favoriteCount, bookmarked, liked, disliked }
+  return {
+    canonicalPath,
+    token,
+    favorited,
+    favoriteCount,
+    bookmarked,
+    rated,
+    ratedDown,
+    liked,
+    reactionUpdateId,
+    reactionScore,
+  }
+}
+
+/** Update id the emoji reaction bar targets, from `js-ratingBar-resource_update{id}`. */
+function parseReactionUpdateId(html) {
+  const m = html.match(/js-ratingBar-resource_update(\d+)/) || html.match(/\/update\/(\d+)\/react/)
+  return m ? m[1] : null
+}
+
+/**
+ * The visitor's own emoji reaction id, or null. Once reacted, the rate trigger's
+ * text becomes "Remove" and its href carries the chosen reaction id.
+ */
+function parseVisitorReactionId(html) {
+  const m = html.match(/react\?reaction_id=(\d+)"[^>]*\bbutton--sv-rate\b[^>]*>\s*<span[^>]*>\s*Remove/i)
+  return m ? parseInt(m[1], 10) : null
 }
 
 /** True if the element whose class list contains `marker` also contains `stateClass`. */
@@ -211,16 +254,20 @@ export async function getResourceUserState(id) {
       canonicalPath: parsed.canonicalPath || `/resources/${id}/`,
       favorited: parsed.favorited,
       bookmarked: parsed.bookmarked,
+      rated: parsed.rated,
+      ratedDown: parsed.ratedDown,
       liked: parsed.liked,
-      disliked: parsed.disliked,
+      reactionUpdateId: parsed.reactionUpdateId,
     })
     return {
       loggedIn,
       favorited: parsed.favorited,
       favoriteCount: parsed.favoriteCount,
       bookmarked: parsed.bookmarked,
+      rated: parsed.rated,
+      ratedDown: parsed.ratedDown,
       liked: parsed.liked,
-      disliked: parsed.disliked,
+      reactionScore: parsed.reactionScore,
     }
   } catch {
     // Page fetch failed: keep the cookie-derived login state with neutral
@@ -307,19 +354,20 @@ export async function toggleBookmark(id, currentlyBookmarked) {
 }
 
 /**
- * Toggle the visitor's resource "like" (thumbs up). The endpoint's JSON only
- * reports `success` — it never echoes the new state — so we derive it: liking
- * sends `liked=1` (which also clears any prior dislike), un-liking sends both
- * flags 0. We never set the dislike here; the UI only offers a like action and
- * merely surfaces an existing dislike made on the Hub.
+ * Toggle the visitor's resource *rating* (the Hub thumbs up/down, served by the
+ * `/like/` endpoint). The endpoint's JSON only reports `success` — it never
+ * echoes the new state — so we derive it: rating up sends `liked=1` (which also
+ * clears any prior down-rating), un-rating sends both flags 0. We never set a
+ * down-rating here; the UI only offers the positive rating and merely surfaces an
+ * existing down-rating made on the Hub.
  */
-export async function toggleLike(id, currentlyLiked) {
+export async function toggleRate(id, currentlyRated) {
   if (!(await isLoggedIn())) throw new HubAuthError()
-  const like = currentlyLiked ? 0 : 1
+  const rate = currentlyRated ? 0 : 1
   await postWithRecovery(id, () => ({
     url: `${HUB_ORIGIN}/resources/${id}/like/`,
     body: {
-      liked: like,
+      liked: rate,
       unliked: 0,
       resource_id: id,
       _xfRequestUri: canonicalPathFor(id),
@@ -328,14 +376,44 @@ export async function toggleLike(id, currentlyLiked) {
       _xfResponseType: 'json',
     },
   }))
-  const liked = !!like
-  updateSnapshot(id, { liked, disliked: false })
-  return { liked, disliked: false }
+  const rated = !!rate
+  updateSnapshot(id, { rated, ratedDown: false })
+  return { rated, ratedDown: false }
+}
+
+/**
+ * Toggle the visitor's emoji "Like" reaction (reaction id 1). Posting a reaction
+ * id that is already the visitor's clears it (XenForo toggles), while posting it
+ * when unset — or when a different reaction was set — makes Like the current one.
+ * The response echoes `reactionId` (1 when set, null when cleared). Reactions are
+ * scoped to a resource *update*, so we need the update id captured from the page.
+ */
+export async function toggleLike(id) {
+  if (!(await isLoggedIn())) throw new HubAuthError()
+  if (!reactionUpdateIdFor(id)) await getResourceUserState(id)
+  const updateId = reactionUpdateIdFor(id)
+  if (!updateId) throw new Error('Could not find this resource’s reaction target')
+  const json = await postWithRecovery(id, () => ({
+    url: `${HUB_ORIGIN}/resources/${id}/update/${updateId}/react?reaction_id=1`,
+    body: {
+      _xfRequestUri: canonicalPathFor(id),
+      _xfWithData: 1,
+      _xfToken: sessionToken,
+      _xfResponseType: 'json',
+    },
+  }))
+  const liked = json.reactionId === 1
+  updateSnapshot(id, { liked })
+  return { liked }
 }
 
 function canonicalPathFor(id) {
   const snap = resourceState.get(String(id))
   return snap?.canonicalPath || `/resources/${id}/`
+}
+
+function reactionUpdateIdFor(id) {
+  return resourceState.get(String(id))?.reactionUpdateId || null
 }
 
 function updateSnapshot(id, patch) {

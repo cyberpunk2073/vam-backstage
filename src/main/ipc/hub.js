@@ -26,6 +26,7 @@ import {
   getResourceUserState,
   toggleFavorite,
   toggleBookmark,
+  toggleRate,
   toggleLike,
   neutralResourceState,
   HubAuthError,
@@ -81,7 +82,8 @@ export function registerHubHandlers() {
   ipcMain.handle('hub:toggleBookmark', (_, id, currentlyBookmarked) =>
     withAuthGuard(toggleBookmark)(id, currentlyBookmarked),
   )
-  ipcMain.handle('hub:toggleLike', (_, id, currentlyLiked) => withAuthGuard(toggleLike)(id, currentlyLiked))
+  ipcMain.handle('hub:toggleRate', (_, id, currentlyRated) => withAuthGuard(toggleRate)(id, currentlyRated))
+  ipcMain.handle('hub:toggleLike', (_, id) => withAuthGuard(toggleLike)(id))
 
   ipcMain.handle('hub:search', async (_, params) => {
     const result = await searchResources(params)

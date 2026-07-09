@@ -90,7 +90,8 @@ const api = {
     resourceUserState: (id) => invoke('hub:resourceUserState', id),
     toggleFavorite: (id) => invoke('hub:toggleFavorite', id),
     toggleBookmark: (id, currentlyBookmarked) => invoke('hub:toggleBookmark', id, currentlyBookmarked),
-    toggleLike: (id, currentlyLiked) => invoke('hub:toggleLike', id, currentlyLiked),
+    toggleRate: (id, currentlyRated) => invoke('hub:toggleRate', id, currentlyRated),
+    toggleLike: (id) => invoke('hub:toggleLike', id),
   },
   wishlist: {
     list: () => invoke('wishlist:list'),

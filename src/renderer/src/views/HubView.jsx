@@ -11,7 +11,6 @@ import {
   Bookmark,
   Star,
   ThumbsUp,
-  ThumbsDown,
   ExternalLink,
   Bug,
   Copy,
@@ -28,6 +27,7 @@ import {
   X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import {
   TYPE_COLORS,
   HUB_CATEGORY_COLORS,
@@ -172,7 +172,7 @@ function filterAndSortWishlist(items, state) {
   return result.sort(WISHLIST_SORT_FNS[state.sort] || WISHLIST_SORT_FNS.added)
 }
 
-const HUB_INTERACTIONS_ENABLED = false
+const HUB_INTERACTIONS_ENABLED = true
 
 export default function HubView({ onNavigate }) {
   const {
@@ -987,6 +987,157 @@ function parseHubResourceId(urlString) {
   }
 }
 
+// --- Hub interaction stats (rating / like / favorite / bookmark) ---
+
+const HUB_SIGNED_OUT_HINT = 'Sign in on the Hub browser (right) to use this.'
+// Short, non-native delay so signed-out discovery hints surface quickly (native
+// `title` tooltips lag ~1s, which is too slow to guide first-time users here).
+const HUB_STAT_TOOLTIP_DELAY = 200
+// Signed in, discovery is done and the neighbouring stats have no tooltip, so a
+// snappy rating tooltip just nags — slow it toward native-title speed.
+const HUB_STAT_TOOLTIP_DELAY_RELAXED = 700
+
+/** A stat wrapped in a non-native tooltip. Used for rating info + signed-out discovery. */
+function StatTooltip({ content, side = 'top', delay = HUB_STAT_TOOLTIP_DELAY, children }) {
+  return (
+    <Tooltip delayDuration={delay}>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side={side} className="block max-w-52 text-left leading-snug">
+        {content}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+/** Signed-out discovery hint: what the button does, plus how to enable it. */
+function DiscoveryHint({ label }) {
+  return (
+    <>
+      <span className="font-medium">{label}</span>
+      <span className="block text-text-tertiary mt-0.5">{HUB_SIGNED_OUT_HINT}</span>
+    </>
+  )
+}
+
+/**
+ * Star = the Hub *rating* (its thumbs up/down `/like/` action). The face shows the
+ * 1–5★ review average; the tooltip reports the review count and the resource's
+ * "like" count (two independent Hub metrics). Signed in, clicking casts a positive
+ * "like" rating — the Hub's name for a thumbs-up.
+ */
+function RatingStat({ ratingAvg, ratingWeighted, ratingCount, loggedIn, rated, ratedDown, busy, onRate }) {
+  const countLine = ratingCount === 1 ? '1 rating' : `${formatNumber(ratingCount)} ratings`
+  const tip = (
+    <>
+      <span className="font-medium">{ratingCount > 0 ? countLine : 'Not yet rated'}</span>
+      {ratingCount > 0 && (
+        <>
+          <span className="block font-medium">{formatStarRating(ratingAvg)} average</span>
+          <span className="block font-medium">{formatStarRating(ratingWeighted)} weighted</span>
+        </>
+      )}
+      <span className="block text-text-tertiary mt-0.5">
+        {loggedIn ? (rated ? 'Click to remove your like' : 'Click to like (a positive rating)') : HUB_SIGNED_OUT_HINT}
+      </span>
+    </>
+  )
+  const face = (
+    <>
+      <Star size={13} className={rated ? 'fill-current' : ''} />
+      <span className={`font-medium ${rated ? 'text-warning' : ratedDown ? 'text-error' : 'text-text-primary'}`}>
+        {formatStarRating(ratingAvg)}
+      </span>
+    </>
+  )
+  return (
+    <StatTooltip content={tip} delay={loggedIn ? HUB_STAT_TOOLTIP_DELAY_RELAXED : HUB_STAT_TOOLTIP_DELAY}>
+      {loggedIn ? (
+        <button
+          type="button"
+          onClick={onRate}
+          disabled={busy}
+          className={`flex items-center gap-1.5 transition-colors disabled:cursor-default cursor-pointer ${
+            rated ? 'text-warning' : ratedDown ? 'text-error' : 'text-text-tertiary hover:text-warning'
+          }`}
+        >
+          {face}
+        </button>
+      ) : (
+        <span className="flex items-center gap-1.5 text-text-tertiary cursor-pointer">{face}</span>
+      )}
+    </StatTooltip>
+  )
+}
+
+/** Thumbs up = the emoji "Like" reaction (reaction id 1); `count` is the live reaction score. */
+function LikeStat({ count, loggedIn, liked, busy, onLike }) {
+  const face = (
+    <>
+      <ThumbsUp size={13} className={liked ? 'fill-current' : ''} />
+      <span className={`font-medium ${liked ? 'text-accent-blue' : 'text-text-primary'}`}>{formatNumber(count)}</span>
+    </>
+  )
+  if (loggedIn) {
+    return (
+      <button
+        type="button"
+        onClick={onLike}
+        disabled={busy}
+        title={liked ? 'Remove like' : 'Like'}
+        className={`flex items-center gap-1.5 transition-colors disabled:cursor-default cursor-pointer ${
+          liked ? 'text-accent-blue' : 'text-text-tertiary hover:text-accent-blue'
+        }`}
+      >
+        {face}
+      </button>
+    )
+  }
+  return (
+    <StatTooltip content={<DiscoveryHint label="Like" />}>
+      <span className="flex items-center gap-1.5 text-text-tertiary cursor-pointer">{face}</span>
+    </StatTooltip>
+  )
+}
+
+// Favorite/bookmark carry no signed-out value (bare icon, no count fetched), so
+// they only render when signed in; Rating + Like already surface the sign-in hint.
+function FavoriteStat({ loggedIn, favorited, favoriteCount, busy, onFavorite }) {
+  if (!loggedIn) return null
+  return (
+    <button
+      type="button"
+      onClick={onFavorite}
+      disabled={busy}
+      title={favorited ? 'Remove favorite' : 'Add to favorites'}
+      className="flex items-center gap-1.5 text-text-tertiary transition-colors hover:text-accent-pink disabled:hover:text-text-tertiary disabled:cursor-default cursor-pointer"
+    >
+      <Heart size={13} className={favorited ? 'fill-current text-accent-pink' : ''} />
+      {favoriteCount == null ? (
+        <span className="h-3 w-4 skeleton rounded" />
+      ) : (
+        <span className={`font-medium ${favorited ? 'text-accent-pink' : 'text-text-primary'}`}>
+          {formatNumber(favoriteCount)}
+        </span>
+      )}
+    </button>
+  )
+}
+
+function BookmarkStat({ loggedIn, bookmarked, busy, onBookmark }) {
+  if (!loggedIn) return null
+  return (
+    <button
+      type="button"
+      onClick={onBookmark}
+      disabled={busy}
+      title={bookmarked ? 'Remove bookmark' : 'Bookmark'}
+      className="flex items-center text-text-tertiary transition-colors hover:text-accent-blue disabled:opacity-50 cursor-pointer"
+    >
+      <Bookmark size={14} className={bookmarked ? 'fill-current text-accent-blue' : ''} />
+    </button>
+  )
+}
+
 // --- Hub Detail ---
 
 function HubDetail({
@@ -1023,11 +1174,15 @@ function HubDetail({
     favorited,
     favoriteCount,
     bookmarked,
+    rated,
+    ratedDown,
     liked,
-    disliked,
+    likeDelta,
+    serverReactionScore,
     loading: interactionsLoading,
     toggleFavorite,
     toggleBookmark,
+    toggleRate,
     toggleLike,
   } = useHubInteractions(resourceId, { enabled: HUB_INTERACTIONS_ENABLED })
 
@@ -1591,72 +1746,36 @@ function HubDetail({
                   {formatNumber(parseInt(pkg.download_count || '0', 10))}
                 </span>
               </span>
-              <span className="flex items-center gap-1.5 text-text-tertiary">
-                <Star size={13} />
-                <span className="text-text-primary font-medium">{formatStarRating(pkg.rating_avg)}</span>
-              </span>
-              {hubLoggedIn ? (
-                <button
-                  type="button"
-                  onClick={toggleLike}
-                  disabled={interactionsLoading}
-                  title={disliked ? 'Disliked — click to like' : liked ? 'Remove like' : 'Like'}
-                  className={`flex items-center gap-1.5 transition-colors disabled:cursor-default cursor-pointer ${
-                    disliked
-                      ? 'text-error hover:text-accent-blue'
-                      : liked
-                        ? 'text-accent-blue'
-                        : 'text-text-tertiary hover:text-accent-blue'
-                  }`}
-                >
-                  {disliked ? (
-                    <ThumbsDown size={13} className="fill-current" />
-                  ) : (
-                    <ThumbsUp size={13} className={liked ? 'fill-current' : ''} />
-                  )}
-                  <span
-                    className={`font-medium ${disliked ? 'text-error' : liked ? 'text-accent-blue' : 'text-text-primary'}`}
-                  >
-                    {formatNumber(parseInt(pkg.reaction_score || '0', 10))}
-                  </span>
-                </button>
-              ) : (
-                <span className="flex items-center gap-1.5 text-text-tertiary" title="Likes">
-                  <ThumbsUp size={13} />
-                  <span className="text-text-primary font-medium">
-                    {formatNumber(parseInt(pkg.reaction_score || '0', 10))}
-                  </span>
-                </span>
-              )}
-              {hubLoggedIn && (
-                <>
-                  <button
-                    type="button"
-                    onClick={toggleFavorite}
-                    disabled={interactionsLoading}
-                    title={favorited ? 'Remove favorite' : 'Add to favorites'}
-                    className="flex items-center gap-1.5 text-text-tertiary transition-colors hover:text-accent-pink disabled:hover:text-text-tertiary disabled:cursor-default cursor-pointer"
-                  >
-                    <Heart size={13} className={favorited ? 'fill-current text-accent-pink' : ''} />
-                    {favoriteCount == null ? (
-                      <span className="h-3 w-4 skeleton rounded" />
-                    ) : (
-                      <span className={`font-medium ${favorited ? 'text-accent-pink' : 'text-text-primary'}`}>
-                        {formatNumber(favoriteCount)}
-                      </span>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={toggleBookmark}
-                    disabled={interactionsLoading}
-                    title={bookmarked ? 'Remove bookmark' : 'Bookmark'}
-                    className="flex items-center text-text-tertiary transition-colors hover:text-accent-blue disabled:opacity-50 cursor-pointer"
-                  >
-                    <Bookmark size={14} className={bookmarked ? 'fill-current text-accent-blue' : ''} />
-                  </button>
-                </>
-              )}
+              <RatingStat
+                ratingAvg={pkg.rating_avg}
+                ratingWeighted={pkg.rating_weighted}
+                ratingCount={parseInt(pkg.rating_count || '0', 10)}
+                loggedIn={hubLoggedIn}
+                rated={rated}
+                ratedDown={ratedDown}
+                busy={interactionsLoading}
+                onRate={toggleRate}
+              />
+              <LikeStat
+                count={Math.max(0, (serverReactionScore ?? parseInt(pkg.reaction_score || '0', 10)) + likeDelta)}
+                loggedIn={hubLoggedIn}
+                liked={liked}
+                busy={interactionsLoading}
+                onLike={toggleLike}
+              />
+              <FavoriteStat
+                loggedIn={hubLoggedIn}
+                favorited={favorited}
+                favoriteCount={favoriteCount}
+                busy={interactionsLoading}
+                onFavorite={toggleFavorite}
+              />
+              <BookmarkStat
+                loggedIn={hubLoggedIn}
+                bookmarked={bookmarked}
+                busy={interactionsLoading}
+                onBookmark={toggleBookmark}
+              />
               <button
                 type="button"
                 onClick={() => toggleWishlist(pkg)}

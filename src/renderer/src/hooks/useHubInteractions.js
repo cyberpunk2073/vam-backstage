@@ -2,13 +2,15 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { toast } from '@/components/Toast'
 
 // The personal flags, all cleared. Spread into a fresh/logged-out state so the
-// shape stays in one place.
-const CLEARED = { favorited: false, bookmarked: false, liked: false, disliked: false }
+// shape stays in one place. `rated`/`ratedDown` are the Hub thumbs up/down
+// *rating*; `liked` is the emoji "Like" reaction (reaction id 1).
+const CLEARED = { favorited: false, bookmarked: false, rated: false, ratedDown: false, liked: false }
 
 /**
- * Favorite/bookmark interactivity for a single Hub resource. Fetches the user's
- * state on mount/id-change, reacts to Hub login/logout, and exposes optimistic
- * toggles that reconcile against the authoritative POST response.
+ * Interactivity for a single Hub resource — favorite, bookmark, rating (thumbs
+ * up/down) and the emoji "Like" reaction. Fetches the user's state on
+ * mount/id-change, reacts to Hub login/logout, and exposes optimistic toggles
+ * that reconcile against the authoritative POST response.
  *
  * @param {string|number} resourceId
  * @param {{ enabled?: boolean }} [options] When `enabled` is false the hook stays
@@ -20,13 +22,15 @@ export function useHubInteractions(resourceId, { enabled = true } = {}) {
     ...CLEARED,
     loading: enabled,
     serverFavoriteCount: null,
+    serverReactionScore: null,
   })
   // Latest known state for optimistic-toggle reconciliation without stale closures.
   const stateRef = useRef(state)
   stateRef.current = state
-  // The server-truth favorited at last fetch, so the displayed count can show a
+  // Server-truth favorited/liked at last fetch, so the displayed counts can show a
   // live +/-1 relative to the base count (Twitter-style).
   const serverFavoritedRef = useRef(false)
+  const serverLikedRef = useRef(false)
 
   const fetchState = useCallback(() => {
     if (!enabled || resourceId == null) return
@@ -45,18 +49,28 @@ export function useHubInteractions(resourceId, { enabled = true } = {}) {
       .then((res) => {
         if (cancelled) return
         serverFavoritedRef.current = !!res?.favorited
+        serverLikedRef.current = !!res?.liked
         setState({
           loggedIn: !!res?.loggedIn,
           favorited: !!res?.favorited,
           bookmarked: !!res?.bookmarked,
+          rated: !!res?.rated,
+          ratedDown: !!res?.ratedDown,
           liked: !!res?.liked,
-          disliked: !!res?.disliked,
           loading: false,
           serverFavoriteCount: typeof res?.favoriteCount === 'number' ? res.favoriteCount : null,
+          serverReactionScore: typeof res?.reactionScore === 'number' ? res.reactionScore : null,
         })
       })
       .catch(() => {
-        if (!cancelled) setState({ loggedIn: false, ...CLEARED, loading: false, serverFavoriteCount: null })
+        if (!cancelled)
+          setState({
+            loggedIn: false,
+            ...CLEARED,
+            loading: false,
+            serverFavoriteCount: null,
+            serverReactionScore: null,
+          })
       })
     return () => {
       cancelled = true
@@ -71,7 +85,14 @@ export function useHubInteractions(resourceId, { enabled = true } = {}) {
       if (data?.loggedIn) fetchState()
       // Logged out: clear personal state too, otherwise a filled heart lingers
       // after the count/bookmark (gated on login) disappear.
-      else setState((s) => ({ ...s, loggedIn: false, ...CLEARED, serverFavoriteCount: null }))
+      else
+        setState((s) => ({
+          ...s,
+          loggedIn: false,
+          ...CLEARED,
+          serverFavoriteCount: null,
+          serverReactionScore: null,
+        }))
     })
   }, [enabled, fetchState])
 
@@ -121,15 +142,32 @@ export function useHubInteractions(resourceId, { enabled = true } = {}) {
     [resourceId, runToggle],
   )
 
+  // The Hub thumbs up/down *rating* (its `/like/` endpoint). We only offer the
+  // positive direction; rating up always clears any existing down-rating.
+  const toggleRate = useCallback(
+    () =>
+      runToggle({
+        snapshot: (s) => ({ rated: s.rated, ratedDown: s.ratedDown }),
+        optimistic: (prev) => ({ rated: !prev.rated, ratedDown: false }),
+        reconcile: (res) => ({ rated: !!res.rated, ratedDown: !!res.ratedDown }),
+        revert: (prev) => ({ rated: prev.rated, ratedDown: prev.ratedDown }),
+        call: (prev) => window.api.hub.toggleRate(resourceId, prev.rated),
+        authMsg: 'Sign in to the Hub to rate resources.',
+        errMsg: 'Could not update rating.',
+      }),
+    [resourceId, runToggle],
+  )
+
+  // The emoji "Like" reaction (reaction id 1) — a genuine like, distinct from the
+  // rating above. Server-side toggle, so we only track the boolean.
   const toggleLike = useCallback(
     () =>
       runToggle({
-        snapshot: (s) => ({ liked: s.liked, disliked: s.disliked }),
-        // Liking always clears any existing dislike (the Hub treats them as exclusive).
-        optimistic: (prev) => ({ liked: !prev.liked, disliked: false }),
-        reconcile: (res) => ({ liked: !!res.liked, disliked: !!res.disliked }),
-        revert: (prev) => ({ liked: prev.liked, disliked: prev.disliked }),
-        call: (prev) => window.api.hub.toggleLike(resourceId, prev.liked),
+        snapshot: (s) => s.liked,
+        optimistic: (prev) => ({ liked: !prev }),
+        reconcile: (res) => ({ liked: !!res.liked }),
+        revert: (prev) => ({ liked: prev }),
+        call: () => window.api.hub.toggleLike(resourceId),
         authMsg: 'Sign in to the Hub to like resources.',
         errMsg: 'Could not update like.',
       }),
@@ -145,5 +183,9 @@ export function useHubInteractions(resourceId, { enabled = true } = {}) {
           state.serverFavoriteCount + (state.favorited === serverFavoritedRef.current ? 0 : state.favorited ? 1 : -1),
         )
 
-  return { ...state, favoriteCount, toggleFavorite, toggleBookmark, toggleLike }
+  // Live +/-1 the caller applies to the API-provided reaction score, so the
+  // emoji-like count reflects the visitor's own toggle without a refetch.
+  const likeDelta = state.liked === serverLikedRef.current ? 0 : state.liked ? 1 : -1
+
+  return { ...state, favoriteCount, likeDelta, toggleFavorite, toggleBookmark, toggleRate, toggleLike }
 }

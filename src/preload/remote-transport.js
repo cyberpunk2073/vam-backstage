@@ -30,6 +30,7 @@ const LOCAL_CHANNELS = new Set([
   'hub:resourceUserState',
   'hub:toggleFavorite',
   'hub:toggleBookmark',
+  'hub:toggleRate',
   'hub:toggleLike',
 ])
 
