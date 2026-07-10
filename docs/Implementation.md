@@ -1418,22 +1418,23 @@ When developer options are unlocked, **F12** (and Ctrl+Shift+I / Cmd+Alt+I) togg
 
 ### Event channels (Main → Renderer)
 
-| Channel                     | Payload                                                            | Frequency                                   |
-| --------------------------- | ------------------------------------------------------------------ | ------------------------------------------- |
-| `packages:updated`          | —                                                                  | On package changes                          |
-| `contents:updated`          | —                                                                  | On content changes                          |
-| `downloads:updated`         | —                                                                  | On download queue changes                   |
-| `thumbnails:updated`        | `{ keys }` (invalidated thumbnail cache keys, e.g. `pkg:filename`) | After background thumb resolution (batched) |
-| `avatars:updated`           | —                                                                  | After avatar cache update                   |
-| `download:progress`         | `{id, progress, speed, bytesLoaded, fileSize}`                     | Every 250ms per active download             |
-| `download:failed`           | `{id, error}`                                                      | On download failure                         |
-| `scan:progress`             | `{phase, step, total, message}`                                    | During local library scan                   |
-| `scan:unreadable`           | `{filename}` per event                                             | Unreadable `.var` detected post-startup     |
-| `hub-scan:progress`         | `{current, total, found, phase, ...}`                              | During first-run / Hub enrichment           |
-| `auto-hide:progress`        | `{current, total, filename?, items, ...}`                          | During batch `.hide` application            |
-| `integrity:progress`        | `{checked, total}`                                                 | During integrity check                      |
-| `updater:update-available`  | `{version, ...}`                                                   | When an update is available                 |
-| `updater:update-downloaded` | `{version, ...}`                                                   | When an update is ready to install          |
+| Channel                     | Payload                                                            | Frequency                                    |
+| --------------------------- | ------------------------------------------------------------------ | -------------------------------------------- |
+| `packages:updated`          | —                                                                  | On package changes                           |
+| `contents:updated`          | —                                                                  | On content changes                           |
+| `downloads:updated`         | —                                                                  | On download queue changes                    |
+| `thumbnails:updated`        | `{ keys }` (invalidated thumbnail cache keys, e.g. `pkg:filename`) | After background thumb resolution (batched)  |
+| `avatars:updated`           | —                                                                  | After avatar cache update                    |
+| `download:progress`         | `{id, progress, speed, bytesLoaded, fileSize}`                     | Every 250ms per active download              |
+| `download:failed`           | `{id, error}`                                                      | On download failure                          |
+| `scan:progress`             | `{phase, step, total, message}`                                    | During local library scan                    |
+| `scan:unreadable`           | `{filename}` per event                                             | Unreadable `.var` detected post-startup      |
+| `hub-scan:progress`         | `{current, total, found, phase, ...}`                              | During first-run / Hub enrichment            |
+| `auto-hide:progress`        | `{current, total, filename?, items, ...}`                          | During batch `.hide` application             |
+| `integrity:progress`        | `{checked, total}`                                                 | During integrity check                       |
+| `updater:update-available`  | `{version, ...}`                                                   | When an update is available                  |
+| `updater:update-downloaded` | `{version, ...}`                                                   | When an update is ready to install           |
+| `updater:error`             | `{message}`                                                        | Updater failure (check/download/mac staging) |
 
 ---
 
@@ -1514,3 +1515,14 @@ Dev builds use `X.Y.(Z+1)-dev.<run_number>` so they sort strictly ahead of the c
 ### Channel switching at runtime
 
 `updater:setChannel` persists the new value, reconfigures `setFeedURL`, and kicks off a background `checkForUpdates()` without awaiting it — the IPC returns immediately and no app restart is needed.
+
+### macOS: custom install path (no Apple certificate)
+
+Mac builds are ad-hoc signed (`identity: '-'`), and Squirrel.Mac — the native updater electron-updater delegates to on mac — validates the downloaded bundle against the running app's designated requirement, which an ad-hoc signature can never satisfy (ShipIt aborts with "code failed to satisfy specified code requirement(s)"). So on darwin electron-updater is used only for **check + download** (the zip is still sha512-verified against `latest-mac.yml`), and the install step is a custom bundle swap in [`src/main/mac-update.js`](../src/main/mac-update.js):
+
+1. `autoInstallOnAppQuit` is forced off on mac — that flag is what hands the zip to Squirrel right after download (`MacUpdater.updateDownloaded`).
+2. On `update-downloaded`, the zip is **staged**: extracted with `ditto -xk` (preserves framework symlinks), quarantine stripped defensively (`xattr -dr` — Node downloads don't set it anyway), and `updater:update-downloaded` is only broadcast once staging succeeds.
+3. `updater:install` (or a normal quit, via a `will-quit` hook for `autoInstallOnAppQuit` parity) swaps the staged `.app` over the installed bundle with two `/bin/mv` renames — safe while running, macOS keeps the process's inodes alive — then relaunches. A failed second rename rolls the old bundle back.
+4. Guard rails: refuses when not running from an `.app` or when Gatekeeper-translocated (`/AppTranslocation/` path), returning an actionable error instead of failing silently.
+
+This mirrors what ShipIt itself (and Sparkle/Tauri/Velopack) does mechanically, minus the signature check we cannot satisfy — integrity still rests on GitHub HTTPS + the checksum, same trust model as the unsigned Windows/Linux channels. Updater failures anywhere (download, staging, install) are surfaced to the renderer via `updater:error` and shown as a toast; `updater:install` returns `{ ok, error? }`. The **first** install remains manual (browser-downloaded DMG is quarantined; release notes carry the one-time `xattr -dr com.apple.quarantine` instruction) — only subsequent updates are automatic.

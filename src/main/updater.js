@@ -3,8 +3,12 @@ import { is } from '@electron-toolkit/utils'
 import { autoUpdater } from 'electron-updater'
 import { notify } from './notify.js'
 import { getDb, getSetting, setSetting } from './db.js'
+import { stageMacUpdate, installMacUpdateAndRestart, installMacUpdateOnQuitSync } from './mac-update.js'
 
 const DEV_ROLLING_TAG = 'dev-latest'
+// Squirrel.Mac rejects our ad-hoc signature, so the mac install path is a custom
+// bundle swap (see mac-update.js); electron-updater is only used for check+download.
+const isMac = process.platform === 'darwin'
 
 let ipcHandlersRegistered = false
 let fullUpdaterInitialized = false
@@ -64,9 +68,11 @@ async function runCheck(extra = {}) {
 export function initAutoUpdater() {
   if (!ipcHandlersRegistered) {
     ipcHandlersRegistered = true
-    ipcMain.handle('updater:install', () => {
-      if (is.dev) return
+    ipcMain.handle('updater:install', async () => {
+      if (is.dev) return { ok: true, disabled: true }
+      if (isMac) return installMacUpdateAndRestart()
       autoUpdater.quitAndInstall(false, true)
+      return { ok: true }
     })
     ipcMain.handle('updater:check', () =>
       is.dev ? Promise.resolve({ ok: true, disabled: true, dev: true }) : runCheck(),
@@ -91,12 +97,30 @@ export function initAutoUpdater() {
   fullUpdaterInitialized = true
 
   autoUpdater.autoDownload = true
-  autoUpdater.autoInstallOnAppQuit = true
+  // On mac this flag is what hands the zip to Squirrel right after download
+  // (MacUpdater.updateDownloaded), which then fails signature validation — keep
+  // it off there; our will-quit hook below provides the same behavior.
+  autoUpdater.autoInstallOnAppQuit = !isMac
 
+  autoUpdater.on('error', (e) => {
+    notify('updater:error', { message: e instanceof Error ? e.message : String(e) })
+  })
   autoUpdater.on('update-available', (info) => {
     notify('updater:update-available', { version: info.version })
   })
   autoUpdater.on('update-downloaded', (info) => {
+    if (isMac) {
+      // Announce "ready" only once the bundle is actually extracted and staged,
+      // so the Restart button never points at a half-prepared update.
+      stageMacUpdate(info.downloadedFile).then(
+        () => notify('updater:update-downloaded', { version: info.version }),
+        (e) =>
+          notify('updater:error', {
+            message: `Update could not be prepared: ${e instanceof Error ? e.message : String(e)}`,
+          }),
+      )
+      return
+    }
     notify('updater:update-downloaded', { version: info.version })
   })
 
@@ -113,6 +137,7 @@ export function initAutoUpdater() {
   )
 
   app.on('will-quit', () => {
+    if (isMac) installMacUpdateOnQuitSync()
     if (dailyCheckTimer != null) {
       clearInterval(dailyCheckTimer)
       dailyCheckTimer = null

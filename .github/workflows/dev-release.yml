@@ -109,6 +109,8 @@ jobs:
             Ephemeral developer build. Replaced on every push to master. Not for production use.
 
             Opt in from the app's Settings → Developer → Update Channel.
+
+            **macOS first install:** the app is not Apple-notarized, so after copying it to Applications run `xattr -dr com.apple.quarantine "/Applications/VaM Backstage.app"` once before launching. Subsequent updates install automatically.
           files: |
             release-assets/*.exe
             release-assets/*.dmg

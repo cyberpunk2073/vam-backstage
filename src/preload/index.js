@@ -198,6 +198,7 @@ const api = {
   onApplyAutoHideProgress: (cb) => transport.on('auto-hide:progress', (data) => cb(data)),
   onUpdateAvailable: (cb) => transport.on('updater:update-available', (data) => cb(data)),
   onUpdateDownloaded: (cb) => transport.on('updater:update-downloaded', (data) => cb(data)),
+  onUpdaterError: (cb) => transport.on('updater:error', (data) => cb(data)),
 }
 
 // Mirror main-process logs into the renderer DevTools console. Errors sent

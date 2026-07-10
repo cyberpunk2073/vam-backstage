@@ -161,11 +161,23 @@ export default function StatusBar() {
       setUpdateState({ phase: 'ready', version: data.version })
       toast(`Update v${data.version} downloaded — restart to finish`, 'success', 4000)
     })
+    // Background updater failures (download, staging, Squirrel) used to die in the
+    // log; surface them and clear a stale "downloading…" label.
+    const cleanup3 = window.api.onUpdaterError((data) => {
+      toast(`Update failed: ${data?.message || 'unknown error'}`, 'error', 8000)
+      setUpdateState((s) => (s?.phase === 'downloading' ? null : s))
+    })
     return () => {
       cleanup1()
       cleanup2()
+      cleanup3()
     }
   }, [isDev])
+
+  const handleInstallClick = async () => {
+    const r = await window.api.updater.install()
+    if (r?.ok === false) toast(r.error || 'Could not install update', 'error', 8000)
+  }
 
   const handleVersionClick = async () => {
     if (versionCheckBusy) return
@@ -364,7 +376,7 @@ export default function StatusBar() {
                 variant="ghost"
                 size="xs"
                 className="text-accent-blue hover:text-accent-blue hover:bg-accent-blue/15 shrink-0 h-6 px-2"
-                onClick={() => window.api.updater.install()}
+                onClick={handleInstallClick}
               >
                 Restart
               </Button>

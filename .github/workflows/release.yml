@@ -92,6 +92,10 @@ jobs:
           tag_name: ${{ github.ref_name }}
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
+          # Appended after the auto-generated notes.
+          body: |
+            **macOS first install:** the app is not Apple-notarized, so after copying it to Applications run `xattr -dr com.apple.quarantine "/Applications/VaM Backstage.app"` once before launching. Subsequent updates install automatically.
+          append_body: true
           files: |
             release-assets/*.exe
             release-assets/*.dmg
