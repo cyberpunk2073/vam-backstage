@@ -38,13 +38,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Currently only Windows dev builds are enabled to save on build time
-          # - os: ubuntu-latest
-          #   build_cmd: npm run build && npx electron-builder --linux AppImage deb --publish never
+          - os: ubuntu-latest
+            build_cmd: npm run build && npx electron-builder --linux AppImage deb --publish never
           - os: windows-2022
             build_cmd: npm run build:win -- --publish never
-          # - os: macos-latest
-          #   build_cmd: npm run build:mac -- --publish never
+          - os: macos-latest
+            build_cmd: npm run build:mac -- --publish never
 
     runs-on: ${{ matrix.os }}
 
