@@ -1,9 +1,11 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Check, Minus, Plus } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Command, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { cn } from '@/lib/utils'
 import { labelColor } from '@/lib/labels'
+import { sortLabelsByName } from './labelHelpers'
+import { LabelStateCheckbox } from './LabelStateCheckbox'
 
 /**
  * Combobox for applying labels with search + optional inline create. Two modes:
@@ -28,10 +30,7 @@ export function LabelApplyPopover({
 
   const isBulk = stateById != null && typeof onToggle === 'function'
 
-  const sorted = useMemo(
-    () => [...labels].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })),
-    [labels],
-  )
+  const sorted = useMemo(() => sortLabelsByName(labels), [labels])
 
   const visibleLabels = useMemo(() => {
     if (isBulk) return sorted
@@ -128,19 +127,7 @@ export function LabelApplyPopover({
                   const state = isBulk ? stateById.get(l.id) || 'none' : null
                   return (
                     <CommandItem key={l.id} value={l.name} onSelect={() => handleItem(l)}>
-                      {isBulk && (
-                        <span
-                          className={cn(
-                            'inline-flex items-center justify-center w-3.5 h-3.5 rounded border shrink-0',
-                            state === 'all' && 'bg-accent-blue border-accent-blue',
-                            state === 'partial' && 'bg-accent-blue/30 border-accent-blue',
-                            state === 'none' && 'border-text-tertiary/60',
-                          )}
-                        >
-                          {state === 'all' && <Check size={9} className="text-white" strokeWidth={3} />}
-                          {state === 'partial' && <Minus size={9} className="text-white" strokeWidth={3} />}
-                        </span>
-                      )}
+                      {isBulk && <LabelStateCheckbox state={state} />}
                       <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: labelColor(l) }} />
                       <span className="truncate flex-1 text-text-primary">{l.name}</span>
                     </CommandItem>

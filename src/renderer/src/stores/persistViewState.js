@@ -22,6 +22,9 @@ export const asString = (v) => (typeof v === 'string' ? v : undefined)
 /** Validator: keep booleans, drop anything else. */
 export const asBool = (v) => (typeof v === 'boolean' ? v : undefined)
 
+/** Validator: keep plain objects (not arrays/null), drop anything else. */
+export const asObject = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : undefined)
+
 /** Validator: parse and clamp a card width to 100-500. */
 export const asCardWidth = (v) => {
   const n = parseInt(v, 10)

@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware'
 import { toast } from '@/components/Toast'
 import { typeFilterSlice } from './typeFilterSlice'
 import { useLibraryStore } from './useLibraryStore'
-import { persistViewState, oneOf, asArray, asString, asCardWidth } from './persistViewState'
+import { persistViewState, oneOf, asArray, asString, asCardWidth, asObject } from './persistViewState'
 
 /**
  * Attach `c.package` references onto a fresh content array. Content rows arrive
@@ -58,6 +58,8 @@ export const useContentStore = create(
       secondarySort: 'Recently installed',
       viewMode: 'grid',
       cardWidth: 220,
+      /** Per-category-label collapse map. Explicit false = collapsed; missing key = expanded. */
+      expandedByType: {},
 
       resetFilters: (overrides) =>
         set({
@@ -116,6 +118,12 @@ export const useContentStore = create(
       setSecondarySort: (secondarySort) => set({ secondarySort }),
       setViewMode: (viewMode) => set({ viewMode }),
       setCardWidth: (cardWidth) => set({ cardWidth }),
+
+      toggleCategory: (type) =>
+        set((s) => {
+          const cur = s.expandedByType[type] ?? true
+          return { expandedByType: { ...s.expandedByType, [type]: !cur } }
+        }),
 
       fetchContents: async () => {
         try {
@@ -298,6 +306,7 @@ export const useContentStore = create(
       secondarySort: asString,
       viewMode: oneOf(['grid', 'table']),
       cardWidth: asCardWidth,
+      expandedByType: asObject,
     }),
   ),
 )

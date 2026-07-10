@@ -39,6 +39,11 @@ export async function applyLabelToContentItems(id, items, applied) {
   }
 }
 
+/** Case-insensitive by-name sort of a label list (returns a new array). */
+export function sortLabelsByName(labels) {
+  return [...labels].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+}
+
 /** Single target → every applied label is `'all'`, others omitted. */
 export function singleTargetStateMap(appliedIds) {
   const m = new Map()

@@ -941,16 +941,15 @@ All renderer state is managed by **Zustand** stores (no Redux, no Context provid
 
 ### Store Overview
 
-| Store                             | Purpose                            | Key State                                                                                     |
-| --------------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------- |
-| `useHubStore`                     | Hub search, filters, detail        | `resources[]`, filter state, `detailData`, `cardMode`, `filterOptions`                        |
-| `useLibraryStore`                 | Local packages, filters, detail    | `packages[]`, filter state, `selectedDetail`, `viewMode`, `missingDeps`, `updateCheckResults` |
-| `useContentStore`                 | Content items, filters, detail     | `contents[]`, filter state, `selectedItem`, `selectedPackage`, `viewMode`                     |
-| `useDownloadStore`                | Download queue and live progress   | `items[]`, `liveProgress{}`, `paused`, lookup maps by resource ID and package ref             |
-| `useInstalledStore`               | Lightweight install status cache   | `byHubResourceId` map for Hub UI cross-referencing                                            |
-| `useStatusStore`                  | Status bar stats and scan progress | `stats{}`, `scan{}`                                                                           |
-| `useToastStore`                   | Notification toasts                | `toasts[]`, `add()`, `dismiss()`                                                              |
-| `useContentCategoryExpandedStore` | Content category collapse state    | Expanded/collapsed state for content type groups                                              |
+| Store               | Purpose                            | Key State                                                                                                           |
+| ------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `useHubStore`       | Hub search, filters, detail        | `resources[]`, filter state, `detailData`, `cardMode`, `filterOptions`                                              |
+| `useLibraryStore`   | Local packages, filters, detail    | `packages[]`, filter state, `selectedDetail`, `viewMode`, `missingDeps`, `updateCheckResults`                       |
+| `useContentStore`   | Content items, filters, detail     | `contents[]`, filter state, `selectedItem`, `selectedPackage`, `viewMode`, `expandedByType` (per-category collapse) |
+| `useDownloadStore`  | Download queue and live progress   | `items[]`, `liveProgress{}`, `paused`, lookup maps by resource ID and package ref                                   |
+| `useInstalledStore` | Lightweight install status cache   | `byHubResourceId` map for Hub UI cross-referencing                                                                  |
+| `useStatusStore`    | Status bar stats and scan progress | `stats{}`, `scan{}`                                                                                                 |
+| `useToastStore`     | Notification toasts                | `toasts[]`, `add()`, `dismiss()`                                                                                    |
 
 ### Shared Patterns
 

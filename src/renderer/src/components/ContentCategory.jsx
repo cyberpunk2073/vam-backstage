@@ -3,7 +3,7 @@ import { toast } from './Toast'
 import { openLightbox, openLightboxGallery } from './ThumbnailLightbox'
 import { getContentGradient } from '@/lib/utils'
 import { useThumbnail } from '@/hooks/createBlobCacheHook'
-import { useContentCategoryExpandedStore } from '@/stores/useContentCategoryExpandedStore'
+import { useContentStore } from '@/stores/useContentStore'
 
 export function contentThumbKey(item) {
   return item.thumbnailPath ? `ct:${item.packageFilename}\0${item.thumbnailPath}` : null
@@ -104,8 +104,8 @@ export function ContentRow({ item, onSelect, gallery, suppressHiddenStyle = fals
 }
 
 export function ContentCategory({ items, label, onSelectRow, gallery, suppressHiddenRowStyle = false }) {
-  const expanded = useContentCategoryExpandedStore((s) => s.expandedByType[label] ?? true)
-  const toggleCategory = useContentCategoryExpandedStore((s) => s.toggle)
+  const expanded = useContentStore((s) => s.expandedByType[label] ?? true)
+  const toggleCategory = useContentStore((s) => s.toggleCategory)
   const allHidden = items.every((i) => i.hidden)
   const allFavorite = items.every((i) => i.favorite)
 
