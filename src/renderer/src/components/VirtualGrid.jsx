@@ -27,6 +27,15 @@ export function VirtualGrid({
   onEmptyAreaPointerDown,
   /** Flat index of the selected item; keeps keyboard selection visible in the viewport. */
   selectedIndex,
+  /** Fired when the last visible row is within `endReachedThreshold` rows of the end (infinite scroll). */
+  onEndReached,
+  /** How many rows from the bottom trigger `onEndReached`. `range.endIndex` already includes `overscan`,
+   *  so a small value fires roughly a viewport-plus before the end (matches the old ~1600px prefetch margin). */
+  endReachedThreshold = 4,
+  /** Rendered below the virtualised rows, inside the scroll container (e.g. "Loading more…"). */
+  footer,
+  /** When true, suppress the default "No items found" message (caller renders its own empty state). */
+  hideEmptyMessage = false,
 }) {
   const rowGap = gapY ?? gap
   const scrollRef = useRef(null)
@@ -114,6 +123,15 @@ export function VirtualGrid({
     overscan,
   })
 
+  const onEndReachedRef = useRef(onEndReached)
+  onEndReachedRef.current = onEndReached
+  const rangeEndIndex = virtualizer.range?.endIndex ?? -1
+  useEffect(() => {
+    if (!onEndReachedRef.current || rowCount === 0) return
+    if (rangeEndIndex < 0) return
+    if (rangeEndIndex >= rowCount - 1 - endReachedThreshold) onEndReachedRef.current()
+  }, [rangeEndIndex, rowCount, endReachedThreshold, items.length])
+
   useEffect(() => {
     if (selectedIndex == null || selectedIndex < 0 || !items.length) return
     const row = Math.floor(selectedIndex / cols)
@@ -181,7 +199,10 @@ export function VirtualGrid({
             )
           })}
         </div>
-        {items.length === 0 && <div className="text-center py-16 text-text-tertiary text-sm">No items found</div>}
+        {footer}
+        {items.length === 0 && !hideEmptyMessage && (
+          <div className="text-center py-16 text-text-tertiary text-sm">No items found</div>
+        )}
       </div>
       <ScrollToTopButton scrollRef={scrollRef} />
     </div>
