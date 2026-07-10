@@ -19,6 +19,7 @@ import {
   clearFailedDownloads,
   deleteDownload,
   getSetting,
+  setSetting,
   setHubDisplayName,
   upsertHubUser,
   setHubResourceId,
@@ -77,17 +78,30 @@ let retryTimers = new Map() // id → pending setTimeout handle
 let paused = false
 let pendingDepLookups = new Set() // dep refs currently in-flight via findPackages
 
+const PAUSED_SETTING = 'downloads_paused'
+
+function persistPaused(value) {
+  setSetting(PAUSED_SETTING, value ? '1' : null)
+}
+
 export async function initDownloadManager() {
-  // Clean up temp files from any interrupted downloads before marking them failed
-  const rows = getAllDownloads()
-  for (const r of rows) {
-    if (r.temp_path && (r.status === 'active' || r.status === 'queued')) {
-      try {
-        await unlink(r.temp_path)
-      } catch {}
+  const wasPaused = getSetting(PAUSED_SETTING) === '1'
+  if (wasPaused) {
+    // User left downloads paused — keep the queue and partial .tmp files
+    paused = true
+    resetActiveDownloads()
+  } else {
+    // Crash / unclean exit — discard partials and mark unfinished as failed
+    const rows = getAllDownloads()
+    for (const r of rows) {
+      if (r.temp_path && (r.status === 'active' || r.status === 'queued')) {
+        try {
+          await unlink(r.temp_path)
+        } catch {}
+      }
     }
+    failUnfinishedDownloads()
   }
-  failUnfinishedDownloads()
   clearCompleted()
 }
 
@@ -622,6 +636,7 @@ export function isPaused() {
 
 export function pauseAll() {
   paused = true
+  persistPaused(true)
   const ids = [...activeTransfers.keys()]
   for (const id of ids) {
     const transfer = activeTransfers.get(id)
@@ -636,6 +651,7 @@ export function pauseAll() {
 
 export function resumeAll() {
   paused = false
+  persistPaused(false)
   resetActiveDownloads()
   emitUpdated()
   processQueue()
@@ -654,6 +670,7 @@ export async function cancelAll() {
   }
   cancelAllDownloads()
   paused = false
+  persistPaused(false)
   pausedProgress.clear()
   for (const timer of retryTimers.values()) clearTimeout(timer)
   retryTimers.clear()

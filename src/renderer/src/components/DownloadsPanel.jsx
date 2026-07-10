@@ -63,8 +63,19 @@ function sortCompletedRecentFirst(a, b) {
 const SECTION_CAP = 5
 
 export default function DownloadsPanel({ onClose }) {
-  const { items, liveProgress, paused, cancel, retry, removeFailed, clearCompleted, pauseAll, resumeAll, cancelAll } =
-    useDownloadStore()
+  const {
+    items,
+    liveProgress,
+    paused,
+    cancel,
+    retry,
+    removeFailed,
+    clearCompleted,
+    clearFailed,
+    pauseAll,
+    resumeAll,
+    cancelAll,
+  } = useDownloadStore()
 
   const [panelWidth, setPanelWidth] = usePersistedPanelWidth('panel_width_downloads', {
     min: 200,
@@ -223,7 +234,10 @@ export default function DownloadsPanel({ onClose }) {
             <Section
               title="Failed"
               count={failed.length}
-              action={failed.length > 1 ? { label: 'Retry all', onClick: retryAllFailed } : null}
+              action={[
+                ...(failed.length > 1 ? [{ label: 'Retry all', onClick: retryAllFailed }] : []),
+                { label: 'Clear', onClick: clearFailed },
+              ]}
             >
               {failed.map((item) => (
                 <div
@@ -325,19 +339,25 @@ function ActiveItem({ item, liveProgress, onCancel }) {
 }
 
 function Section({ title, count, action, children }) {
+  const actions = action ? (Array.isArray(action) ? action : [action]) : []
   return (
     <div className="py-2">
       <div className="flex items-center gap-2 px-4 mb-1">
         <span className="text-[11px] uppercase tracking-wider text-text-tertiary font-medium">{title}</span>
         <span className="text-[10px] text-text-tertiary">{count}</span>
-        {action && (
-          <button
-            type="button"
-            onClick={action.onClick}
-            className="text-[10px] text-text-tertiary hover:text-text-secondary ml-auto cursor-pointer transition-colors"
-          >
-            {action.label}
-          </button>
+        {actions.length > 0 && (
+          <div className="ml-auto flex items-center gap-2">
+            {actions.map((a) => (
+              <button
+                key={a.label}
+                type="button"
+                onClick={a.onClick}
+                className="text-[10px] text-text-tertiary hover:text-text-secondary cursor-pointer transition-colors"
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
         )}
       </div>
       {children}

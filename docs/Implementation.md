@@ -386,7 +386,7 @@ CREATE INDEX idx_contents_type ON contents(type);
 
 ### `downloads` — Persistent Download Queue
 
-Survives crash/restart. Live progress (speed, %) is in-memory only. On startup, `status='active'` and `status='queued'` rows are marked `'failed'` with `error='Interrupted'` (temp files are cleaned up first); the user can retry them manually.
+Survives crash/restart. Live progress (speed, %) is in-memory only. Global pause is persisted in `settings.downloads_paused`. On startup: if downloads were paused, active rows are reset to `queued` and partial `.tmp` files are kept so the queue can resume; otherwise unfinished `active`/`queued` rows are marked `'failed'` with `error='Interrupted'` (temp files cleaned up first) for manual retry.
 
 ```sql
 CREATE TABLE downloads (
@@ -831,10 +831,10 @@ If a `.tmp` file exists from a previous attempt, the manager tries a `Range: byt
 
 ### Management Operations
 
-- **Pause/Resume all**: Stops all active transfers, preserves progress state. Resume re-queues them.
+- **Pause/Resume all**: Stops all active transfers, preserves progress state and persists pause across restarts (`settings.downloads_paused`). Resume re-queues them.
 - **Cancel**: Aborts the HTTP transfer, deletes the temp file, marks `status='cancelled'`.
 - **Retry**: Resets a failed download to `'queued'`.
-- **Clear completed/failed**: Removes entries from the database.
+- **Clear completed/failed**: Removes entries from the database (Downloads panel exposes Clear for both sections).
 
 ---
 
