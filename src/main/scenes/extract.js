@@ -7,8 +7,9 @@
  */
 
 import { existsSync } from 'fs'
-import { mkdir, writeFile } from 'fs/promises'
+import { mkdir, writeFile, utimes, stat } from 'fs/promises'
 import { basename, extname, dirname, join } from 'path'
+import { isLocalPackage } from '@shared/local-package.js'
 import { getSetting, getPersonAtomIds } from '../db.js'
 import { getContentByPackage, getPackageIndex, getExtractedAppearanceBasenames } from '../store.js'
 import { pLimit } from '../p-limit.js'
@@ -45,6 +46,33 @@ function creatorFor(packageFilename) {
   if (!packageFilename) return '!local'
   const pkg = getPackageIndex().get(packageFilename)
   return pkg?.creator || '!local'
+}
+
+/** Mtime to stamp onto extracted loose presets — package mtime for .var sources,
+ *  source file mtime for loose `__local__` content. */
+async function sourceMtimeForExtract({ packageFilename, internalPath, vamDir }) {
+  if (packageFilename && !isLocalPackage(packageFilename)) {
+    const mtime = getPackageIndex().get(packageFilename)?.file_mtime
+    return mtime > 0 ? mtime : null
+  }
+  if (vamDir && internalPath) {
+    try {
+      return (await stat(join(vamDir, internalPath))).mtimeMs / 1000
+    } catch {}
+  }
+  return null
+}
+
+async function applyExtractMtimes(absPaths, mtimeSeconds) {
+  if (!mtimeSeconds || !Number.isFinite(mtimeSeconds)) return
+  const d = new Date(mtimeSeconds * 1000)
+  for (const p of absPaths) {
+    try {
+      await utimes(p, d, d)
+    } catch {
+      // Best-effort — preset bytes are already on disk.
+    }
+  }
 }
 
 /**
@@ -310,6 +338,7 @@ export async function runExtract({ packageFilename, internalPath, atomIds, kind,
   const singleAtom = atoms.length === 1
   const creator = creatorFor(packageFilename)
   const wantAtoms = atomIds && atomIds.length ? new Set(atomIds) : null
+  const sourceMtime = await sourceMtimeForExtract({ packageFilename, internalPath, vamDir })
 
   for (const atom of atoms) {
     if (wantAtoms && !wantAtoms.has(atom.id)) continue
@@ -340,6 +369,7 @@ export async function runExtract({ packageFilename, internalPath, atomIds, kind,
       const preset = buildPreset(filtered)
       await mkdir(dirname(writePath), { recursive: true })
       await writeFile(writePath, JSON.stringify(preset, null, 3), 'utf-8')
+      const touched = [writePath]
       if (thumbBuffer) {
         // Thumb always lands on the live `.jpg` (never `.jpg.disabled`): the
         // disable cascade keeps the thumbnail un-renamed and the classifier
@@ -347,10 +377,12 @@ export async function runExtract({ packageFilename, internalPath, atomIds, kind,
         const imgPath = writePath.replace(/\.vap(\.disabled)?$/i, '.jpg')
         try {
           await writeFile(imgPath, thumbBuffer)
+          touched.push(imgPath)
         } catch {
           // Thumb write is best-effort.
         }
       }
+      await applyExtractMtimes(touched, sourceMtime)
       written.push(writePath)
     } catch (err) {
       errors.push({ scene: internalPath, reason: err.message })
