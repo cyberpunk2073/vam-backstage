@@ -1,6 +1,5 @@
 import { WebSocketServer } from 'ws'
 import { app } from 'electron'
-import { is } from '@electron-toolkit/utils'
 import { encode, decode } from '@shared/net-codec.js'
 import { DEFAULT_REMOTE_PORT } from '@shared/remote-config.js'
 import { getHandler } from './registry.js'
@@ -11,7 +10,7 @@ import { getSetting } from '../db.js'
 // unpackaged runs and for packaged builds where DevTools/developer options have
 // been unlocked (both signal a user who knowingly runs mixed versions).
 function isDevMode() {
-  if (is.dev) return true
+  if (!app.isPackaged) return true
   try {
     return getSetting('developer_options_unlocked') === '1'
   } catch {
