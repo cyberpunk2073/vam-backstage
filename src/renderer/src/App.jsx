@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, Activity } from 'react'
 import { Compass, Library, LayoutGrid, Download, Settings, Pause, Loader2, AlertTriangle } from 'lucide-react'
 import {
   AlertDialog,
@@ -149,6 +149,12 @@ export default function App() {
   }, [showWizard])
 
   const navContextRef = useRef(null)
+
+  // Lazy activation: a hidden <Activity> still mounts (and fetches), so only start
+  // keeping a view alive once visited — otherwise launching into Library would
+  // eagerly mount Hub/Content and fire a hub search on startup. Once seen, stays alive.
+  const seenViews = useRef(new Set([view]))
+  seenViews.current.add(view)
   const onWhatsNewDismiss = useCallback(async () => {
     if (!whatsNew) return
     const v = whatsNew.current
@@ -165,9 +171,8 @@ export default function App() {
           // prev/next stepping) is the hub, not the wishlist the user last viewed.
           useHubStore.getState().setGalleryMode('hub')
           useHubStore.getState().openDetail(context.openResource)
-        } else {
-          useHubStore.getState().closeDetail()
         }
+        // Else leave any open detail intact — returning to Hub restores it.
         navContextRef.current = null
       } else {
         navContextRef.current = context || null
@@ -217,7 +222,6 @@ export default function App() {
                 item={item}
                 active={view === item.id && !dlPanelOpen}
                 onClick={() => {
-                  if (item.id === 'hub') useHubStore.getState().closeDetail()
                   setView(item.id)
                   setDlPanelOpen(false)
                 }}
@@ -252,9 +256,21 @@ export default function App() {
         <div className="flex-1 flex flex-col min-w-0">
           <main className="flex-1 overflow-hidden">
             <ErrorBoundary>
-              {view === 'hub' && <HubView onNavigate={navigateTo} />}
-              {view === 'library' && <LibraryView onNavigate={navigateTo} navContext={navContextRef} />}
-              {view === 'content' && <ContentView onNavigate={navigateTo} navContext={navContextRef} />}
+              {seenViews.current.has('hub') && (
+                <Activity mode={view === 'hub' ? 'visible' : 'hidden'}>
+                  <HubView onNavigate={navigateTo} />
+                </Activity>
+              )}
+              {seenViews.current.has('library') && (
+                <Activity mode={view === 'library' ? 'visible' : 'hidden'}>
+                  <LibraryView onNavigate={navigateTo} navContext={navContextRef} />
+                </Activity>
+              )}
+              {seenViews.current.has('content') && (
+                <Activity mode={view === 'content' ? 'visible' : 'hidden'}>
+                  <ContentView onNavigate={navigateTo} navContext={navContextRef} />
+                </Activity>
+              )}
               {view === 'settings' && <SettingsView />}
             </ErrorBoundary>
           </main>

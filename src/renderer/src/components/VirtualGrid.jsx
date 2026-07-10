@@ -44,6 +44,8 @@ export function VirtualGrid({
   const scrollFixRef = useRef(null)
   const anchorRef = useRef(0)
   const suppressAnchorRef = useRef(false)
+  const committedKeyRef = useRef(scrollResetKey)
+  const scrollTopRef = useRef(0)
 
   const scalingHeight = itemHeight - fixedHeight
   const calcRowHeight = useCallback(
@@ -56,6 +58,9 @@ export function VirtualGrid({
     const el = scrollRef.current
     if (!el) return
     const onScroll = () => {
+      // Hiding via <Activity> (display:none) clamps scrollTop to 0 and can fire a
+      // scroll event before this listener is cleaned up — don't let it zero the anchor.
+      if (el.clientHeight === 0) return
       if (suppressAnchorRef.current) return
       const { cols, cellWidth } = layoutRef.current
       const rowH = calcRowHeight(cellWidth) + rowGap
@@ -66,20 +71,12 @@ export function VirtualGrid({
     return () => el.removeEventListener('scroll', onScroll)
   }, [calcRowHeight, rowGap, padding])
 
-  useLayoutEffect(() => {
-    const el = scrollRef.current
-    if (!el || el.scrollTop === 0) return
-    suppressAnchorRef.current = true
-    el.scrollTop = 0
-    anchorRef.current = 0
-    requestAnimationFrame(() => {
-      suppressAnchorRef.current = false
-    })
-  }, [scrollResetKey])
-
   const measure = useCallback(() => {
     const el = scrollRef.current
-    if (!el) return
+    // The ResizeObserver fires with a 0-size box when <Activity> hides us; a
+    // 0-width measure would commit cols:1 / negative cellWidth, collapsing the
+    // virtual height so the scroll restore on reveal gets clamped back to 0.
+    if (!el || el.clientWidth === 0) return
     const avail = el.clientWidth - padding * 2
     const newCols = Math.max(1, Math.floor((avail + gap) / (itemWidth + gap)))
     const newCellWidth = (avail - (newCols - 1) * gap) / newCols
@@ -132,8 +129,16 @@ export function VirtualGrid({
     if (rangeEndIndex >= rowCount - 1 - endReachedThreshold) onEndReachedRef.current()
   }, [rangeEndIndex, rowCount, endReachedThreshold, items.length])
 
+  // Scroll to the selection only when it actually changes. <Activity> re-runs all
+  // effects on reveal regardless of deps, and right after reveal the virtualizer's
+  // scroll rect is still the stale hidden one (0-height), so align:'auto' treats the
+  // selected row as out of view and scrolls to it — clobbering the offset the
+  // reset/restore effect below just restored.
+  const lastScrolledSelectionRef = useRef(null)
   useEffect(() => {
     if (selectedIndex == null || selectedIndex < 0 || !items.length) return
+    if (lastScrolledSelectionRef.current === selectedIndex) return
+    lastScrolledSelectionRef.current = selectedIndex
     const row = Math.floor(selectedIndex / cols)
     virtualizer.scrollToIndex(row, { align: 'auto' })
   }, [selectedIndex, cols, items.length, virtualizer])
@@ -152,6 +157,41 @@ export function VirtualGrid({
       }
     }
   }, [cols, cellWidth, rowHeight, rowGap, virtualizer])
+
+  // Scroll reset/restore. Reset to top only when scrollResetKey actually changes (a
+  // real filter change); otherwise restore the last user offset. <Activity> re-runs
+  // every effect on hide/reveal regardless of deps, and hiding (display:none) clamps
+  // scrollTop to 0 — so a reveal lands in the unchanged-key branch and restores.
+  //
+  // Two ordering constraints, both of which silently break restore if violated:
+  // - Capture the offset in this effect's CLEANUP, which <Activity> runs just before
+  //   applying display:none — the last moment the offset is readable. Don't rely on
+  //   scroll events for capture: their dispatch is not guaranteed (e.g. programmatic
+  //   scrolls in an occluded window fire no event at all).
+  // - This effect must be declared AFTER the useVirtualizer() call: on reveal the
+  //   virtualizer re-attaches to the scroll element and scrollTo()s its own cached
+  //   (stale) offset from a layout effect, so ours must run later to win.
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    suppressAnchorRef.current = true
+    if (committedKeyRef.current !== scrollResetKey) {
+      committedKeyRef.current = scrollResetKey
+      el.scrollTop = 0
+      anchorRef.current = 0
+      scrollTopRef.current = 0
+    } else if (scrollTopRef.current > 0) {
+      el.scrollTop = scrollTopRef.current
+    }
+    requestAnimationFrame(() => {
+      suppressAnchorRef.current = false
+    })
+    return () => {
+      // clientHeight is 0 when already hidden (unmount of a hidden Activity) — keep
+      // the previously captured offset instead of overwriting it with a clamped 0.
+      if (el.clientHeight > 0) scrollTopRef.current = el.scrollTop
+    }
+  }, [scrollResetKey])
 
   const onScrollMouseDown = useCallback(
     (e) => {
@@ -215,6 +255,8 @@ export function VirtualGrid({
  */
 export function VirtualList({ items, rowHeight = 37, renderRow, className = '', overscan = 5, scrollResetKey }) {
   const scrollRef = useRef(null)
+  const committedKeyRef = useRef(scrollResetKey)
+  const scrollTopRef = useRef(0)
 
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -227,10 +269,21 @@ export function VirtualList({ items, rowHeight = 37, renderRow, className = '', 
     virtualizer.measure()
   }, [rowHeight, virtualizer])
 
+  // Reset only on a real key change; restore the last offset on mount / <Activity>
+  // reveal, captured by the cleanup at hide time (see VirtualGrid for the full rationale).
   useLayoutEffect(() => {
     const el = scrollRef.current
-    if (!el || el.scrollTop === 0) return
-    el.scrollTop = 0
+    if (!el) return
+    if (committedKeyRef.current !== scrollResetKey) {
+      committedKeyRef.current = scrollResetKey
+      el.scrollTop = 0
+      scrollTopRef.current = 0
+    } else if (scrollTopRef.current > 0) {
+      el.scrollTop = scrollTopRef.current
+    }
+    return () => {
+      if (el.clientHeight > 0) scrollTopRef.current = el.scrollTop
+    }
   }, [scrollResetKey])
 
   return (

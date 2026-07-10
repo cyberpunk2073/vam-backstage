@@ -7,6 +7,22 @@ import { persistViewState, oneOf, asArray, asString, asCardWidth } from './persi
 /** Gallery data sources. Extend this (and the toolbar segmented control) to add future modes. */
 export const GALLERY_MODES = ['hub', 'wishlist']
 
+/**
+ * Freshness key over the hub-query fields, so returning to Hub doesn't refetch
+ * page 1 when nothing changed. Excludes wishlist filters (client-side, no fetch).
+ */
+export function hubFilterSignature(state) {
+  return [
+    state.search,
+    state.selectedType,
+    state.paidFilter,
+    state.authorSearch,
+    state.selectedHubTags.join(','),
+    state.sort,
+    state.license,
+  ].join('\u0000')
+}
+
 let fetchSeq = 0
 
 function syncInstalledFromResources(resources) {
@@ -49,6 +65,9 @@ export const useHubStore = create(
       page: 1,
       loading: false,
       error: null,
+      // Hub filter signature at the last reset-fetch; lets HubView skip a redundant
+      // reset+fetch on reveal. Not persisted (nor are resources), so launch refetches.
+      lastFetchedKey: null,
 
       search: '',
       selectedType: 'All',
@@ -161,6 +180,7 @@ export const useHubStore = create(
             totalFound: result.totalFound || 0,
             totalPages: result.totalPages || 0,
             loading: false,
+            ...(resetPage ? { lastFetchedKey: hubFilterSignature(q) } : {}),
           })
         } catch (err) {
           if (seq !== fetchSeq) return

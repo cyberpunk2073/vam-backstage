@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, Activity } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -43,9 +43,10 @@ import {
   isPromotionalLink,
   openExternalLink,
 } from '@/lib/utils'
-import { useHubStore } from '@/stores/useHubStore'
+import { useHubStore, hubFilterSignature } from '@/stores/useHubStore'
 import { useWishlistStore } from '@/stores/useWishlistStore'
 import { useDownloadStore } from '@/stores/useDownloadStore'
+import { useViewStore } from '@/stores/useViewStore'
 import { useInstalledStore } from '@/stores/useInstalledStore'
 import { useHubInstallState } from '@/hooks/useHubInstallState'
 import { useHubInteractions } from '@/hooks/useHubInteractions'
@@ -346,49 +347,30 @@ export default function HubView({ onNavigate }) {
     return resources.slice(0, fullRowCount)
   }, [resources, page, totalPages, gridCols])
 
-  // Gallery data source: wishlist mode reads the filtered local snapshots (loaded all at once, so
-  // no partial-row trimming); hub mode reads the paged search results with the trailing row hidden.
-  const galleryItems = wishlistMode ? wishlistFiltered : visibleResources
-
-  const scrollResetKey = useMemo(
-    () =>
-      wishlistMode
-        ? `wl\0${galleryMode}\0${wlSearch}\0${wlType}\0${wlTags.join(',')}\0${wlPaid}\0${wlAuthor}\0${wlLicense}\0${wlSort}`
-        : `hub\0${galleryMode}\0${search}\0${selectedType}\0${paidFilter}\0${authorSearch}\0${selectedHubTags.join(',')}\0${sort}\0${license}`,
-    [
-      wishlistMode,
-      galleryMode,
-      wlSearch,
-      wlType,
-      wlTags,
-      wlPaid,
-      wlAuthor,
-      wlLicense,
-      wlSort,
-      search,
-      selectedType,
-      paidFilter,
-      authorSearch,
-      selectedHubTags,
-      sort,
-      license,
-    ],
+  // Per-mode scroll reset keys: each grid resets only on a filter change within its
+  // own mode, so toggling Hub<->Wishlist keeps both scroll positions. The hub key
+  // reuses the fetch-guard signature so "filters changed" means the same thing for
+  // scroll reset and refetch.
+  const hubScrollResetKey = useMemo(
+    () => hubFilterSignature({ search, selectedType, paidFilter, authorSearch, selectedHubTags, sort, license }),
+    [search, selectedType, paidFilter, authorSearch, selectedHubTags, sort, license],
+  )
+  const wlScrollResetKey = useMemo(
+    () => `${wlSearch}\0${wlType}\0${wlTags.join(',')}\0${wlPaid}\0${wlAuthor}\0${wlLicense}\0${wlSort}`,
+    [wlSearch, wlType, wlTags, wlPaid, wlAuthor, wlLicense, wlSort],
   )
 
-  const showInitialSkeleton = wishlistMode
-    ? wishlistItems.length === 0 && wishlistLoading && !wishlistLoaded
-    : resources.length === 0 && (loading || !sort)
-
-  const handleEndReached = useCallback(() => {
-    if (!wishlistMode) fetchNextPage()
-  }, [wishlistMode, fetchNextPage])
+  const hubShowSkeleton = resources.length === 0 && (loading || !sort)
 
   const compactCards = cardMode === 'minimal'
 
-  // Filter changes → reset to page 1 and fetch
+  // Filter changes → reset to page 1 and fetch. Freshness-guarded so an <Activity>
+  // reveal with unchanged filters is a no-op (doesn't wipe loaded pages).
   useEffect(() => {
     if (!sort) return // wait for sort options to load
-    useHubStore.getState().fetchResources(true)
+    const s = useHubStore.getState()
+    if (hubFilterSignature(s) === s.lastFetchedKey) return
+    s.fetchResources(true)
   }, [search, selectedType, paidFilter, authorSearch, selectedHubTags, sort, license])
 
   // Page changes (without filter change) → fetch same filters, new page (append mode)
@@ -851,44 +833,82 @@ export default function HubView({ onNavigate }) {
           </div>
         </div>
 
-        {/* Gallery */}
+        {/* Gallery — cards + wishlist are two <Activity>-kept scroll surfaces, so
+            toggling modes preserves each one's scroll and DOM. */}
         <div className="relative flex-1 min-h-0 flex flex-col min-w-0">
-          {!wishlistMode && error && (
-            <div className="shrink-0 mx-4 mt-4 px-4 py-3 rounded-lg bg-error/10 border border-error/20 text-error text-xs select-text cursor-text">
-              {error}
+          <Activity mode={wishlistMode ? 'hidden' : 'visible'}>
+            <div className="relative flex-1 min-h-0 flex flex-col min-w-0">
+              {error && (
+                <div className="shrink-0 mx-4 mt-4 px-4 py-3 rounded-lg bg-error/10 border border-error/20 text-error text-xs select-text cursor-text">
+                  {error}
+                </div>
+              )}
+              {hubShowSkeleton ? (
+                <div className="flex-1 overflow-y-auto p-4">
+                  <div
+                    className="grid gap-3 content-start"
+                    style={{ gridTemplateColumns: `repeat(auto-fill,minmax(min(${cardWidth}px,100%),1fr))` }}
+                  >
+                    {Array.from({ length: 12 }, (_, i) => (
+                      <SkeletonCard key={i} mode={cardMode} />
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <VirtualGrid
+                    items={visibleResources}
+                    itemWidth={cardWidth}
+                    itemHeight={compactCards ? cardWidth : cardWidth + HUB_CARD_FOOTER_PX}
+                    fixedHeight={compactCards ? 0 : HUB_CARD_FOOTER_PX}
+                    className="flex-1"
+                    scrollResetKey={hubScrollResetKey}
+                    onLayout={handleGridLayout}
+                    hideEmptyMessage
+                    onEndReached={page < totalPages ? fetchNextPage : undefined}
+                    footer={
+                      loading && resources.length > 0 ? (
+                        <div className="flex items-center justify-center -mt-3 pb-4">
+                          <Loader2 size={20} className="animate-spin text-accent-blue" />
+                          <span className="text-[11px] text-text-tertiary ml-2">Loading more…</span>
+                        </div>
+                      ) : null
+                    }
+                    renderItem={(r) => (
+                      <HubCard
+                        key={r.resource_id}
+                        resource={r}
+                        onClick={openDetail}
+                        onViewInLibrary={handleViewInLibrary}
+                        onInstall={handleInstall}
+                        onPromote={handlePromote}
+                        onFilterAuthor={handleFilterAuthor}
+                        mode={cardMode}
+                        hideType={selectedType !== 'All'}
+                      />
+                    )}
+                  />
+                  {!loading && sort && resources.length === 0 && (
+                    <div className="pointer-events-none absolute inset-0 flex items-start justify-center pt-16 text-text-tertiary text-sm">
+                      No packages found
+                    </div>
+                  )}
+                </>
+              )}
             </div>
-          )}
-          {showInitialSkeleton ? (
-            <div className="flex-1 overflow-y-auto p-4">
-              <div
-                className="grid gap-3 content-start"
-                style={{ gridTemplateColumns: `repeat(auto-fill,minmax(min(${cardWidth}px,100%),1fr))` }}
-              >
-                {Array.from({ length: 12 }, (_, i) => (
-                  <SkeletonCard key={i} mode={cardMode} />
-                ))}
-              </div>
-            </div>
-          ) : (
-            <>
+          </Activity>
+
+          <Activity mode={wishlistMode ? 'visible' : 'hidden'}>
+            <div className="relative flex-1 min-h-0 flex flex-col min-w-0">
               <VirtualGrid
-                items={galleryItems}
+                items={wishlistFiltered}
                 itemWidth={cardWidth}
                 itemHeight={compactCards ? cardWidth : cardWidth + HUB_CARD_FOOTER_PX}
                 fixedHeight={compactCards ? 0 : HUB_CARD_FOOTER_PX}
                 className="flex-1"
-                scrollResetKey={scrollResetKey}
+                scrollResetKey={wlScrollResetKey}
                 onLayout={handleGridLayout}
                 hideEmptyMessage
-                onEndReached={!wishlistMode && page < totalPages ? handleEndReached : undefined}
-                footer={
-                  !wishlistMode && loading && resources.length > 0 ? (
-                    <div className="flex items-center justify-center -mt-3 pb-4">
-                      <Loader2 size={20} className="animate-spin text-accent-blue" />
-                      <span className="text-[11px] text-text-tertiary ml-2">Loading more…</span>
-                    </div>
-                  ) : null
-                }
                 renderItem={(r) => (
                   <HubCard
                     key={r.resource_id}
@@ -899,17 +919,12 @@ export default function HubView({ onNavigate }) {
                     onPromote={handlePromote}
                     onFilterAuthor={handleFilterAuthor}
                     mode={cardMode}
-                    hideType={wishlistMode ? wlType !== 'All' : selectedType !== 'All'}
-                    wishlist={wishlistMode}
+                    hideType={wlType !== 'All'}
+                    wishlist
                   />
                 )}
               />
-              {!wishlistMode && !loading && sort && resources.length === 0 && (
-                <div className="pointer-events-none absolute inset-0 flex items-start justify-center pt-16 text-text-tertiary text-sm">
-                  No packages found
-                </div>
-              )}
-              {wishlistMode && wishlistLoaded && wishlistItems.length === 0 && (
+              {wishlistLoaded && wishlistItems.length === 0 && (
                 <div className="pointer-events-none absolute inset-0 flex items-start justify-center pt-16">
                   <div className="max-w-sm text-center text-text-tertiary text-sm flex flex-col items-center gap-2">
                     <Pin size={28} className="opacity-40" />
@@ -921,13 +936,13 @@ export default function HubView({ onNavigate }) {
                   </div>
                 </div>
               )}
-              {wishlistMode && wishlistItems.length > 0 && wishlistFiltered.length === 0 && (
+              {wishlistItems.length > 0 && wishlistFiltered.length === 0 && (
                 <div className="pointer-events-none absolute inset-0 flex items-start justify-center pt-16 text-text-tertiary text-sm">
                   No wishlisted packages match your filters
                 </div>
               )}
-            </>
-          )}
+            </div>
+          </Activity>
         </div>
       </div>
       {detailResource && (
@@ -1154,6 +1169,10 @@ function HubDetail({
 }) {
   const { detailData, detailLoading } = useHubStore()
   const detail = detailData
+  // Hub stays mounted across tabs (<Activity>), so gate the Chromium guest on Hub
+  // being active — otherwise it lingers in the background. The rest of the panel
+  // stays mounted; returning restores the detail and reloads the guest page.
+  const hubActive = useViewStore((s) => s.view === 'hub')
   const [browserTab, setBrowserTab] = useState('overview')
   const webviewRef = useRef(null)
   const [canGoBack, setCanGoBack] = useState(false)
@@ -1419,7 +1438,8 @@ function HubDetail({
       wv.removeEventListener('dom-ready', injectLinkHandler)
       wv.removeEventListener('console-message', onConsoleMessage)
     }
-  }, [resourceId, tabUrls, tabs])
+    // `hubActive` dep: reattach to the freshly-mounted <webview> on return to Hub.
+  }, [resourceId, tabUrls, tabs, hubActive])
 
   const goBack = useCallback(() => webviewRef.current?.goBack(), [])
   const goForward = useCallback(() => webviewRef.current?.goForward(), [])
@@ -2033,17 +2053,19 @@ function HubDetail({
             ))}
           </div>
 
-          {/* Webview */}
+          {/* Webview — only mounted while Hub is the active view (see hubActive) */}
           <div className="flex-1 min-h-0">
-            <webview
-              key={browserResourceId}
-              ref={webviewRef}
-              src={navUrl}
-              partition="persist:hub"
-              allowpopups="true"
-              className="w-full h-full"
-              style={{ display: 'flex', pointerEvents: hubPanelResizeDrag ? 'none' : 'auto' }}
-            />
+            {hubActive && (
+              <webview
+                key={browserResourceId}
+                ref={webviewRef}
+                src={navUrl}
+                partition="persist:hub"
+                allowpopups="true"
+                className="w-full h-full"
+                style={{ display: 'flex', pointerEvents: hubPanelResizeDrag ? 'none' : 'auto' }}
+              />
+            )}
           </div>
         </div>
       </div>
