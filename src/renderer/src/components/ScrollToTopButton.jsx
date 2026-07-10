@@ -32,9 +32,9 @@ export function ScrollToTopButton({ scrollRef }) {
       onClick={scrollToTop}
       className={cn(
         'absolute bottom-4 right-4 z-10 flex h-9 w-9 items-center justify-center rounded-full',
-        'bg-elevated/75 text-text-secondary ring-1 ring-white/10 backdrop-blur-xl',
-        'shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08),0_2px_6px_0_rgba(0,0,0,0.3),0_10px_28px_-6px_rgba(0,0,0,0.45)]',
-        'transition-all duration-200 hover:bg-elevated/90 hover:text-text-primary hover:ring-white/20',
+        'bg-elevated/75 text-text-secondary ring-1 ring-inset ring-white/15 backdrop-blur-xl',
+        'shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08),0_1px_2px_rgba(0,0,0,0.55),0_2px_6px_rgba(0,0,0,0.35),0_10px_28px_-6px_rgba(0,0,0,0.45)]',
+        'transition-all duration-200 hover:bg-elevated/90 hover:text-text-primary hover:ring-white/25',
         visible ? 'cursor-pointer opacity-100' : 'pointer-events-none translate-y-1 opacity-0',
       )}
     >

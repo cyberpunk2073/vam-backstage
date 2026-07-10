@@ -73,6 +73,16 @@ const THUMB_FILLED_ICON_SHADOW =
 /** LibraryCard top-right corner glyph layout. Caller adds the color and the appropriate shadow. */
 const LIB_CARD_CORNER_ICON = 'shrink-0 size-[18px] inline-flex items-center justify-center'
 
+/** Eased bottom scrim: gentle top tail (no visible start line), steepest mid, soft vignette into peak. */
+const scrimGradient = (peak) =>
+  `linear-gradient(to top, rgba(0,0,0,${peak}) 0%, rgba(0,0,0,${peak * 0.91}) 15%, rgba(0,0,0,${peak * 0.81}) 28%, rgba(0,0,0,${peak * 0.7}) 40%, rgba(0,0,0,${peak * 0.59}) 51%, rgba(0,0,0,${peak * 0.47}) 61%, rgba(0,0,0,${peak * 0.35}) 70%, rgba(0,0,0,${peak * 0.24}) 78%, rgba(0,0,0,${peak * 0.15}) 85%, rgba(0,0,0,${peak * 0.08}) 91%, rgba(0,0,0,${peak * 0.03}) 96%, transparent 100%)`
+
+/** Subtle drop-shadow lift so a compact action button reads as a control floating over the thumbnail. */
+const THUMB_ACTION_BTN_SHADOW = 'shadow-[0_1px_2px_rgba(0,0,0,0.55),0_2px_6px_rgba(0,0,0,0.35)]'
+
+/** Lift + inset white edge for borderless (gradient) action buttons that would otherwise blend into bright thumbnails. */
+const THUMB_ACTION_BTN_POP = `${THUMB_ACTION_BTN_SHADOW} ring-1 ring-inset ring-white/15`
+
 /** Non-interactive bulk-selection marker; whole card handles clicks */
 function BulkSelectChip({ checked }) {
   return (
@@ -190,7 +200,7 @@ export function HubCard({
       <div
         className={
           minimal
-            ? 'px-2 py-1 rounded text-[10px] text-white/60 border border-white/10 bg-black/50 backdrop-blur-sm flex items-center gap-1'
+            ? `px-2 py-1 rounded text-[10px] text-white/60 border border-white/10 bg-black/50 backdrop-blur-sm flex items-center gap-1 ${THUMB_ACTION_BTN_SHADOW}`
             : 'w-full py-1.5 rounded text-[10px] text-text-tertiary border border-border flex items-center justify-center gap-1.5 whitespace-nowrap'
         }
       >
@@ -207,7 +217,7 @@ export function HubCard({
         disabled={!libRef}
         className={
           minimal
-            ? 'px-2 py-1 rounded text-[10px] text-accent-blue border border-accent-blue/25 bg-black/50 backdrop-blur-sm hover:bg-accent-blue/20 flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-40 disabled:pointer-events-none'
+            ? `px-2 py-1 rounded text-[10px] text-accent-blue border border-accent-blue/25 bg-black/50 backdrop-blur-sm hover:bg-accent-blue/20 flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-40 disabled:pointer-events-none ${THUMB_ACTION_BTN_SHADOW}`
             : 'w-full py-1.5 rounded text-[10px] text-accent-blue border border-accent-blue/25 hover:bg-accent-blue/10 flex items-center justify-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap disabled:opacity-40 disabled:pointer-events-none'
         }
       >
@@ -235,7 +245,7 @@ export function HubCard({
         }}
         className={
           minimal
-            ? 'px-2 py-1 h-auto rounded text-[10px] gap-1'
+            ? `px-2 py-1 h-auto rounded text-[10px] gap-1 ${THUMB_ACTION_BTN_POP}`
             : 'w-full py-1.5 h-auto rounded text-[10px] gap-1.5 whitespace-nowrap'
         }
       >
@@ -266,7 +276,7 @@ export function HubCard({
         }}
         className={
           minimal
-            ? 'max-w-[min(100%,9rem)] px-2 py-1 rounded text-[10px] text-accent-blue border border-accent-blue/25 bg-black/50 backdrop-blur-sm hover:bg-accent-blue/20 flex items-center gap-1 cursor-pointer transition-colors min-w-0'
+            ? `max-w-[min(100%,9rem)] px-2 py-1 rounded text-[10px] text-accent-blue border border-accent-blue/25 bg-black/50 backdrop-blur-sm hover:bg-accent-blue/20 flex items-center gap-1 cursor-pointer transition-colors min-w-0 ${THUMB_ACTION_BTN_SHADOW}`
             : 'w-full py-1.5 rounded text-[10px] text-accent-blue border border-accent-blue/25 hover:bg-accent-blue/10 flex items-center justify-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap'
         }
       >
@@ -285,7 +295,7 @@ export function HubCard({
         }}
         className={
           minimal
-            ? 'px-2 py-1 rounded text-[10px] text-error border border-error/25 bg-black/50 backdrop-blur-sm flex items-center gap-1 cursor-pointer'
+            ? `px-2 py-1 rounded text-[10px] text-error border border-error/25 bg-black/50 backdrop-blur-sm flex items-center gap-1 cursor-pointer ${THUMB_ACTION_BTN_SHADOW}`
             : 'w-full py-1.5 rounded text-[10px] text-error border border-error/25 hover:bg-error/10 flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap'
         }
       >
@@ -304,7 +314,7 @@ export function HubCard({
         }}
         className={
           minimal
-            ? 'px-2 py-1 h-auto rounded text-[10px] gap-1'
+            ? `px-2 py-1 h-auto rounded text-[10px] gap-1 ${THUMB_ACTION_BTN_POP}`
             : 'w-full py-1.5 h-auto rounded text-[10px] gap-1.5 tracking-wide whitespace-nowrap'
         }
       >
@@ -399,7 +409,10 @@ export function HubCard({
             </div>
           )}
           {minimal && (
-            <div className="absolute bottom-0 inset-x-0 flex items-end gap-2 px-2.5 pb-2 pt-6 bg-linear-to-t from-black/70 to-transparent">
+            <div
+              className="absolute bottom-0 inset-x-0 flex items-end gap-2 px-2.5 pb-2 pt-8"
+              style={{ background: scrimGradient(0.58) }}
+            >
               <div className="min-w-0 flex-1">
                 <div className="text-[12px] font-medium text-white truncate leading-tight" title={resource.title}>
                   {resource.title}
@@ -581,7 +594,7 @@ export function LibraryCard({
           )}
         </div>
         {minimal && (
-          <div className="absolute bottom-0 inset-x-0 px-2.5 pb-2 pt-6 bg-linear-to-t from-black/70 to-transparent">
+          <div className="absolute bottom-0 inset-x-0 px-2.5 pb-2 pt-8" style={{ background: scrimGradient(0.58) }}>
             <div className="flex items-baseline gap-1.5 min-w-0">
               <span className="text-[12px] font-medium text-white truncate leading-tight">{name}</span>
             </div>
@@ -1092,7 +1105,7 @@ export function ContentCard({
             <Star size={13} fill={item.favorite ? 'currentColor' : 'none'} />
           </button>
         </div>
-        <div className="absolute bottom-0 inset-x-0 px-2.5 pb-2 pt-8 bg-linear-to-t from-black/80 to-transparent">
+        <div className="absolute bottom-0 inset-x-0 px-2.5 pb-2 pt-8" style={{ background: scrimGradient(0.66) }}>
           <div className="text-[11px] font-medium text-white truncate leading-tight">{item.displayName}</div>
           <div className="text-[9px] text-white/50 truncate">{pkgLabel}</div>
         </div>
