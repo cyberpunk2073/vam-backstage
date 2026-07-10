@@ -68,6 +68,7 @@ import { LicenseTag } from '@/components/LicenseTag'
 import { Tag } from '@/components/ui/tag'
 import { SearchOnHubButton } from '@/components/SearchOnHubButton'
 import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
+import { ScrollToTopButton } from '@/components/ScrollToTopButton'
 
 /** Hub text search: avoid a network request on every keystroke */
 const HUB_SEARCH_DEBOUNCE_MS = 320
@@ -860,74 +861,77 @@ export default function HubView({ onNavigate }) {
         </div>
 
         {/* Gallery */}
-        <div ref={galleryRef} className="flex-1 overflow-y-auto p-4 relative">
-          {!wishlistMode && error && (
-            <div className="mb-4 px-4 py-3 rounded-lg bg-error/10 border border-error/20 text-error text-xs select-text cursor-text">
-              {error}
-            </div>
-          )}
-          {(
-            wishlistMode
-              ? wishlistItems.length === 0 && wishlistLoading && !wishlistLoaded
-              : resources.length === 0 && (loading || !sort)
-          ) ? (
-            <div
-              className="grid gap-3 content-start"
-              style={{ gridTemplateColumns: `repeat(auto-fill,minmax(min(${cardWidth}px,100%),1fr))` }}
-            >
-              {Array.from({ length: 12 }, (_, i) => (
-                <SkeletonCard key={i} mode={cardMode} />
-              ))}
-            </div>
-          ) : (
-            <>
+        <div className="relative flex-1 min-h-0">
+          <div ref={galleryRef} className="absolute inset-0 overflow-y-auto p-4">
+            {!wishlistMode && error && (
+              <div className="mb-4 px-4 py-3 rounded-lg bg-error/10 border border-error/20 text-error text-xs select-text cursor-text">
+                {error}
+              </div>
+            )}
+            {(
+              wishlistMode
+                ? wishlistItems.length === 0 && wishlistLoading && !wishlistLoaded
+                : resources.length === 0 && (loading || !sort)
+            ) ? (
               <div
                 className="grid gap-3 content-start"
                 style={{ gridTemplateColumns: `repeat(auto-fill,minmax(min(${cardWidth}px,100%),1fr))` }}
               >
-                {galleryItems.map((r) => (
-                  <HubCard
-                    key={r.resource_id}
-                    resource={r}
-                    onClick={openDetail}
-                    onViewInLibrary={handleViewInLibrary}
-                    onInstall={handleInstall}
-                    onPromote={handlePromote}
-                    onFilterAuthor={handleFilterAuthor}
-                    mode={cardMode}
-                    hideType={wishlistMode ? wlType !== 'All' : selectedType !== 'All'}
-                    wishlist={wishlistMode}
-                  />
+                {Array.from({ length: 12 }, (_, i) => (
+                  <SkeletonCard key={i} mode={cardMode} />
                 ))}
               </div>
-              {/* Infinite scroll sentinel (hub search only — the wishlist loads all rows at once) */}
-              {!wishlistMode && page < totalPages && <div ref={sentinelRef} className="h-1" />}
-              {!wishlistMode && loading && resources.length > 0 && (
-                <div className="flex items-center justify-center py-6">
-                  <Loader2 size={20} className="animate-spin text-accent-blue" />
-                  <span className="text-[11px] text-text-tertiary ml-2">Loading more…</span>
+            ) : (
+              <>
+                <div
+                  className="grid gap-3 content-start"
+                  style={{ gridTemplateColumns: `repeat(auto-fill,minmax(min(${cardWidth}px,100%),1fr))` }}
+                >
+                  {galleryItems.map((r) => (
+                    <HubCard
+                      key={r.resource_id}
+                      resource={r}
+                      onClick={openDetail}
+                      onViewInLibrary={handleViewInLibrary}
+                      onInstall={handleInstall}
+                      onPromote={handlePromote}
+                      onFilterAuthor={handleFilterAuthor}
+                      mode={cardMode}
+                      hideType={wishlistMode ? wlType !== 'All' : selectedType !== 'All'}
+                      wishlist={wishlistMode}
+                    />
+                  ))}
                 </div>
-              )}
-              {!wishlistMode && !loading && sort && resources.length === 0 && (
-                <div className="text-center py-16 text-text-tertiary text-sm">No packages found</div>
-              )}
-              {wishlistMode && wishlistLoaded && wishlistItems.length === 0 && (
-                <div className="max-w-sm mx-auto text-center py-16 text-text-tertiary text-sm flex flex-col items-center gap-2">
-                  <Pin size={28} className="opacity-40" />
-                  <p>Your wishlist is empty.</p>
-                  <p className="text-[12px] text-text-tertiary/80">
-                    Open a package and tap the <Pin size={12} className="inline align-[-1px]" /> button in its details
-                    to add it here.
-                  </p>
-                </div>
-              )}
-              {wishlistMode && wishlistItems.length > 0 && wishlistFiltered.length === 0 && (
-                <div className="text-center py-16 text-text-tertiary text-sm">
-                  No wishlisted packages match your filters
-                </div>
-              )}
-            </>
-          )}
+                {/* Infinite scroll sentinel (hub search only — the wishlist loads all rows at once) */}
+                {!wishlistMode && page < totalPages && <div ref={sentinelRef} className="h-1" />}
+                {!wishlistMode && loading && resources.length > 0 && (
+                  <div className="flex items-center justify-center py-6">
+                    <Loader2 size={20} className="animate-spin text-accent-blue" />
+                    <span className="text-[11px] text-text-tertiary ml-2">Loading more…</span>
+                  </div>
+                )}
+                {!wishlistMode && !loading && sort && resources.length === 0 && (
+                  <div className="text-center py-16 text-text-tertiary text-sm">No packages found</div>
+                )}
+                {wishlistMode && wishlistLoaded && wishlistItems.length === 0 && (
+                  <div className="max-w-sm mx-auto text-center py-16 text-text-tertiary text-sm flex flex-col items-center gap-2">
+                    <Pin size={28} className="opacity-40" />
+                    <p>Your wishlist is empty.</p>
+                    <p className="text-[12px] text-text-tertiary/80">
+                      Open a package and tap the <Pin size={12} className="inline align-[-1px]" /> button in its details
+                      to add it here.
+                    </p>
+                  </div>
+                )}
+                {wishlistMode && wishlistItems.length > 0 && wishlistFiltered.length === 0 && (
+                  <div className="text-center py-16 text-text-tertiary text-sm">
+                    No wishlisted packages match your filters
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          <ScrollToTopButton scrollRef={galleryRef} />
         </div>
       </div>
       {detailResource && (
