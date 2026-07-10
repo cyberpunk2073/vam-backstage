@@ -43,6 +43,7 @@ import {
   getTransitiveMissingRefs,
   findLocalByFilename,
   resolveHubDownloadUrl,
+  packageHasNoLookPresetTag,
 } from '../store.js'
 import { readAllPrefs, hidePackageContent } from '../vam-prefs.js'
 import { recordOwnedPath } from '../watcher.js'
@@ -1087,6 +1088,14 @@ async function postDownloadIntegrate(filename, fullPath, isDirect, hubResourceId
 
     // Single full aggregate rebuild (reuses graph from buildGraphOnly above)
     buildFromDb({ skipGraph: true })
+
+    // Top-level Hub installs of Looks packs that have no appearance/skin preset
+    // items (same condition as the library "no preset" badge).
+    if (isDirect && packageHasNoLookPresetTag(filename)) {
+      const pkg = getPackageIndex().get(filename)
+      const label = pkg?.hub_display_name || pkg?.title || pkg?.package_name || filename
+      notify('install:look-no-preset', { filename, label })
+    }
 
     notify('packages:updated')
     notify('contents:updated')

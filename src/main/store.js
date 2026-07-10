@@ -685,6 +685,13 @@ export function getFilteredPackages() {
   return userPackageValues().map((p) => enrichPackageSummary(p))
 }
 
+/** True when a Looks package would show the "no preset" card badge (no look/legacyLook/skinPreset items). */
+export function packageHasNoLookPresetTag(filename) {
+  const pkg = packageIndex.get(filename)
+  if (!pkg) return false
+  return effectivePackageType(pkg) === 'Looks' && (lookItemCountByPackage.get(filename) || 0) === 0
+}
+
 function enrichPackageSummary(pkg) {
   const depCount = transitiveDepsCountMap.get(pkg.filename) || 0
   const missingDeps = transitiveMissingMap.get(pkg.filename) || 0

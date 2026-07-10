@@ -17,6 +17,7 @@ import {
   isRealUrl,
   resolveHubDownloadUrl,
   setPrefsMap,
+  packageHasNoLookPresetTag,
 } from './store.js'
 import { setPackagesIndexForTests } from './hub/packages-json.js'
 
@@ -684,6 +685,28 @@ describe('buildFromDb — package summary enrichment', () => {
     buildFromDb()
     const p = getFilteredPackages().find((x) => x.filename === 'LooksEmpty.L.1.var')
     expect(p?.noLookPresetTag).toBe(true)
+    expect(packageHasNoLookPresetTag('LooksEmpty.L.1.var')).toBe(true)
+  })
+
+  it('packageHasNoLookPresetTag is false when look items exist', async () => {
+    const db = getDb()
+    seedPackage(db, {
+      filename: 'LooksFull.L.1.var',
+      package_name: 'LooksFull.L',
+      version: '1',
+      is_direct: 1,
+      type: 'Looks',
+    })
+    seedContent(db, {
+      package_filename: 'LooksFull.L.1.var',
+      internal_path: 'Custom/Atom/Person/Appearance/Preset.vap',
+      display_name: 'Preset',
+      type: 'look',
+    })
+    buildFromDb()
+    expect(packageHasNoLookPresetTag('LooksFull.L.1.var')).toBe(false)
+    const p = getFilteredPackages().find((x) => x.filename === 'LooksFull.L.1.var')
+    expect(p?.noLookPresetTag).toBe(false)
   })
 
   it('isOrphan is true only for deps with no dependents', async () => {

@@ -190,6 +190,7 @@ const api = {
   onDownloadsUpdated: (cb) => transport.on('downloads:updated', () => cb()),
   onDownloadProgress: (cb) => transport.on('download:progress', (data) => cb(data)),
   onDownloadFailed: (cb) => transport.on('download:failed', (data) => cb(data)),
+  onInstallLookNoPreset: (cb) => transport.on('install:look-no-preset', (data) => cb(data)),
   onScanProgress: (cb) => transport.on('scan:progress', (data) => cb(data)),
   onIntegrityProgress: (cb) => transport.on('integrity:progress', (data) => cb(data)),
   onScanUnreadable: (cb) => transport.on('scan:unreadable', (data) => cb(data)),
