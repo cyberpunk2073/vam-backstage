@@ -2,7 +2,7 @@ import { Eye, EyeOff, Star, ChevronDown, ChevronRight } from 'lucide-react'
 import { toast } from './Toast'
 import { openLightbox, openLightboxGallery } from './ThumbnailLightbox'
 import { getContentGradient } from '@/lib/utils'
-import { useThumbnail } from '@/hooks/useThumbnail'
+import { useThumbnail } from '@/hooks/createBlobCacheHook'
 import { useContentCategoryExpandedStore } from '@/stores/useContentCategoryExpandedStore'
 
 export function contentThumbKey(item) {

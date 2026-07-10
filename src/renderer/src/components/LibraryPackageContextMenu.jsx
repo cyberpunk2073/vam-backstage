@@ -25,8 +25,7 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 import { LabelsApplyMenuItems } from '@/components/labels/LabelsApplyMenuItems'
-import { singleTargetStateMap, bulkStateMap } from '@/components/labels/labelApplyState'
-import { applyLabelToFilenames } from '@/components/labels/labelActions'
+import { singleTargetStateMap, bulkStateMap, applyLabelToFilenames } from '@/components/labels/labelHelpers'
 import { AlertDialog } from '@/components/ui/alert-dialog'
 import {
   DisablePackageDialogContent,

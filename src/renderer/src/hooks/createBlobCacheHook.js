@@ -112,3 +112,9 @@ export function createBlobCacheHook(apiGetter, eventName) {
     return url
   }
 }
+
+/** Fetch a cached package/content thumbnail by key. Returns a blob URL or null. */
+export const useThumbnail = createBlobCacheHook((keys) => window.api.thumbnails.get(keys), 'thumbnails:updated')
+
+/** Fetch a cached avatar by Hub user_id (string). Returns a blob URL or null. */
+export const useAvatar = createBlobCacheHook((keys) => window.api.avatars.get(keys), 'avatars:updated')

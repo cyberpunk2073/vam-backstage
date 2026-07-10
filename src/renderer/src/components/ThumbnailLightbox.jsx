@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { create } from 'zustand'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { useThumbnail } from '@/hooks/useThumbnail'
+import { useThumbnail } from '@/hooks/createBlobCacheHook'
 
 export const useLightboxStore = create((set) => ({
   // Single-image mode: `src` is a blob URL, `items` is null.

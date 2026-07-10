@@ -15,8 +15,7 @@ import { cn, displayName } from '@/lib/utils'
 import { useContentStore } from '@/stores/useContentStore'
 import { useLabelsStore } from '@/stores/useLabelsStore'
 import { LabelsApplyMenuItems } from '@/components/labels/LabelsApplyMenuItems'
-import { singleTargetStateMap, bulkStateMap } from '@/components/labels/labelApplyState'
-import { applyLabelToContentItems } from '@/components/labels/labelActions'
+import { singleTargetStateMap, bulkStateMap, applyLabelToContentItems } from '@/components/labels/labelHelpers'
 
 const SCENE_SOURCE_TYPES = new Set(['scene', 'legacyScene'])
 const LOOK_SOURCE_TYPES = new Set(['legacyLook'])

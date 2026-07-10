@@ -61,9 +61,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { LabelApplyPopover } from '@/components/labels/LabelApplyPopover'
-import { bulkStateMap } from '@/components/labels/labelApplyState'
+import { bulkStateMap } from '@/components/labels/labelHelpers'
 import { Tag } from 'lucide-react'
-import { useThumbnail } from '@/hooks/useThumbnail'
+import { useThumbnail } from '@/hooks/createBlobCacheHook'
 import { useLibraryStore } from '@/stores/useLibraryStore'
 import { useLabelsStore } from '@/stores/useLabelsStore'
 import { useContentStore } from '@/stores/useContentStore'
