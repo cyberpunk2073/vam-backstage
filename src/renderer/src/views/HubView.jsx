@@ -321,6 +321,10 @@ export default function HubView({ onNavigate }) {
   useEffect(() => {
     if (pageRef.current === page) return
     pageRef.current = page
+    // Filter resets already fetch page 1 themselves. Starting an append fetch here
+    // would supersede that request without recording its filter key, leaving the
+    // freshness guard able to mistake filtered resources for a neutral result.
+    if (page === 1) return
     useHubStore.getState().fetchResources()
   }, [page])
 

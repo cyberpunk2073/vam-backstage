@@ -155,8 +155,9 @@ export const useHubStore = create(
         const seq = ++fetchSeq
         const state = get()
         const page = resetPage ? 1 : state.page
+        const replaceResources = resetPage || page === 1
         if (resetPage && state.page !== 1) set({ page: 1 })
-        set({ loading: true, error: null, ...(resetPage ? { resources: [] } : {}) })
+        set({ loading: true, error: null, ...(replaceResources ? { resources: [] } : {}) })
         try {
           if (opts?.forceRefresh) {
             await window.api.hub.invalidateCaches()
@@ -178,15 +179,15 @@ export const useHubStore = create(
           const incoming = result.resources || []
           syncInstalledFromResources(incoming)
           set({
-            resources: resetPage ? incoming : [...q.resources, ...incoming],
+            resources: replaceResources ? incoming : [...q.resources, ...incoming],
             totalFound: result.totalFound || 0,
             totalPages: result.totalPages || 0,
             loading: false,
-            ...(resetPage ? { lastFetchedKey: hubFilterSignature(q) } : {}),
+            ...(replaceResources ? { lastFetchedKey: hubFilterSignature(q) } : {}),
           })
         } catch (err) {
           if (seq !== fetchSeq) return
-          set({ error: err.message, loading: false, ...(resetPage ? { resources: [] } : {}) })
+          set({ error: err.message, loading: false, ...(replaceResources ? { resources: [] } : {}) })
         }
       },
 
