@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Search, X } from 'lucide-react'
-import { Input } from '@/components/ui/input'
+import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { labelColor } from '@/lib/labels'
 import { highlightSegments, parseSmartQuery, spliceToken, tokenAtCaret } from '@/lib/smart-search'
@@ -72,6 +71,7 @@ export function SmartSearchBar({
   placeholder = 'Search…',
 }) {
   const [caret, setCaret] = useState(0)
+  const [focused, setFocused] = useState(false)
   const backdropRef = useRef(null)
 
   const segments = useMemo(() => highlightSegments(value), [value])
@@ -139,10 +139,13 @@ export function SmartSearchBar({
     if (el) setCaret(el.selectionStart ?? 0)
   }
 
-  // Keep the colored backdrop aligned with the input's horizontal scroll.
+  // Keep the colored backdrop aligned with the editor's horizontal/vertical scroll.
   const syncScroll = () => {
     const el = combobox.inputRef.current
-    if (el && backdropRef.current) backdropRef.current.scrollLeft = el.scrollLeft
+    if (el && backdropRef.current) {
+      backdropRef.current.scrollLeft = el.scrollLeft
+      backdropRef.current.scrollTop = el.scrollTop
+    }
   }
   useEffect(() => {
     const id = requestAnimationFrame(syncScroll)
@@ -152,14 +155,15 @@ export function SmartSearchBar({
   return (
     <div ref={combobox.containerRef} className="relative">
       <div className="relative">
-        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-tertiary z-10" />
         {/* Colored syntax layer behind the transparent-text input. */}
         <div
           ref={backdropRef}
           aria-hidden="true"
-          className="pointer-events-none absolute inset-0 flex items-center overflow-hidden whitespace-pre rounded-md border border-transparent bg-elevated py-1 pl-8 pr-7 text-xs text-text-primary"
+          className={`pointer-events-none absolute inset-0 overflow-hidden rounded-md border border-transparent bg-elevated py-1.75 pl-2.5 pr-6 text-xs leading-4 text-text-primary ${
+            focused ? 'whitespace-pre-wrap wrap-break-word' : 'whitespace-pre'
+          }`}
         >
-          <span>
+          <span className={focused ? '' : 'block overflow-hidden text-ellipsis whitespace-pre'}>
             {segments.map((seg, i) => (
               <span key={i} className={segmentClass(seg)}>
                 {seg.text}
@@ -167,20 +171,42 @@ export function SmartSearchBar({
             ))}
           </span>
         </div>
-        <Input
+        <textarea
           ref={combobox.inputRef}
-          type="text"
+          rows={1}
+          wrap={focused ? 'soft' : 'off'}
           placeholder={placeholder}
+          spellCheck={false}
+          autoCorrect="off"
+          autoCapitalize="none"
           value={value}
           style={{ caretColor: 'var(--color-text-primary)' }}
           onChange={(e) => {
-            onChange(e.target.value)
-            setCaret(e.target.selectionStart ?? 0)
+            const raw = e.target.value
+            const rawCaret = e.target.selectionStart ?? raw.length
+            const next = raw.replace(/[\r\n]+/g, ' ')
+            const nextCaret = raw.slice(0, rawCaret).replace(/[\r\n]+/g, ' ').length
+            onChange(next)
+            setCaret(nextCaret)
+            if (next !== raw) {
+              requestAnimationFrame(() => combobox.inputRef.current?.setSelectionRange(nextCaret, nextCaret))
+            }
             combobox.setOpen(true)
           }}
           onFocus={(e) => {
+            setFocused(true)
             syncCaret(e.target)
             combobox.setOpen(true)
+          }}
+          onBlur={() => {
+            setFocused(false)
+            requestAnimationFrame(() => {
+              const el = combobox.inputRef.current
+              if (!el) return
+              el.scrollLeft = 0
+              el.scrollTop = 0
+              syncScroll()
+            })
           }}
           onClick={(e) => {
             syncCaret(e.target)
@@ -189,8 +215,15 @@ export function SmartSearchBar({
           onKeyUp={(e) => syncCaret(e.target)}
           onSelect={(e) => syncCaret(e.target)}
           onScroll={syncScroll}
-          onKeyDown={combobox.onKeyDown}
-          className={`relative z-1 h-8 bg-transparent pl-8 pr-7 text-xs ${value ? 'text-transparent' : ''}`}
+          onKeyDown={(e) => {
+            combobox.onKeyDown(e)
+            if (e.key === 'Enter' && !e.defaultPrevented) e.preventDefault()
+          }}
+          className={`relative z-1 block w-full min-w-0 resize-none rounded-md border border-input bg-transparent py-1.75 pl-2.5 pr-6 text-xs leading-4 transition-[height,border-color] duration-100 outline-none placeholder:text-text-tertiary focus-visible:border-ring/50 ${
+            focused
+              ? 'field-sizing-content h-auto min-h-8 max-h-16 overflow-x-hidden overflow-y-auto whitespace-pre-wrap wrap-break-word'
+              : 'h-8 overflow-hidden whitespace-pre'
+          } ${value ? 'text-transparent' : ''}`}
         />
         {value ? (
           <Button
@@ -231,7 +264,7 @@ export function SmartSearchBar({
         <div className="absolute z-30 left-0 right-0 mt-1 px-2.5 py-2 bg-popover border border-border rounded shadow-lg flex flex-col gap-1.5">
           <div className="flex items-baseline gap-1.5">
             <span className="text-[10px] uppercase tracking-wide text-text-tertiary shrink-0">e.g.</span>
-            <span className="whitespace-pre text-xs opacity-65">
+            <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-pre text-xs opacity-65">
               {EXAMPLE_SEGMENTS.map((seg, i) => (
                 <span key={i} className={segmentClass(seg)}>
                   {seg.text}
