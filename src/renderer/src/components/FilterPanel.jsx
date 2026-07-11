@@ -69,7 +69,7 @@ export default function FilterPanel({
                   variant="ghost"
                   size="icon-xs"
                   onClick={() => onSearchChange('')}
-                  className="absolute right-1 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary"
+                  className="absolute right-1 top-1 text-text-tertiary hover:text-text-secondary"
                 >
                   <X size={12} />
                 </Button>
@@ -144,7 +144,7 @@ export default function FilterPanel({
                     variant="ghost"
                     size="icon-xs"
                     onClick={() => section.onChange('')}
-                    className="absolute right-1 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary"
+                    className="absolute right-1 top-0.5 text-text-tertiary hover:text-text-secondary"
                     aria-label={`Clear ${section.label}`}
                   >
                     <X size={12} />

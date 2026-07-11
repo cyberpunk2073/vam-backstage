@@ -33,7 +33,7 @@ export function ComboboxField({
           variant="ghost"
           size="icon-xs"
           onClick={onClear}
-          className="absolute right-1 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary"
+          className="absolute right-1 top-0.5 text-text-tertiary hover:text-text-secondary"
           aria-label={clearLabel}
         >
           <X size={12} />

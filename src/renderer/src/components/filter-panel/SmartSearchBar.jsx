@@ -201,7 +201,7 @@ export function SmartSearchBar({
               onChange('')
               combobox.setOpen(false)
             }}
-            className="absolute right-1 top-1/2 -translate-y-1/2 z-10 text-text-tertiary hover:text-text-secondary"
+            className="absolute right-1 top-1.5 z-10 size-5 text-text-tertiary hover:text-text-secondary"
             aria-label="Clear search"
           >
             <X size={12} />
