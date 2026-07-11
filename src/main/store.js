@@ -889,6 +889,7 @@ export function getFilteredContents(filters = {}) {
     thumbnailPath: c.thumbnail_path,
     extractedFrom: c.extractedFrom ?? null,
     localDisabled: !!c.localDisabled,
+    fileMtime: isLocalPackage(c.package_filename) ? c.file_mtime || 0 : 0,
     hasExtractedAppearancePreset:
       c.type === 'legacyLook' &&
       contentHasExtractedAppearance({

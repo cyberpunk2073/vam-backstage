@@ -490,8 +490,10 @@ export default function ContentView({ onNavigate, navContext }) {
       selectedLabelIds,
     })
     const sortFns = {
+      // Loose rows carry their own fileMtime (matches VaM's on-disk order). Packaged
+      // rows fall back to the owning package's install / file timestamps.
       'Recently installed': (a, b) =>
-        (b.package?.firstSeenAt || 0) - (a.package?.firstSeenAt || 0) ||
+        (b.fileMtime || b.package?.firstSeenAt || 0) - (a.fileMtime || a.package?.firstSeenAt || 0) ||
         (b.package?.fileMtime || 0) - (a.package?.fileMtime || 0),
       'Name A-Z': (a, b) => (a.displayName || '').localeCompare(b.displayName || ''),
       Package: (a, b) => contentPackageLabel(a).localeCompare(contentPackageLabel(b)),
