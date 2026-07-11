@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { User } from 'lucide-react'
 import { PolarityTagChip, rankSuggestions, stripNegationPrefix } from './chip-utils'
 import { useCombobox } from './useCombobox'
-import { ChipRow, ComboboxField, ComboboxPopup, ComboboxRow } from './Combobox'
+import { ChipRow, ComboboxField, ComboboxLabel, ComboboxPopup, ComboboxRow } from './Combobox'
 
 /**
  * Author filter: single live positive substring (chip-less) + optional exclude
@@ -120,10 +120,11 @@ export function AuthorAutocomplete({
             <ComboboxRow
               key={name}
               active={i === combobox.hlIndex}
+              negate={pendingNegate}
               onSelect={() => pickSuggestion(name)}
               onHover={() => combobox.setHlIndex(i)}
             >
-              <span className="truncate flex-1">{pendingNegate ? `− ${name}` : name}</span>
+              <ComboboxLabel negate={pendingNegate}>{name}</ComboboxLabel>
               <span className="text-text-tertiary text-[11px] shrink-0">{count}</span>
             </ComboboxRow>
           ))}

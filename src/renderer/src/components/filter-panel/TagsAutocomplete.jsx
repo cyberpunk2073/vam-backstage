@@ -3,7 +3,7 @@ import { Hash } from 'lucide-react'
 import { PolarityTagChip, rankSuggestions, stripNegationPrefix } from './chip-utils'
 import { usePolarityList } from './usePolarityList'
 import { useCombobox } from './useCombobox'
-import { ChipRow, ComboboxField, ComboboxPopup, ComboboxRow } from './Combobox'
+import { ChipRow, ComboboxField, ComboboxLabel, ComboboxPopup, ComboboxRow } from './Combobox'
 
 export function TagsAutocomplete({
   value = [],
@@ -86,10 +86,11 @@ export function TagsAutocomplete({
             <ComboboxRow
               key={tag}
               active={i === combobox.hlIndex}
+              negate={pendingNegate}
               onSelect={() => addTag(tag, pendingNegate)}
               onHover={() => combobox.setHlIndex(i)}
             >
-              <span className="truncate flex-1">{pendingNegate ? `− ${tag}` : tag}</span>
+              <ComboboxLabel negate={pendingNegate}>{tag}</ComboboxLabel>
               <span className="text-text-tertiary text-[11px] shrink-0">{count}</span>
             </ComboboxRow>
           ))}

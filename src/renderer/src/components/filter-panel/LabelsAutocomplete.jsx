@@ -7,7 +7,7 @@ import { labelColor } from '@/lib/labels'
 import { stripNegationPrefix } from './chip-utils'
 import { usePolarityList } from './usePolarityList'
 import { useCombobox } from './useCombobox'
-import { ChipRow, ComboboxField, ComboboxPopup, ComboboxRow } from './Combobox'
+import { ChipRow, ComboboxField, ComboboxLabel, ComboboxPopup, ComboboxRow } from './Combobox'
 
 /**
  * Labels filter widget — like `TagsAutocomplete` but values are label IDs and
@@ -123,11 +123,12 @@ export function LabelsAutocomplete({
               >
                 <ComboboxRow
                   active={i === combobox.hlIndex}
+                  negate={pendingNegate}
                   onSelect={() => addLabel(label.id, pendingNegate)}
                   onHover={() => combobox.setHlIndex(i)}
                 >
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: labelColor(label) }} />
-                  <span className="truncate flex-1">{pendingNegate ? `− ${label.name}` : label.name}</span>
+                  <ComboboxLabel negate={pendingNegate}>{label.name}</ComboboxLabel>
                   {total > 0 && <span className="text-text-tertiary text-[11px] shrink-0">{total}</span>}
                 </ComboboxRow>
               </LabelManageMenu>

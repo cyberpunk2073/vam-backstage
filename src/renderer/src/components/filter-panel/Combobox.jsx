@@ -60,7 +60,7 @@ export function ComboboxPopup({ listRef, maxHeight = 'max-h-48', children }) {
  * `disabled` renders the row dimmed and inert while keeping it visible (and
  * keeps input focus via the mousedown guard). `title` sets a native tooltip.
  */
-export function ComboboxRow({ active, disabled = false, title, onSelect, onHover, children }) {
+export function ComboboxRow({ active, disabled = false, negate = false, title, onSelect, onHover, children }) {
   return (
     <button
       type="button"
@@ -71,11 +71,31 @@ export function ComboboxRow({ active, disabled = false, title, onSelect, onHover
       className={`w-full text-left px-2.5 py-1.5 text-xs flex items-center gap-2 transition-colors ${
         disabled
           ? 'opacity-40 cursor-not-allowed'
-          : `cursor-pointer ${active ? 'bg-accent-blue/10 text-text-primary' : 'hover:bg-hover'}`
+          : `cursor-pointer ${
+              active
+                ? negate
+                  ? 'bg-error/10 text-text-primary'
+                  : 'bg-accent-blue/10 text-text-primary'
+                : 'hover:bg-hover'
+            }`
       }`}
     >
       {children}
     </button>
+  )
+}
+
+/** Suggestion label with a fixed-width red minus when excluding (matches chip / legend styling). */
+export function ComboboxLabel({ negate, children }) {
+  return (
+    <span className="flex-1 min-w-0 flex items-center gap-0.5">
+      {negate ? (
+        <span className="shrink-0 w-2.5 text-center text-error font-medium leading-none" aria-hidden>
+          −
+        </span>
+      ) : null}
+      <span className="truncate min-w-0">{children}</span>
+    </span>
   )
 }
 

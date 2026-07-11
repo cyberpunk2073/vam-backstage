@@ -6,7 +6,7 @@ import { labelColor } from '@/lib/labels'
 import { highlightSegments, parseSmartQuery, spliceToken, tokenAtCaret } from '@/lib/smart-search'
 import { rankSuggestions } from './chip-utils'
 import { useCombobox } from './useCombobox'
-import { ComboboxPopup, ComboboxRow } from './Combobox'
+import { ComboboxLabel, ComboboxPopup, ComboboxRow } from './Combobox'
 
 const FIELD_CLASS = {
   author: 'text-accent-blue',
@@ -216,12 +216,13 @@ export function SmartSearchBar({
               key={m.key}
               active={i === combobox.hlIndex}
               disabled={m.disabled}
+              negate={active.negate}
               title={m.disabled ? MULTIWORD_HINT : undefined}
               onSelect={() => pick(m.label)}
               onHover={() => combobox.setHlIndex(i)}
             >
               {m.color ? <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: m.color }} /> : null}
-              <span className="truncate flex-1">{active.negate ? `− ${m.label}` : m.label}</span>
+              <ComboboxLabel negate={active.negate}>{m.label}</ComboboxLabel>
               {m.count > 0 && <span className="text-text-tertiary text-[11px] shrink-0">{m.count}</span>}
             </ComboboxRow>
           ))}
