@@ -55,16 +55,9 @@ import FilterPanel from '@/components/FilterPanel'
 import ResizeHandle from '@/components/ResizeHandle'
 import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
 import { useIsDev } from '@/hooks/useIsDev'
-import {
-  LICENSE_FILTER_OPTIONS,
-  COMMERCIAL_USE_ALLOWED_LICENSE_FILTER,
-  NONCOMMERCIAL_USE_ALLOWED_LICENSE_FILTER,
-  getHubResourceLicense,
-  canonicalizeLicense,
-  isCommercialUseAllowed,
-  isNonCommercialUseAllowed,
-} from '@/lib/licenses'
+import { LICENSE_FILTER_OPTIONS, getHubResourceLicense } from '@/lib/licenses'
 import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
+import { matchesPolarityList, matchesAuthorFilter, matchesLicenseFilter } from '@/lib/filter-match'
 import { LicenseTag } from '@/components/LicenseTag'
 import { Tag } from '@/components/ui/tag'
 import { SearchOnHubButton } from '@/components/SearchOnHubButton'
@@ -127,14 +120,6 @@ function parseSnapshotTags(r) {
     .filter(Boolean)
 }
 
-function wishlistMatchesLicense(r, license) {
-  if (license === 'Any') return true
-  const lic = getHubResourceLicense(r)
-  if (license === COMMERCIAL_USE_ALLOWED_LICENSE_FILTER) return isCommercialUseAllowed(lic) === true
-  if (license === NONCOMMERCIAL_USE_ALLOWED_LICENSE_FILTER) return isNonCommercialUseAllowed(lic) === true
-  return canonicalizeLicense(lic) === canonicalizeLicense(license)
-}
-
 /** All wishlist filter dimensions, in a fixed key order for facet cross-filtering. */
 const WISHLIST_FILTER_KEYS = ['search', 'type', 'tags', 'paid', 'author', 'license']
 
@@ -147,7 +132,6 @@ const WISHLIST_FILTER_KEYS = ['search', 'type', 'tags', 'paid', 'author', 'licen
 function wishlistPredicates({ search, type, tags, paid, author, excludedAuthors, license }) {
   const { tokens } = parseSmartQuery(search)
   const tagItems = tags || []
-  const aq = author ? author.toLowerCase() : ''
   const excluded = excludedAuthors || []
   return {
     search: (r) =>
@@ -159,25 +143,10 @@ function wishlistPredicates({ search, type, tags, paid, author, excludedAuthors,
         labels: () => [],
       }),
     type: (r) => type === 'All' || r.type === type,
-    tags: (r) => {
-      if (!tagItems.length) return true
-      const rt = parseSnapshotTags(r)
-      for (const item of tagItems) {
-        const value = (typeof item === 'object' ? item.value : item).toLowerCase()
-        const negate = typeof item === 'object' && !!item.negate
-        const has = rt.includes(value)
-        if (negate ? has : !has) return false
-      }
-      return true
-    },
+    tags: (r) => matchesPolarityList(tagItems, parseSnapshotTags(r), { normalize: true }),
     paid: (r) => paid === 'all' || (paid === 'free' ? r.category === 'Free' : r.category === 'Paid'),
-    author: (r) => {
-      const username = (r.username || '').toLowerCase()
-      if (aq && !username.includes(aq)) return false
-      if (excluded.some((a) => username.includes(String(a).toLowerCase()))) return false
-      return true
-    },
-    license: (r) => wishlistMatchesLicense(r, license),
+    author: (r) => matchesAuthorFilter(r.username, author, excluded),
+    license: (r) => matchesLicenseFilter(getHubResourceLicense(r), license),
   }
 }
 

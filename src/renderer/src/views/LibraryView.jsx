@@ -83,15 +83,9 @@ import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
 import { useKeyboardNav } from '@/hooks/useKeyboardNav'
 import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
 import { useLibraryUpdateState } from '@/hooks/useLibraryUpdateState'
-import {
-  COMMERCIAL_USE_ALLOWED_LICENSE_FILTER,
-  NONCOMMERCIAL_USE_ALLOWED_LICENSE_FILTER,
-  LICENSE_FILTER_OPTIONS,
-  canonicalizeLicense,
-  isCommercialUseAllowed,
-  isNonCommercialUseAllowed,
-} from '@/lib/licenses'
+import { LICENSE_FILTER_OPTIONS } from '@/lib/licenses'
 import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
+import { matchesPolarityList, matchesAuthorFilter, matchesLicenseFilter, polarityScrollKey } from '@/lib/filter-match'
 import { haystacksMatchAllTerms, searchAndTerms } from '@/lib/search-text'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { LicenseTag } from '@/components/LicenseTag'
@@ -117,31 +111,11 @@ function packageHubTags(p) {
 }
 
 function packageMatchesSelectedTags(p, selectedTags) {
-  if (selectedTags.length === 0) return true
-  const tags = packageHubTags(p)
-  for (const item of selectedTags) {
-    const value = typeof item === 'object' ? item.value : item
-    const negate = typeof item === 'object' && !!item.negate
-    const has = tags.includes(value)
-    if (negate ? has : !has) return false
-  }
-  return true
+  return matchesPolarityList(selectedTags, packageHubTags(p), { normalize: true })
 }
 
 function packageMatchesSelectedLabels(p, selectedLabelIds) {
-  if (selectedLabelIds.length === 0) return true
-  const ids = p.labelIds || []
-  for (const item of selectedLabelIds) {
-    const id = typeof item === 'object' ? item.value : item
-    const negate = typeof item === 'object' && !!item.negate
-    const has = ids.includes(id)
-    if (negate ? has : !has) return false
-  }
-  return true
-}
-
-function polarityScrollKey(list) {
-  return list.map((item) => (typeof item === 'object' ? `${item.value}:${item.negate ? 1 : 0}` : item)).join(',')
+  return matchesPolarityList(selectedLabelIds, p.labelIds || [])
 }
 
 /** True when an update entry has been definitively marked as not directly
@@ -323,25 +297,11 @@ export default function LibraryView({ onNavigate, navContext }) {
         }),
       )
     }
-    if (authorSearch) {
-      const aq = authorSearch.toLowerCase()
-      result = result.filter((p) => (p.creator || '').toLowerCase().includes(aq))
-    }
-    if (excludedAuthors.length > 0) {
-      result = result.filter((p) => {
-        const creator = (p.creator || '').toLowerCase()
-        return !excludedAuthors.some((a) => creator.includes(a.toLowerCase()))
-      })
+    if (authorSearch || excludedAuthors.length > 0) {
+      result = result.filter((p) => matchesAuthorFilter(p.creator, authorSearch, excludedAuthors))
     }
     if (license !== 'Any') {
-      if (license === COMMERCIAL_USE_ALLOWED_LICENSE_FILTER) {
-        result = result.filter((p) => isCommercialUseAllowed(p.license) === true)
-      } else if (license === NONCOMMERCIAL_USE_ALLOWED_LICENSE_FILTER) {
-        result = result.filter((p) => isNonCommercialUseAllowed(p.license) === true)
-      } else {
-        const want = canonicalizeLicense(license)
-        result = result.filter((p) => canonicalizeLicense(p.license) === want)
-      }
+      result = result.filter((p) => matchesLicenseFilter(p.license, license))
     }
     return result
   }, [packages, search, authorSearch, excludedAuthors, license, labelNameById])

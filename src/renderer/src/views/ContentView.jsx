@@ -57,6 +57,7 @@ import { useKeyboardNav } from '@/hooks/useKeyboardNav'
 import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
 import { openLightbox } from '@/components/ThumbnailLightbox'
 import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
+import { matchesPolarityList, matchesAuthorFilter, polarityScrollKey } from '@/lib/filter-match'
 import { isLocalPackage } from '@shared/local-package.js'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
@@ -106,15 +107,7 @@ function contentHubTags(c) {
 }
 
 function contentMatchesSelectedTags(c, selectedTags) {
-  if (selectedTags.length === 0) return true
-  const tags = contentHubTags(c)
-  for (const item of selectedTags) {
-    const value = typeof item === 'object' ? item.value : item
-    const negate = typeof item === 'object' && !!item.negate
-    const has = tags.includes(value)
-    if (negate ? has : !has) return false
-  }
-  return true
+  return matchesPolarityList(selectedTags, contentHubTags(c), { normalize: true })
 }
 
 function contentLabelIds(c) {
@@ -128,19 +121,7 @@ function contentLabelIds(c) {
 }
 
 function contentMatchesSelectedLabels(c, selectedLabelIds) {
-  if (selectedLabelIds.length === 0) return true
-  const ids = contentLabelIds(c)
-  for (const item of selectedLabelIds) {
-    const id = typeof item === 'object' ? item.value : item
-    const negate = typeof item === 'object' && !!item.negate
-    const has = ids.includes(id)
-    if (negate ? has : !has) return false
-  }
-  return true
-}
-
-function polarityScrollKey(list) {
-  return list.map((item) => (typeof item === 'object' ? `${item.value}:${item.negate ? 1 : 0}` : item)).join(',')
+  return matchesPolarityList(selectedLabelIds, contentLabelIds(c))
 }
 
 function matchesContentPackageFilter(c, packageFilter) {
@@ -319,15 +300,10 @@ export default function ContentView({ onNavigate, navContext }) {
         })
       })
     }
-    if (authorSearch) {
-      const aq = authorSearch.toLowerCase()
-      result = result.filter((c) => ((c.sourcePackage ?? c.package)?.creator || '').toLowerCase().includes(aq))
-    }
-    if (excludedAuthors.length > 0) {
-      result = result.filter((c) => {
-        const creator = ((c.sourcePackage ?? c.package)?.creator || '').toLowerCase()
-        return !excludedAuthors.some((a) => creator.includes(a.toLowerCase()))
-      })
+    if (authorSearch || excludedAuthors.length > 0) {
+      result = result.filter((c) =>
+        matchesAuthorFilter((c.sourcePackage ?? c.package)?.creator, authorSearch, excludedAuthors),
+      )
     }
     return result
   }, [contents, search, authorSearch, excludedAuthors, labelNameById])
