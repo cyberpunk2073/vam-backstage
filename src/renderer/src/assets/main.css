@@ -55,6 +55,23 @@
     --radius-2xl: 1rem;
 }
 
+/* dismissTransientOverlays (lib/dismissOverlays.js) sets this flag for one task while it
+   force-closes every transient Radix overlay right before a view is hidden behind <Activity>.
+   With computed animation-name 'none', Radix Presence skips the exit animation and unmounts the
+   overlay synchronously — while the view's effects are still connected — instead of leaving its
+   portal orphaned at the top-left corner. Ordinary closes (flag unset) keep their animation. */
+html[data-nav-dismiss]
+    :is(
+        [data-slot='tooltip-content'],
+        [data-slot='context-menu-content'],
+        [data-slot='context-menu-sub-content'],
+        [data-slot='dropdown-menu-content'],
+        [data-slot='popover-content'],
+        [data-slot='select-content']
+    ) {
+    animation: none !important;
+}
+
 @layer base {
     * {
         @apply border-border outline-ring/50;

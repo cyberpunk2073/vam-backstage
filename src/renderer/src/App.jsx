@@ -20,6 +20,7 @@ import { WhatsNewDialog } from '@/components/WhatsNewDialog'
 import { ThumbnailLightbox } from '@/components/ThumbnailLightbox'
 import { CHANGELOG } from '@/lib/changelog'
 import { compareVersions, parseVersionCore, selectUnseen } from '@/lib/semver'
+import { dismissTransientOverlays } from '@/lib/dismissOverlays'
 import HubView from '@/views/HubView'
 import LibraryView from '@/views/LibraryView'
 import ContentView from '@/views/ContentView'
@@ -38,7 +39,6 @@ const NAV_ITEMS = [
   { id: 'library', icon: Library, label: 'Library' },
   { id: 'content', icon: LayoutGrid, label: 'Content' },
 ]
-
 export default function App() {
   const view = useViewStore((s) => s.view)
   const setView = useViewStore((s) => s.setView)
@@ -166,6 +166,9 @@ export default function App() {
 
   const navigateTo = useCallback(
     (targetView, context) => {
+      // The outgoing view is about to be frozen by <Activity>; unmount any open overlay now,
+      // while its effects are still connected, or its portal would be orphaned at the top-left.
+      dismissTransientOverlays()
       if (targetView === 'hub') {
         if (context?.openResource) {
           // Arriving from another view to a specific hub resource is a hub-search
@@ -203,7 +206,6 @@ export default function App() {
       <div className="flex h-full bg-base">
         <RemoteGate />
         {showWizard && <FirstRun onDone={() => setShowWizard(false)} />}
-        {/* Ribbon */}
         <nav className="w-[56px] bg-surface flex flex-col items-center border-r border-border shrink-0">
           <div className="w-full flex flex-col items-center shrink-0 mb-1.5" title="VaM Backstage">
             <div className="w-full flex items-center justify-center h-[52px]">
@@ -223,10 +225,7 @@ export default function App() {
                 key={item.id}
                 item={item}
                 active={view === item.id && !dlPanelOpen}
-                onClick={() => {
-                  setView(item.id)
-                  setDlPanelOpen(false)
-                }}
+                onClick={() => navigateTo(item.id)}
               />
             ))}
           </div>
@@ -243,10 +242,7 @@ export default function App() {
             <NavButton
               item={{ id: 'settings', icon: Settings, label: 'Settings' }}
               active={view === 'settings' && !dlPanelOpen}
-              onClick={() => {
-                setView('settings')
-                setDlPanelOpen(false)
-              }}
+              onClick={() => navigateTo('settings')}
             />
           </div>
         </nav>

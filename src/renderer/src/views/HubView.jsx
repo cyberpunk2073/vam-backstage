@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, Activity } from 'react'
 import { Grid2x2, Grid3x3, Loader2, RefreshCw, Pin } from 'lucide-react'
+import { dismissTransientOverlays } from '@/lib/dismissOverlays'
 import { CONTENT_TYPES, compareContentTypes, getTypeColor } from '@/lib/utils'
 import { useHubStore, hubFilterSignature } from '@/stores/useHubStore'
 import { useWishlistStore } from '@/stores/useWishlistStore'
@@ -720,17 +721,25 @@ export default function HubView({ onNavigate }) {
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {/* Toolbar */}
         <div className="h-10 flex items-center px-4 border-b border-border shrink-0 gap-2">
+          {/* dismissTransientOverlays: the mode toggle hides one <Activity> gallery surface, which
+              would orphan any overlay (tooltip/menu) still open or animating out inside it. */}
           <div className="flex items-center gap-px bg-elevated rounded p-0.5 text-[11px]">
             <button
               type="button"
-              onClick={() => setGalleryMode('hub')}
+              onClick={() => {
+                dismissTransientOverlays()
+                setGalleryMode('hub')
+              }}
               className={`px-2 py-1 rounded cursor-pointer transition-colors ${!wishlistMode ? 'bg-hover text-text-primary' : 'text-text-tertiary hover:text-text-secondary'}`}
             >
               Hub
             </button>
             <button
               type="button"
-              onClick={() => setGalleryMode('wishlist')}
+              onClick={() => {
+                dismissTransientOverlays()
+                setGalleryMode('wishlist')
+              }}
               className={`px-2 py-1 rounded cursor-pointer transition-colors flex items-center gap-1 ${wishlistMode ? 'bg-hover text-text-primary' : 'text-text-tertiary hover:text-text-secondary'}`}
             >
               Wishlist
