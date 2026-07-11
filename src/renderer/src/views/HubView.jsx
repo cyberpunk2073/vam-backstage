@@ -64,7 +64,7 @@ import {
   isCommercialUseAllowed,
   isNonCommercialUseAllowed,
 } from '@/lib/licenses'
-import { searchAndTerms, haystacksMatchAllTerms } from '@shared/search-text.js'
+import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
 import { LicenseTag } from '@/components/LicenseTag'
 import { Tag } from '@/components/ui/tag'
 import { SearchOnHubButton } from '@/components/SearchOnHubButton'
@@ -145,12 +145,19 @@ const WISHLIST_FILTER_KEYS = ['search', 'type', 'tags', 'paid', 'author', 'licen
  * its own (standard cross-filtered faceting).
  */
 function wishlistPredicates({ search, type, tags, paid, author, excludedAuthors, license }) {
-  const terms = searchAndTerms(search)
+  const { tokens } = parseSmartQuery(search)
   const tagItems = tags || []
   const aq = author ? author.toLowerCase() : ''
   const excluded = excludedAuthors || []
   return {
-    search: (r) => !terms.length || haystacksMatchAllTerms([r.title, r.username, r.tag_line], terms),
+    search: (r) =>
+      !tokens.length ||
+      matchesSmartQuery(tokens, {
+        text: () => [r.title, r.username, r.tag_line],
+        author: () => r.username || '',
+        tags: () => parseSnapshotTags(r),
+        labels: () => [],
+      }),
     type: (r) => type === 'All' || r.type === type,
     tags: (r) => {
       if (!tagItems.length) return true
@@ -786,6 +793,9 @@ export default function HubView({ onNavigate }) {
       <FilterPanel
         search={wishlistMode ? wlSearch : searchDraft}
         onSearchChange={wishlistMode ? setWlSearch : handleSearchChange}
+        smartSearch={
+          wishlistMode ? { authors: wishlistFacets.authorCounts, tags: wishlistFacets.tagCounts, labels: [] } : null
+        }
         sections={wishlistMode ? wishlistSections : sections}
       />
 

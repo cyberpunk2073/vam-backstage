@@ -91,7 +91,8 @@ import {
   isCommercialUseAllowed,
   isNonCommercialUseAllowed,
 } from '@/lib/licenses'
-import { haystacksMatchAllTerms, searchAndTerms } from '@shared/search-text.js'
+import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
+import { haystacksMatchAllTerms, searchAndTerms } from '@/lib/search-text'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { LicenseTag } from '@/components/LicenseTag'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
@@ -105,14 +106,19 @@ import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
 
 const SORT_OPTIONS = ['Recently installed', 'Type', 'Name', 'Size', 'Content', 'Deps', 'Morphs']
 
-function packageMatchesSelectedTags(p, selectedTags) {
-  if (selectedTags.length === 0) return true
-  const tags = p.hubTags
+function packageHubTags(p) {
+  return p.hubTags
     ? p.hubTags
         .toLowerCase()
         .split(',')
         .map((t) => t.trim())
+        .filter(Boolean)
     : []
+}
+
+function packageMatchesSelectedTags(p, selectedTags) {
+  if (selectedTags.length === 0) return true
+  const tags = packageHubTags(p)
   for (const item of selectedTags) {
     const value = typeof item === 'object' ? item.value : item
     const negate = typeof item === 'object' && !!item.negate
@@ -234,6 +240,11 @@ export default function LibraryView({ onNavigate, navContext }) {
     clearBulkSelection,
   } = useLibraryStore()
   const labels = useLabelsStore((s) => s.labels)
+  const labelNameById = useMemo(() => {
+    const m = new Map()
+    for (const l of labels) m.set(l.id, l.name)
+    return m
+  }, [labels])
 
   const [gridLayout, setGridLayout] = useState({ cols: 1, availableWidth: 0 })
   const [tagCounts, setTagCounts] = useState({})
@@ -302,8 +313,15 @@ export default function LibraryView({ onNavigate, navContext }) {
   const baseFiltered = useMemo(() => {
     let result = packages
     if (search?.trim()) {
-      const terms = searchAndTerms(search)
-      result = result.filter((p) => haystacksMatchAllTerms([p.title, p.packageName, p.filename], terms))
+      const { tokens } = parseSmartQuery(search)
+      result = result.filter((p) =>
+        matchesSmartQuery(tokens, {
+          text: () => [p.title, p.packageName, p.filename],
+          author: () => p.creator || '',
+          tags: () => packageHubTags(p),
+          labels: () => (p.labelIds || []).map((id) => labelNameById.get(id)).filter(Boolean),
+        }),
+      )
     }
     if (authorSearch) {
       const aq = authorSearch.toLowerCase()
@@ -326,7 +344,7 @@ export default function LibraryView({ onNavigate, navContext }) {
       }
     }
     return result
-  }, [packages, search, authorSearch, excludedAuthors, license])
+  }, [packages, search, authorSearch, excludedAuthors, license, labelNameById])
 
   const statusCounts = useMemo(() => {
     if (!packagesLoaded) return { direct: '…', dependency: '…', broken: '…', orphan: '…', local: '…' }
@@ -882,7 +900,12 @@ export default function LibraryView({ onNavigate, navContext }) {
 
   return (
     <div className="h-full flex">
-      <FilterPanel search={search} onSearchChange={setSearch} sections={sections} />
+      <FilterPanel
+        search={search}
+        onSearchChange={setSearch}
+        smartSearch={{ authors: authorCounts, tags: tagCounts, labels }}
+        sections={sections}
+      />
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* Toolbar */}

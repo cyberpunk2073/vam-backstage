@@ -55,16 +55,23 @@ export function ComboboxPopup({ listRef, maxHeight = 'max-h-48', children }) {
   )
 }
 
-/** One highlightable suggestion row. `active` drives the highlight styling. */
-export function ComboboxRow({ active, onSelect, onHover, children }) {
+/**
+ * One highlightable suggestion row. `active` drives the highlight styling.
+ * `disabled` renders the row dimmed and inert while keeping it visible (and
+ * keeps input focus via the mousedown guard). `title` sets a native tooltip.
+ */
+export function ComboboxRow({ active, disabled = false, title, onSelect, onHover, children }) {
   return (
     <button
       type="button"
+      title={title}
       onMouseDown={(e) => e.preventDefault()}
-      onClick={onSelect}
-      onMouseEnter={onHover}
-      className={`w-full text-left px-2.5 py-1.5 text-xs flex items-center gap-2 cursor-pointer transition-colors ${
-        active ? 'bg-accent-blue/10 text-text-primary' : 'hover:bg-hover'
+      onClick={disabled ? undefined : onSelect}
+      onMouseEnter={disabled ? undefined : onHover}
+      className={`w-full text-left px-2.5 py-1.5 text-xs flex items-center gap-2 transition-colors ${
+        disabled
+          ? 'opacity-40 cursor-not-allowed'
+          : `cursor-pointer ${active ? 'bg-accent-blue/10 text-text-primary' : 'hover:bg-hover'}`
       }`}
     >
       {children}

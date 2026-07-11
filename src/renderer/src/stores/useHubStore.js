@@ -329,6 +329,7 @@ export const useHubStore = create(
       authorSearch: asString,
       license: asString,
       sort: asString,
+      wlSearch: asString,
       wlType: asString,
       wlTags: asPolarityList,
       wlPaid: oneOf(['all', 'free', 'paid']),

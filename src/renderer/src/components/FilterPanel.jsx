@@ -9,10 +9,13 @@ import { TextAutocomplete } from './filter-panel/TextAutocomplete'
 import { TagsAutocomplete } from './filter-panel/TagsAutocomplete'
 import { LabelsAutocomplete } from './filter-panel/LabelsAutocomplete'
 import { AuthorAutocomplete } from './filter-panel/AuthorAutocomplete'
+import { SmartSearchBar } from './filter-panel/SmartSearchBar'
 
 export default function FilterPanel({
   search,
   onSearchChange,
+  /** When set, the top search box becomes a sigil-aware smart bar (`@`/`#`/`%` + `-`/`!`). */
+  smartSearch = null,
   sections = [],
   defaultWidth = 220,
   minWidth = 160,
@@ -42,26 +45,37 @@ export default function FilterPanel({
       >
         {/* Search */}
         <div className="p-3 pb-2">
-          <div className="relative">
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-tertiary z-10" />
-            <Input
-              type="text"
-              placeholder="Search…"
+          {smartSearch ? (
+            <SmartSearchBar
               value={search}
-              onChange={(e) => onSearchChange(e.target.value)}
-              className="h-8 bg-elevated pl-8 pr-7 text-xs"
+              onChange={onSearchChange}
+              authors={smartSearch.authors}
+              tags={smartSearch.tags}
+              labels={smartSearch.labels}
+              placeholder={smartSearch.placeholder}
             />
-            {search && (
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                onClick={() => onSearchChange('')}
-                className="absolute right-1 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary"
-              >
-                <X size={12} />
-              </Button>
-            )}
-          </div>
+          ) : (
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-tertiary z-10" />
+              <Input
+                type="text"
+                placeholder="Search…"
+                value={search}
+                onChange={(e) => onSearchChange(e.target.value)}
+                className="h-8 bg-elevated pl-8 pr-7 text-xs"
+              />
+              {search && (
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={() => onSearchChange('')}
+                  className="absolute right-1 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary"
+                >
+                  <X size={12} />
+                </Button>
+              )}
+            </div>
+          )}
         </div>
 
         {sections.map((section) => (

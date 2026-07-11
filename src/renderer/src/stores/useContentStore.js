@@ -297,6 +297,7 @@ export const useContentStore = create(
       },
     }),
     persistViewState('content-view', {
+      search: asString,
       selectedTypes: asArray,
       selectedPackageTypes: asArray,
       selectedTags: asPolarityList,

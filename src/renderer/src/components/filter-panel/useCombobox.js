@@ -1,9 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 
-/** setHlIndex updater that wraps around and scrolls the target row into view. */
-function moveHighlight(dir, len, listRef) {
+/**
+ * setHlIndex updater that wraps around, skipping non-selectable rows, and
+ * scrolls the target into view. Stops after one full loop so an all-disabled
+ * list doesn't spin.
+ */
+function moveHighlight(dir, matches, listRef, isSelectable) {
+  const len = matches.length
   return (i) => {
-    const next = dir === 'down' ? (i < len - 1 ? i + 1 : 0) : i > 0 ? i - 1 : len - 1
+    let next = i
+    for (let step = 0; step < len; step++) {
+      next = dir === 'down' ? (next < len - 1 ? next + 1 : 0) : next > 0 ? next - 1 : len - 1
+      if (isSelectable(matches[next], next)) break
+    }
     listRef.current?.children[next]?.scrollIntoView({ block: 'nearest' })
     return next
   }
@@ -22,8 +31,17 @@ function moveHighlight(dir, len, listRef) {
  *  - `commaCommits`  route the `,` key to `onCommitRaw`.
  *  - `onEscape()`    optional; return truthy to swallow Escape (e.g. clear a draft)
  *                    instead of closing the popup.
+ *  - `isSelectable(m)` optional; rows that fail it are skipped by arrow keys and
+ *                    can't be committed with Enter (kept visible but inert).
  */
-export function useCombobox({ matches, onSelect, onCommitRaw, commaCommits = false, onEscape }) {
+export function useCombobox({
+  matches,
+  onSelect,
+  onCommitRaw,
+  commaCommits = false,
+  onEscape,
+  isSelectable = () => true,
+}) {
   const [open, setOpen] = useState(false)
   const [hlIndex, setHlIndex] = useState(-1)
   const containerRef = useRef(null)
@@ -47,12 +65,12 @@ export function useCombobox({ matches, onSelect, onCommitRaw, commaCommits = fal
   const onKeyDown = (e) => {
     if (e.key === 'ArrowDown' && showList) {
       e.preventDefault()
-      setHlIndex(moveHighlight('down', matches.length, listRef))
+      setHlIndex(moveHighlight('down', matches, listRef, isSelectable))
     } else if (e.key === 'ArrowUp' && showList) {
       e.preventDefault()
-      setHlIndex(moveHighlight('up', matches.length, listRef))
+      setHlIndex(moveHighlight('up', matches, listRef, isSelectable))
     } else if (e.key === 'Enter') {
-      if (showList && hlIndex >= 0 && hlIndex < matches.length) {
+      if (showList && hlIndex >= 0 && hlIndex < matches.length && isSelectable(matches[hlIndex], hlIndex)) {
         e.preventDefault()
         onSelect(matches[hlIndex], hlIndex)
       } else if (onCommitRaw?.('enter')) {

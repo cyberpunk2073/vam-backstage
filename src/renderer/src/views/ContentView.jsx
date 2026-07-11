@@ -56,7 +56,7 @@ import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
 import { useKeyboardNav } from '@/hooks/useKeyboardNav'
 import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
 import { openLightbox } from '@/components/ThumbnailLightbox'
-import { haystacksMatchAllTerms, searchAndTerms } from '@shared/search-text.js'
+import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
 import { isLocalPackage } from '@shared/local-package.js'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
@@ -94,15 +94,20 @@ function matchesContentPackageStatus(c, packageStatusFilter) {
   return !disabled
 }
 
-function contentMatchesSelectedTags(c, selectedTags) {
-  if (selectedTags.length === 0) return true
+function contentHubTags(c) {
   const hubTags = c.package?.hubTags
-  const tags = hubTags
+  return hubTags
     ? hubTags
         .toLowerCase()
         .split(',')
         .map((t) => t.trim())
+        .filter(Boolean)
     : []
+}
+
+function contentMatchesSelectedTags(c, selectedTags) {
+  if (selectedTags.length === 0) return true
+  const tags = contentHubTags(c)
   for (const item of selectedTags) {
     const value = typeof item === 'object' ? item.value : item
     const negate = typeof item === 'object' && !!item.negate
@@ -233,6 +238,11 @@ export default function ContentView({ onNavigate, navContext }) {
     clearBulkSelection,
   } = useContentStore()
   const labels = useLabelsStore((s) => s.labels)
+  const labelNameById = useMemo(() => {
+    const m = new Map()
+    for (const l of labels) m.set(l.id, l.name)
+    return m
+  }, [labels])
 
   const [gridLayout, setGridLayout] = useState({ cols: 1, availableWidth: 0 })
   const [tagCounts, setTagCounts] = useState({})
@@ -294,13 +304,19 @@ export default function ContentView({ onNavigate, navContext }) {
   const baseFiltered = useMemo(() => {
     let result = contents
     if (search?.trim()) {
-      const terms = searchAndTerms(search)
+      const { tokens } = parseSmartQuery(search)
       result = result.filter((c) => {
         const pkgLabel = contentPackageLabel(c)
-        // Extracted presets are loose files owned by a package — match them by
-        // their owner's name/label too, so a package-name query surfaces them.
         const owner = c.sourcePackage ?? c.package
-        return haystacksMatchAllTerms([c.displayName, owner?.packageName, pkgLabel], terms)
+        return matchesSmartQuery(tokens, {
+          text: () => [c.displayName, owner?.packageName, pkgLabel],
+          author: () => owner?.creator || '',
+          tags: () => contentHubTags(c),
+          labels: () =>
+            contentLabelIds(c)
+              .map((id) => labelNameById.get(id))
+              .filter(Boolean),
+        })
       })
     }
     if (authorSearch) {
@@ -314,7 +330,7 @@ export default function ContentView({ onNavigate, navContext }) {
       })
     }
     return result
-  }, [contents, search, authorSearch, excludedAuthors])
+  }, [contents, search, authorSearch, excludedAuthors, labelNameById])
 
   const typeCounts = useMemo(() => {
     const items = applyContentSidebarFilters(
@@ -998,7 +1014,12 @@ export default function ContentView({ onNavigate, navContext }) {
 
   return (
     <div className="h-full flex">
-      <FilterPanel search={search} onSearchChange={setSearch} sections={sections} />
+      <FilterPanel
+        search={search}
+        onSearchChange={setSearch}
+        smartSearch={{ authors: authorCounts, tags: tagCounts, labels }}
+        sections={sections}
+      />
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* Toolbar */}
