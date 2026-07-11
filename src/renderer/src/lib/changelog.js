@@ -32,7 +32,7 @@ export const CHANGELOG = [
       {
         kind: 'fixed',
         title: 'Many small fixes',
-        body: 'Fixed macOS updates and stale Hub links after resources are republished.',
+        body: 'MacOS updates, stale Hub links, and loose-file sorting in Content.',
       },
     ],
   },
