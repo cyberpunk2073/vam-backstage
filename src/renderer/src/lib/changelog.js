@@ -6,6 +6,37 @@
  */
 export const CHANGELOG = [
   {
+    version: '0.3.1',
+    date: '2026-07-11',
+    notes: [
+      {
+        kind: 'new',
+        title: 'Powerful search and filters',
+        body: 'Prefix an author, tag, or label with "-" or "!" in sidebar filters to exclude matching items; clicking an added tag or label does the same. Main search now combines ordinary words with @author, #tag, %label, and exclusions across Library, Content, and Wishlist. For example, "@MacGruber hair -male".',
+      },
+      {
+        kind: 'new',
+        title: 'Hub interactions are back',
+        body: "When signed in to the Hub browser, open any resource's details to rate or react to it, add it to favorites, or bookmark it.",
+      },
+      {
+        kind: 'improved',
+        title: 'Instant view switching',
+        body: 'Moving between Hub, Library, Content, and Wishlist now feels like switching tabs, while long galleries stay fast and smooth.',
+      },
+      {
+        kind: 'improved',
+        title: 'Many small improvements',
+        body: 'Downloads that you pause stay paused across restarts, long galleries have a back-to-top button, and Hub browser controls work more naturally.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Many small fixes',
+        body: 'Fixed macOS updates and stale Hub links after resources are republished.',
+      },
+    ],
+  },
+  {
     version: '0.3.0',
     date: '2026-07-08',
     notes: [
