@@ -17,7 +17,15 @@ import {
   resolveHubDownloadUrl,
 } from '../store.js'
 import { resolveRef } from '../scanner/graph.js'
-import { setHubResourceId, setHubUserId, setHubDisplayName, upsertHubUser, setPackageHubMeta, transact } from '../db.js'
+import {
+  getNotFoundHubResourceIds,
+  setHubResourceId,
+  setHubUserId,
+  setHubDisplayName,
+  upsertHubUser,
+  setPackageHubMeta,
+  transact,
+} from '../db.js'
 import { cacheAvatarsFromResources } from '../avatar-cache.js'
 import { notify } from '../notify.js'
 import { scanHubDetails } from '../hub/scanner.js'
@@ -203,6 +211,8 @@ export function registerHubHandlers() {
 
     // Check installed status from hubFiles filenames
     let displayNameBackfilled = false
+    let hubIdRelinked = false
+    const notFoundIds = getNotFoundHubResourceIds()
     if (detail.hubFiles?.length) {
       for (const file of detail.hubFiles) {
         const local = findLocalByFilename(file.filename)
@@ -213,9 +223,16 @@ export function registerHubHandlers() {
             detail._isDirect = !!local.is_direct
             detail._localFilename = local.filename
           }
-          if (!local.hub_resource_id && detail.resource_id) {
+          // Filename matching can heal a missing/dead link after a Hub re-publish,
+          // but must not replace a different live association just because this
+          // page happens to list the same file.
+          if (detail.resource_id && (!local.hub_resource_id || notFoundIds.has(String(local.hub_resource_id)))) {
             try {
-              setHubResourceId(local.filename, String(detail.resource_id))
+              const rid = String(detail.resource_id)
+              if (setHubResourceId(local.filename, rid) > 0) {
+                local.hub_resource_id = rid
+                hubIdRelinked = true
+              }
             } catch {}
           }
           if (detail.user_id && !local.hub_user_id) {
@@ -273,7 +290,7 @@ export function registerHubHandlers() {
 
     cacheAvatarsFromResources([detail])
       .then(() => {
-        let needsRebuild = displayNameBackfilled
+        let needsRebuild = displayNameBackfilled || hubIdRelinked
         if (detail.user_id && detail.username) {
           const norm = detail.username.replace(/\s/g, '').toLowerCase()
           const filenames = getCreatorsNeedingUserId().get(norm)

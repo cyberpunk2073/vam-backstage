@@ -759,19 +759,28 @@ export function getPackagesNeedingHubDetailFetch() {
 }
 
 /**
- * Work-list for the name-based Hub resolution pass: packages that the
- * `packages.json` index couldn't link (`hub_resource_id IS NULL`) and that we
- * haven't yet asked the Hub about by name (`hub_name_checked_at IS NULL`).
- * Excludes the synthetic local-content sentinel. Each is looked up once per
- * lifetime; `markHubNameChecked` retires it whether it resolves or not.
+ * Work-list for the name-based Hub resolution pass: packages absent from
+ * `packages.json`, plus packages whose indexed resource now authoritatively
+ * returns "Resource not found" (usually re-published under a new id).
+ *
+ * A dead link is retained until lookup finds a replacement, preserving useful
+ * metadata for genuinely removed resources. Each state is checked once:
+ * `hub_name_checked_at` retires unresolved packages until their tombstone moves.
  */
 export function getPackagesNeedingHubNameLookup() {
   return stmt(`
-    SELECT filename, package_name AS packageName
-    FROM packages
-    WHERE hub_resource_id IS NULL
-      AND hub_name_checked_at IS NULL
-      AND filename != ?
+    SELECT p.filename, p.package_name AS packageName
+    FROM packages p
+    LEFT JOIN hub_resources hr ON hr.resource_id = p.hub_resource_id
+    WHERE p.filename != ?
+      AND (
+        (p.hub_resource_id IS NULL AND p.hub_name_checked_at IS NULL)
+        OR (
+          json_extract(hr.hub_json, '$._unavailable') = 1
+          AND lower(COALESCE(json_extract(hr.hub_json, '$._error'), '')) LIKE '%resource not found%'
+          AND (p.hub_name_checked_at IS NULL OR p.hub_name_checked_at < hr.updated_at)
+        )
+      )
   `).all(LOCAL_PACKAGE_FILENAME)
 }
 
@@ -932,6 +941,19 @@ export function setHubResourceId(filename, resourceId) {
  */
 export function markHubNameChecked(filename) {
   stmt('UPDATE packages SET hub_name_checked_at = unixepoch() WHERE filename = ?').run(filename)
+}
+
+/** Hub ids with an authoritative "Resource not found" response, loaded once per operation. */
+export function getNotFoundHubResourceIds() {
+  return new Set(
+    stmt(`
+      SELECT resource_id FROM hub_resources
+      WHERE json_extract(hub_json, '$._unavailable') = 1
+        AND lower(COALESCE(json_extract(hub_json, '$._error'), '')) LIKE '%resource not found%'
+    `)
+      .pluck()
+      .all(),
+  )
 }
 
 export function setHubUserId(filename, userId) {

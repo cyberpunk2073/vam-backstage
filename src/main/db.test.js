@@ -6,6 +6,8 @@ import {
   SCHEMA_VERSION,
   closeDatabase,
   getDb,
+  getNotFoundHubResourceIds,
+  getPackagesNeedingHubNameLookup,
   insertDownload,
   setHubResourceId,
   setHubUserId,
@@ -560,5 +562,60 @@ describe('hub-id writer guards', () => {
     upsertHubUser('654', 'name', { x: 1 })
     expect(db.prepare('SELECT COUNT(*) AS n FROM hub_resources').get().n).toBe(1)
     expect(db.prepare('SELECT COUNT(*) AS n FROM hub_users').get().n).toBe(1)
+  })
+})
+
+// ── Dead hub-id re-publish detection ──────────────────────────────────────────
+
+describe('dead Hub resource name lookup', () => {
+  beforeEach(async () => {
+    tmp = await mkTempVamDir()
+    await openTestDatabase(tmp.dbPath)
+    const db = getDb()
+    db.prepare(
+      `INSERT INTO packages (filename, creator, package_name, version, size_bytes, file_mtime, hub_resource_id, hub_name_checked_at)
+       VALUES (?, 'C', 'C.Dead', '1', 1, 0, ?, 1)`,
+    ).run('Dead.Pkg.1.var', '65625')
+    db.prepare(
+      `INSERT INTO packages (filename, creator, package_name, version, size_bytes, file_mtime, hub_resource_id)
+       VALUES (?, 'C', 'C.Live', '1', 1, 0, ?)`,
+    ).run('Live.Pkg.1.var', '65634')
+    db.prepare(
+      `INSERT INTO packages (filename, creator, package_name, version, size_bytes, file_mtime, hub_resource_id)
+       VALUES (?, 'C', 'C.Transient', '1', 1, 0, ?)`,
+    ).run('Transient.Pkg.1.var', '65635')
+    db.prepare(
+      `INSERT INTO packages (filename, creator, package_name, version, size_bytes, file_mtime)
+       VALUES ('Unlinked.Pkg.1.var', 'C', 'C.Unlinked', '1', 1, 0)`,
+    ).run()
+    upsertHubResourceDetail('65625', { _unavailable: true, _error: 'Resource not found.' })
+    upsertHubResourceDetail('65634', { resource_id: '65634', title: 'Live' })
+    upsertHubResourceDetail('65635', { _unavailable: true, _error: 'Hub API 503: Service Unavailable' })
+  })
+
+  it('collects only authoritative not-found ids', () => {
+    expect([...getNotFoundHubResourceIds()]).toEqual(['65625'])
+  })
+
+  it('rechecks a newly-dead link without clearing its existing association', () => {
+    const db = getDb()
+    expect(getPackagesNeedingHubNameLookup()).toEqual([
+      { filename: 'Dead.Pkg.1.var', packageName: 'C.Dead' },
+      { filename: 'Unlinked.Pkg.1.var', packageName: 'C.Unlinked' },
+    ])
+    expect(
+      db.prepare(`SELECT hub_resource_id FROM packages WHERE filename = 'Dead.Pkg.1.var'`).get().hub_resource_id,
+    ).toBe('65625')
+
+    // A definitive name-lookup miss retires this tombstone state without
+    // repeatedly querying on every scan.
+    db.prepare(
+      `
+      UPDATE packages SET hub_name_checked_at = (
+        SELECT updated_at + 1 FROM hub_resources WHERE resource_id = '65625'
+      ) WHERE filename = 'Dead.Pkg.1.var'
+    `,
+    ).run()
+    expect(getPackagesNeedingHubNameLookup()).toEqual([{ filename: 'Unlinked.Pkg.1.var', packageName: 'C.Unlinked' }])
   })
 })
