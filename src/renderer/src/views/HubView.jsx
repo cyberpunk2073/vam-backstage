@@ -144,20 +144,32 @@ const WISHLIST_FILTER_KEYS = ['search', 'type', 'tags', 'paid', 'author', 'licen
  * the gallery ANDs them all, while a facet's counts AND every dimension *except*
  * its own (standard cross-filtered faceting).
  */
-function wishlistPredicates({ search, type, tags, paid, author, license }) {
+function wishlistPredicates({ search, type, tags, paid, author, excludedAuthors, license }) {
   const terms = searchAndTerms(search)
-  const wantTags = (tags || []).map((t) => t.toLowerCase())
+  const tagItems = tags || []
   const aq = author ? author.toLowerCase() : ''
+  const excluded = excludedAuthors || []
   return {
     search: (r) => !terms.length || haystacksMatchAllTerms([r.title, r.username, r.tag_line], terms),
     type: (r) => type === 'All' || r.type === type,
     tags: (r) => {
-      if (!wantTags.length) return true
+      if (!tagItems.length) return true
       const rt = parseSnapshotTags(r)
-      return wantTags.every((t) => rt.includes(t))
+      for (const item of tagItems) {
+        const value = (typeof item === 'object' ? item.value : item).toLowerCase()
+        const negate = typeof item === 'object' && !!item.negate
+        const has = rt.includes(value)
+        if (negate ? has : !has) return false
+      }
+      return true
     },
     paid: (r) => paid === 'all' || (paid === 'free' ? r.category === 'Free' : r.category === 'Paid'),
-    author: (r) => !aq || (r.username || '').toLowerCase().includes(aq),
+    author: (r) => {
+      const username = (r.username || '').toLowerCase()
+      if (aq && !username.includes(aq)) return false
+      if (excluded.some((a) => username.includes(String(a).toLowerCase()))) return false
+      return true
+    },
     license: (r) => wishlistMatchesLicense(r, license),
   }
 }
@@ -198,6 +210,7 @@ export default function HubView({ onNavigate }) {
     wlTags,
     wlPaid,
     wlAuthor,
+    wlExcludedAuthors,
     wlLicense,
     wlSort,
     detailResource,
@@ -220,6 +233,7 @@ export default function HubView({ onNavigate }) {
     setWlTags,
     setWlPaid,
     setWlAuthor,
+    setWlExcludedAuthors,
     setWlLicense,
     setWlSort,
     setCardMode,
@@ -331,10 +345,11 @@ export default function HubView({ onNavigate }) {
         tags: wlTags,
         paid: wlPaid,
         author: wlAuthor,
+        excludedAuthors: wlExcludedAuthors,
         license: wlLicense,
         sort: wlSort,
       }),
-    [wishlistItems, wlSearch, wlType, wlTags, wlPaid, wlAuthor, wlLicense, wlSort],
+    [wishlistItems, wlSearch, wlType, wlTags, wlPaid, wlAuthor, wlExcludedAuthors, wlLicense, wlSort],
   )
 
   // While more hub pages exist, hide the trailing partial row so the gallery bottom is always
@@ -356,8 +371,9 @@ export default function HubView({ onNavigate }) {
     [search, selectedType, paidFilter, authorSearch, selectedHubTags, sort, license],
   )
   const wlScrollResetKey = useMemo(
-    () => `${wlSearch}\0${wlType}\0${wlTags.join(',')}\0${wlPaid}\0${wlAuthor}\0${wlLicense}\0${wlSort}`,
-    [wlSearch, wlType, wlTags, wlPaid, wlAuthor, wlLicense, wlSort],
+    () =>
+      `${wlSearch}\0${wlType}\0${wlTags.map((t) => `${typeof t === 'object' ? t.value : t}:${t?.negate ? 1 : 0}`).join(',')}\0${wlPaid}\0${wlAuthor}\0${wlExcludedAuthors.join(',')}\0${wlLicense}\0${wlSort}`,
+    [wlSearch, wlType, wlTags, wlPaid, wlAuthor, wlExcludedAuthors, wlLicense, wlSort],
   )
 
   const hubShowSkeleton = resources.length === 0 && (loading || !sort)
@@ -641,6 +657,7 @@ export default function HubView({ onNavigate }) {
       tags: wlTags,
       paid: wlPaid,
       author: wlAuthor,
+      excludedAuthors: wlExcludedAuthors,
       license: wlLicense,
     })
     const bucket = (items, fn) => {
@@ -689,7 +706,7 @@ export default function HubView({ onNavigate }) {
       { value: 'paid', label: 'Paid', count: paid },
     ]
     return { typeItems, paidItems, authorCounts, tagCounts }
-  }, [wishlistItems, wlSearch, wlType, wlTags, wlPaid, wlAuthor, wlLicense])
+  }, [wishlistItems, wlSearch, wlType, wlTags, wlPaid, wlAuthor, wlExcludedAuthors, wlLicense])
 
   const wishlistSections = useMemo(
     () => [
@@ -717,6 +734,7 @@ export default function HubView({ onNavigate }) {
         onChange: setWlTags,
         suggestions: wishlistFacets.tagCounts,
         placeholder: 'Filter by tags…',
+        allowNegate: true,
       },
       {
         key: 'wl-author',
@@ -724,6 +742,8 @@ export default function HubView({ onNavigate }) {
         type: 'text-autocomplete',
         value: wlAuthor,
         onChange: setWlAuthor,
+        excluded: wlExcludedAuthors,
+        onExcludedChange: setWlExcludedAuthors,
         suggestions: wishlistFacets.authorCounts,
         placeholder: 'Filter by author…',
         titleAction: wlAuthor ? <SearchOnHubButton author={wlAuthor} /> : null,
@@ -743,6 +763,7 @@ export default function HubView({ onNavigate }) {
       wlTags,
       wlPaid,
       wlAuthor,
+      wlExcludedAuthors,
       wlLicense,
       wlSort,
       wishlistFacets,
@@ -750,6 +771,7 @@ export default function HubView({ onNavigate }) {
       setWlTags,
       setWlPaid,
       setWlAuthor,
+      setWlExcludedAuthors,
       setWlLicense,
       setWlSort,
     ],

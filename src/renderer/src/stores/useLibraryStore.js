@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware'
 import { toast } from '@/components/Toast'
 import { typeFilterSlice } from './typeFilterSlice'
 import { useContentStore } from './useContentStore'
-import { persistViewState, oneOf, asArray, asString, asBool, asCardWidth } from './persistViewState'
+import { persistViewState, oneOf, asArray, asPolarityList, asString, asBool, asCardWidth } from './persistViewState'
 
 let missingDepsNonce = 0
 let updateCheckNonce = 0
@@ -100,6 +100,7 @@ export const useLibraryStore = create(
 
       search: '',
       authorSearch: '',
+      excludedAuthors: [],
       statusFilter: 'direct',
       enabledFilter: 'all',
       ...typeFilterSlice(set, get),
@@ -137,6 +138,7 @@ export const useLibraryStore = create(
 
       setSearch: (search) => set({ search }),
       setAuthorSearch: (authorSearch) => set({ authorSearch }),
+      setExcludedAuthors: (excludedAuthors) => set({ excludedAuthors }),
       setStatusFilter: (statusFilter) => set({ statusFilter }),
       setEnabledFilter: (enabledFilter) => set({ enabledFilter }),
       setSelectedTags: (selectedTags) => set({ selectedTags }),
@@ -415,8 +417,9 @@ export const useLibraryStore = create(
       statusFilter: oneOf(['direct', 'dependency', 'orphan', 'local', 'broken', 'missing', 'updates']),
       enabledFilter: oneOf(['all', 'enabled', 'disabled', 'offloaded']),
       selectedTypes: asArray,
-      selectedTags: asArray,
-      selectedLabelIds: asArray,
+      selectedTags: asPolarityList,
+      selectedLabelIds: asPolarityList,
+      excludedAuthors: asArray,
       license: asString,
       primarySort: asString,
       secondarySort: asString,

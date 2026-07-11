@@ -97,12 +97,19 @@ function matchesContentPackageStatus(c, packageStatusFilter) {
 function contentMatchesSelectedTags(c, selectedTags) {
   if (selectedTags.length === 0) return true
   const hubTags = c.package?.hubTags
-  if (!hubTags) return false
   const tags = hubTags
-    .toLowerCase()
-    .split(',')
-    .map((t) => t.trim())
-  return selectedTags.every((st) => tags.includes(st))
+    ? hubTags
+        .toLowerCase()
+        .split(',')
+        .map((t) => t.trim())
+    : []
+  for (const item of selectedTags) {
+    const value = typeof item === 'object' ? item.value : item
+    const negate = typeof item === 'object' && !!item.negate
+    const has = tags.includes(value)
+    if (negate ? has : !has) return false
+  }
+  return true
 }
 
 function contentLabelIds(c) {
@@ -118,9 +125,17 @@ function contentLabelIds(c) {
 function contentMatchesSelectedLabels(c, selectedLabelIds) {
   if (selectedLabelIds.length === 0) return true
   const ids = contentLabelIds(c)
-  if (!ids.length) return false
-  for (const id of selectedLabelIds) if (!ids.includes(id)) return false
+  for (const item of selectedLabelIds) {
+    const id = typeof item === 'object' ? item.value : item
+    const negate = typeof item === 'object' && !!item.negate
+    const has = ids.includes(id)
+    if (negate ? has : !has) return false
+  }
   return true
+}
+
+function polarityScrollKey(list) {
+  return list.map((item) => (typeof item === 'object' ? `${item.value}:${item.negate ? 1 : 0}` : item)).join(',')
 }
 
 function matchesContentPackageFilter(c, packageFilter) {
@@ -182,6 +197,7 @@ export default function ContentView({ onNavigate, navContext }) {
     selectedPackage,
     search,
     authorSearch,
+    excludedAuthors,
     selectedTypes,
     selectedPackageTypes,
     selectedTags,
@@ -194,6 +210,7 @@ export default function ContentView({ onNavigate, navContext }) {
     viewMode,
     setSearch,
     setAuthorSearch,
+    setExcludedAuthors,
     toggleType,
     selectSingleType,
     togglePackageType,
@@ -290,8 +307,14 @@ export default function ContentView({ onNavigate, navContext }) {
       const aq = authorSearch.toLowerCase()
       result = result.filter((c) => ((c.sourcePackage ?? c.package)?.creator || '').toLowerCase().includes(aq))
     }
+    if (excludedAuthors.length > 0) {
+      result = result.filter((c) => {
+        const creator = ((c.sourcePackage ?? c.package)?.creator || '').toLowerCase()
+        return !excludedAuthors.some((a) => creator.includes(a.toLowerCase()))
+      })
+    }
     return result
-  }, [contents, search, authorSearch])
+  }, [contents, search, authorSearch, excludedAuthors])
 
   const typeCounts = useMemo(() => {
     const items = applyContentSidebarFilters(
@@ -585,6 +608,7 @@ export default function ContentView({ onNavigate, navContext }) {
               onChange: setSelectedLabelIds,
               labels,
               placeholder: 'Filter by label…',
+              allowNegate: true,
             },
           ]
         : []),
@@ -596,6 +620,7 @@ export default function ContentView({ onNavigate, navContext }) {
         onChange: setSelectedTags,
         suggestions: tagCounts,
         placeholder: 'Filter by tags…',
+        allowNegate: true,
       },
       {
         key: 'author',
@@ -603,6 +628,8 @@ export default function ContentView({ onNavigate, navContext }) {
         type: 'text-autocomplete',
         value: authorSearch,
         onChange: setAuthorSearch,
+        excluded: excludedAuthors,
+        onExcludedChange: setExcludedAuthors,
         suggestions: authorCounts,
         placeholder: 'Filter by author…',
         titleAction: authorSearch ? <SearchOnHubButton author={authorSearch} onNavigate={onNavigate} /> : null,
@@ -636,6 +663,7 @@ export default function ContentView({ onNavigate, navContext }) {
       visibilityFilter,
       visibilityCounts,
       authorSearch,
+      excludedAuthors,
       selectedTags,
       selectedLabelIds,
       labels,
@@ -652,6 +680,7 @@ export default function ContentView({ onNavigate, navContext }) {
       setPackageStatusFilter,
       setVisibilityFilter,
       setAuthorSearch,
+      setExcludedAuthors,
       setSelectedTags,
       setSelectedLabelIds,
       setPrimarySort,
@@ -688,7 +717,7 @@ export default function ContentView({ onNavigate, navContext }) {
 
   const bulkActive = bulkSelectedIds.length > 0
 
-  const scrollResetKey = `${search}\0${authorSearch}\0${selectedTypes.join(',')}\0${selectedPackageTypes.join(',')}\0${selectedTags.join(',')}\0${selectedLabelIds.join(',')}\0${packageFilter}\0${packageStatusFilter}\0${visibilityFilter}\0${primarySort}\0${secondarySort}`
+  const scrollResetKey = `${search}\0${authorSearch}\0${excludedAuthors.join(',')}\0${selectedTypes.join(',')}\0${selectedPackageTypes.join(',')}\0${polarityScrollKey(selectedTags)}\0${polarityScrollKey(selectedLabelIds)}\0${packageFilter}\0${packageStatusFilter}\0${visibilityFilter}\0${primarySort}\0${secondarySort}`
 
   const lastSelectedIdxRef = useRef(0)
   const prevScrollResetKeyRef = useRef(scrollResetKey)

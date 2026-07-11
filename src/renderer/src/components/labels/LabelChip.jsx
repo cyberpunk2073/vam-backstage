@@ -32,6 +32,7 @@ export const LabelChip = forwardRef(function LabelChip(
     size = 'default',
     filled = false,
     outline = false,
+    negated = false,
     className,
     renaming = false,
     editValue = '',
@@ -105,6 +106,11 @@ export const LabelChip = forwardRef(function LabelChip(
             className={cn(dotPx, 'rounded-full shrink-0')}
             style={{ backgroundColor: color, boxShadow: active ? `0 0 4px ${color}80` : undefined }}
           />
+        )}
+        {negated && (
+          <span className="shrink-0 text-error font-medium leading-none" aria-hidden>
+            −
+          </span>
         )}
         {renaming ? (
           <input

@@ -139,14 +139,24 @@ export default function FilterPanel({
               </div>
             )}
 
-            {section.type === 'text-autocomplete' && (
-              <TextAutocomplete
-                value={section.value}
-                onChange={section.onChange}
-                suggestions={section.suggestions}
-                placeholder={section.placeholder}
-              />
-            )}
+            {section.type === 'text-autocomplete' &&
+              (section.onExcludedChange ? (
+                <AuthorAutocomplete
+                  value={section.value}
+                  onChange={section.onChange}
+                  excluded={section.excluded}
+                  onExcludedChange={section.onExcludedChange}
+                  suggestions={section.suggestions}
+                  placeholder={section.placeholder}
+                />
+              ) : (
+                <TextAutocomplete
+                  value={section.value}
+                  onChange={section.onChange}
+                  suggestions={section.suggestions}
+                  placeholder={section.placeholder}
+                />
+              ))}
 
             {section.type === 'tags-autocomplete' && (
               <TagsAutocomplete
@@ -154,6 +164,7 @@ export default function FilterPanel({
                 onChange={section.onChange}
                 suggestions={section.suggestions}
                 placeholder={section.placeholder}
+                allowNegate={!!section.allowNegate}
               />
             )}
 
@@ -163,6 +174,7 @@ export default function FilterPanel({
                 onChange={section.onChange}
                 labels={section.labels}
                 placeholder={section.placeholder}
+                allowNegate={!!section.allowNegate}
               />
             )}
 
@@ -208,89 +220,167 @@ export default function FilterPanel({
   )
 }
 
-function TagsAutocomplete({ value = [], onChange, suggestions = {}, placeholder = 'Filter by tags…' }) {
+/** Normalize filter chip lists: plain values → `{ value, negate: false }`. */
+function toPolarityItems(value) {
+  if (!Array.isArray(value)) return []
+  return value.map((item) =>
+    item && typeof item === 'object' && 'value' in item
+      ? { value: item.value, negate: !!item.negate }
+      : { value: item, negate: false },
+  )
+}
+
+function emitPolarityItems(items, allowNegate) {
+  return allowNegate ? items : items.map((i) => i.value)
+}
+
+/** Strip a leading `-` / `!` for autocomplete matching; returns `{ negate, query }`. */
+function stripNegationPrefix(raw) {
+  const t = String(raw || '')
+  if (t[0] === '-' || t[0] === '!') return { negate: true, query: t.slice(1) }
+  return { negate: false, query: t }
+}
+
+/** Close the popover when a mousedown lands outside `ref`. `setOpen` is a stable useState setter. */
+function useDismissOnOutside(ref, setOpen) {
+  useEffect(() => {
+    const handler = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [ref, setOpen])
+}
+
+/** setHlIndex updater that wraps around and scrolls the target row into view. */
+function moveHighlight(dir, len, listRef) {
+  return (i) => {
+    const next = dir === 'down' ? (i < len - 1 ? i + 1 : 0) : i > 0 ? i - 1 : len - 1
+    listRef.current?.children[next]?.scrollIntoView({ block: 'nearest' })
+    return next
+  }
+}
+
+/**
+ * Rank `{ name: count }` suggestions for a query: prefix matches first, then
+ * substring matches, each ordered by count desc then name. Empty query returns
+ * the full list by count. `isExcluded(name)` drops already-chosen entries.
+ */
+function rankSuggestions(suggestions, q, isExcluded, limit = 20) {
+  const byCount = (a, b) => b[1] - a[1] || a[0].localeCompare(b[0])
+  const entries = Object.entries(suggestions).filter(([name]) => !isExcluded?.(name))
+  if (!q) return entries.sort(byCount).slice(0, limit)
+  const prefix = []
+  const rest = []
+  for (const entry of entries) {
+    const lower = entry[0].toLowerCase()
+    if (lower.startsWith(q)) prefix.push(entry)
+    else if (lower.includes(q)) rest.push(entry)
+  }
+  return [...prefix.sort(byCount), ...rest.sort(byCount)].slice(0, limit)
+}
+
+function PolarityTagChip({ label, negate, onToggle, onRemove }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] leading-tight ${
+        negate ? 'bg-error/15 text-error' : 'bg-accent-blue/15 text-accent-blue'
+      } ${onToggle ? 'cursor-pointer' : ''}`}
+      onClick={onToggle}
+      title={onToggle ? (negate ? 'Click to include' : 'Click to exclude') : undefined}
+    >
+      {negate && <span className="font-medium leading-none">−</span>}
+      <span>{label}</span>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onRemove()
+        }}
+        className="hover:text-text-primary cursor-pointer"
+      >
+        <X size={10} />
+      </button>
+    </span>
+  )
+}
+
+function TagsAutocomplete({
+  value = [],
+  onChange,
+  suggestions = {},
+  placeholder = 'Filter by tags…',
+  allowNegate = false,
+}) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [hlIndex, setHlIndex] = useState(-1)
   const containerRef = useRef(null)
   const inputRef = useRef(null)
   const listRef = useRef(null)
+  const items = useMemo(() => toPolarityItems(value), [value])
+  const selectedSet = useMemo(() => new Set(items.map((i) => i.value)), [items])
 
-  useEffect(() => {
-    const handler = (e) => {
-      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
+  useDismissOnOutside(containerRef, setOpen)
 
-  const matches = useMemo(() => {
-    const selectedSet = new Set(value)
-    const q = query.trim().toLowerCase()
-    if (!q) {
-      return Object.entries(suggestions)
-        .filter(([tag]) => !selectedSet.has(tag))
-        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-        .slice(0, 20)
-    }
-    const prefix = [],
-      rest = []
-    for (const entry of Object.entries(suggestions)) {
-      if (selectedSet.has(entry[0])) continue
-      const lower = entry[0].toLowerCase()
-      if (lower.startsWith(q)) prefix.push(entry)
-      else if (lower.includes(q)) rest.push(entry)
-    }
-    const byCount = (a, b) => b[1] - a[1] || a[0].localeCompare(b[0])
-    return [...prefix.sort(byCount), ...rest.sort(byCount)].slice(0, 20)
-  }, [suggestions, value, query])
+  const { negate: rawPendingNegate, query: matchQuery } = stripNegationPrefix(query)
+  const pendingNegate = allowNegate && rawPendingNegate
+  const commitText = allowNegate ? matchQuery : query
+  const q = commitText.trim().toLowerCase()
+
+  const matches = useMemo(
+    () => rankSuggestions(suggestions, q, (tag) => selectedSet.has(tag)),
+    [suggestions, selectedSet, q],
+  )
 
   useEffect(() => {
     setHlIndex(-1)
   }, [matches])
 
-  const addTag = (tag) => {
+  const addTag = (tag, negate = false) => {
     const trimmed = tag.trim()
-    if (!trimmed || value.includes(trimmed)) {
+    if (!trimmed || selectedSet.has(trimmed)) {
       setQuery('')
       inputRef.current?.focus()
       return
     }
-    onChange([...value, trimmed])
+    const next = [...items, { value: trimmed, negate: allowNegate && negate }]
+    onChange(emitPolarityItems(next, allowNegate))
     setQuery('')
     inputRef.current?.focus()
   }
   const removeTag = (tag) => {
-    onChange(value.filter((t) => t !== tag))
+    onChange(
+      emitPolarityItems(
+        items.filter((t) => t.value !== tag),
+        allowNegate,
+      ),
+    )
+  }
+  const toggleTag = (tag) => {
+    if (!allowNegate) return
+    onChange(items.map((t) => (t.value === tag ? { ...t, negate: !t.negate } : t)))
   }
 
   const onKeyDown = (e) => {
     if (e.key === 'ArrowDown' && open && matches.length > 0) {
       e.preventDefault()
-      setHlIndex((i) => {
-        const next = i < matches.length - 1 ? i + 1 : 0
-        listRef.current?.children[next]?.scrollIntoView({ block: 'nearest' })
-        return next
-      })
+      setHlIndex(moveHighlight('down', matches.length, listRef))
     } else if (e.key === 'ArrowUp' && open && matches.length > 0) {
       e.preventDefault()
-      setHlIndex((i) => {
-        const next = i > 0 ? i - 1 : matches.length - 1
-        listRef.current?.children[next]?.scrollIntoView({ block: 'nearest' })
-        return next
-      })
+      setHlIndex(moveHighlight('up', matches.length, listRef))
     } else if (e.key === 'Enter') {
       if (open && hlIndex >= 0 && hlIndex < matches.length) {
         e.preventDefault()
-        addTag(matches[hlIndex][0])
-      } else if (query.trim()) {
+        addTag(matches[hlIndex][0], pendingNegate)
+      } else if (commitText.trim()) {
         e.preventDefault()
-        addTag(query)
+        addTag(commitText, pendingNegate)
       }
     } else if (e.key === ',') {
-      if (query.trim()) {
+      if (commitText.trim()) {
         e.preventDefault()
-        addTag(query)
+        addTag(commitText, pendingNegate)
       }
     } else if (e.key === 'Escape') {
       e.preventDefault()
@@ -300,18 +390,16 @@ function TagsAutocomplete({ value = [], onChange, suggestions = {}, placeholder 
 
   return (
     <div ref={containerRef} className="relative">
-      {value.length > 0 && (
+      {items.length > 0 && (
         <div className="flex flex-wrap gap-1 mb-1.5">
-          {value.map((tag) => (
-            <span
-              key={tag}
-              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-accent-blue/15 text-accent-blue text-[10px] leading-tight"
-            >
-              {tag}
-              <button type="button" onClick={() => removeTag(tag)} className="hover:text-text-primary cursor-pointer">
-                <X size={10} />
-              </button>
-            </span>
+          {items.map((item) => (
+            <PolarityTagChip
+              key={item.value}
+              label={item.value}
+              negate={item.negate}
+              onToggle={allowNegate ? () => toggleTag(item.value) : undefined}
+              onRemove={() => removeTag(item.value)}
+            />
           ))}
           <button
             type="button"
@@ -365,11 +453,11 @@ function TagsAutocomplete({ value = [], onChange, suggestions = {}, placeholder 
               key={tag}
               type="button"
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => addTag(tag)}
+              onClick={() => addTag(tag, pendingNegate)}
               onMouseEnter={() => setHlIndex(i)}
               className={`w-full text-left px-2.5 py-1.5 text-xs flex items-center gap-2 cursor-pointer transition-colors ${i === hlIndex ? 'bg-accent-blue/10 text-text-primary' : 'hover:bg-hover'}`}
             >
-              <span className="truncate flex-1">{tag}</span>
+              <span className="truncate flex-1">{pendingNegate ? `− ${tag}` : tag}</span>
               <span className="text-text-tertiary text-[11px] shrink-0">{count}</span>
             </button>
           ))}
@@ -386,7 +474,13 @@ function TagsAutocomplete({ value = [], onChange, suggestions = {}, placeholder 
  * row opens the management menu (rename / recolor / delete + enable/disable
  * all packages).
  */
-function LabelsAutocomplete({ value = [], onChange, labels = [], placeholder = 'Filter by label…' }) {
+function LabelsAutocomplete({
+  value = [],
+  onChange,
+  labels = [],
+  placeholder = 'Filter by label…',
+  allowNegate = false,
+}) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [hlIndex, setHlIndex] = useState(-1)
@@ -394,14 +488,11 @@ function LabelsAutocomplete({ value = [], onChange, labels = [], placeholder = '
   const containerRef = useRef(null)
   const inputRef = useRef(null)
   const listRef = useRef(null)
+  const items = useMemo(() => toPolarityItems(value), [value])
+  const selectedSet = useMemo(() => new Set(items.map((i) => i.value)), [items])
+  const negateById = useMemo(() => new Map(items.map((i) => [i.value, i.negate])), [items])
 
-  useEffect(() => {
-    const handler = (e) => {
-      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
+  useDismissOnOutside(containerRef, setOpen)
 
   const labelMap = useMemo(() => {
     const m = new Map()
@@ -409,11 +500,13 @@ function LabelsAutocomplete({ value = [], onChange, labels = [], placeholder = '
     return m
   }, [labels])
 
-  const selected = useMemo(() => value.map((id) => labelMap.get(id)).filter(Boolean), [value, labelMap])
+  const selected = useMemo(() => items.map((item) => labelMap.get(item.value)).filter(Boolean), [items, labelMap])
+
+  const { negate: rawPendingNegate, query: matchQuery } = stripNegationPrefix(query)
+  const pendingNegate = allowNegate && rawPendingNegate
+  const q = (allowNegate ? matchQuery : query).trim().toLowerCase()
 
   const matches = useMemo(() => {
-    const selectedSet = new Set(value)
-    const q = query.trim().toLowerCase()
     const all = labels.filter((l) => !selectedSet.has(l.id))
     if (!q) return all.slice(0, 30)
     const prefix = []
@@ -424,36 +517,44 @@ function LabelsAutocomplete({ value = [], onChange, labels = [], placeholder = '
       else if (lower.includes(q)) rest.push(l)
     }
     return [...prefix, ...rest].slice(0, 30)
-  }, [labels, value, query])
+  }, [labels, selectedSet, q])
 
   useEffect(() => setHlIndex(-1), [matches])
 
-  const addLabel = (id) => {
-    onChange([...value, id])
+  const addLabel = (id, negate = false) => {
+    if (selectedSet.has(id)) {
+      setQuery('')
+      inputRef.current?.focus()
+      return
+    }
+    const next = [...items, { value: id, negate: allowNegate && negate }]
+    onChange(emitPolarityItems(next, allowNegate))
     setQuery('')
     inputRef.current?.focus()
   }
-  const removeLabel = (id) => onChange(value.filter((x) => x !== id))
+  const removeLabel = (id) =>
+    onChange(
+      emitPolarityItems(
+        items.filter((x) => x.value !== id),
+        allowNegate,
+      ),
+    )
+  const toggleLabel = (id) => {
+    if (!allowNegate) return
+    onChange(items.map((x) => (x.value === id ? { ...x, negate: !x.negate } : x)))
+  }
 
   const onKeyDown = (e) => {
     if (!open || matches.length === 0) return
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      setHlIndex((i) => {
-        const next = i < matches.length - 1 ? i + 1 : 0
-        listRef.current?.children[next]?.scrollIntoView({ block: 'nearest' })
-        return next
-      })
+      setHlIndex(moveHighlight('down', matches.length, listRef))
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
-      setHlIndex((i) => {
-        const next = i > 0 ? i - 1 : matches.length - 1
-        listRef.current?.children[next]?.scrollIntoView({ block: 'nearest' })
-        return next
-      })
+      setHlIndex(moveHighlight('up', matches.length, listRef))
     } else if (e.key === 'Enter' && hlIndex >= 0 && hlIndex < matches.length) {
       e.preventDefault()
-      addLabel(matches[hlIndex].id)
+      addLabel(matches[hlIndex].id, pendingNegate)
     } else if (e.key === 'Escape') {
       e.preventDefault()
       setOpen(false)
@@ -477,6 +578,8 @@ function LabelsAutocomplete({ value = [], onChange, labels = [], placeholder = '
                 size="sm"
                 interactive
                 filled
+                negated={!!negateById.get(label.id)}
+                onClick={allowNegate ? () => toggleLabel(label.id) : undefined}
                 onNameDoubleClick={() => startRename(label)}
                 onRemove={() => removeLabel(label.id)}
                 renaming={renamingId === label.id}
@@ -545,17 +648,197 @@ function LabelsAutocomplete({ value = [], onChange, labels = [], placeholder = '
                 <button
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => addLabel(label.id)}
+                  onClick={() => addLabel(label.id, pendingNegate)}
                   onMouseEnter={() => setHlIndex(i)}
                   className={`w-full text-left px-2.5 py-1.5 text-xs flex items-center gap-2 cursor-pointer transition-colors ${i === hlIndex ? 'bg-accent-blue/10 text-text-primary' : 'hover:bg-hover'}`}
                 >
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: labelColor(label) }} />
-                  <span className="truncate flex-1">{label.name}</span>
+                  <span className="truncate flex-1">{pendingNegate ? `− ${label.name}` : label.name}</span>
                   {total > 0 && <span className="text-text-tertiary text-[11px] shrink-0">{total}</span>}
                 </button>
               </LabelManageMenu>
             )
           })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Author filter: single live positive substring (chip-less) + optional exclude
+ * chip blocklist. Prefixed `-`/`!` input commits an exclude and restores the
+ * positive value in the box.
+ */
+function AuthorAutocomplete({
+  value = '',
+  onChange,
+  excluded = [],
+  onExcludedChange,
+  suggestions = {},
+  placeholder = 'Filter by author…',
+}) {
+  const [draft, setDraft] = useState(null)
+  const [open, setOpen] = useState(false)
+  const [hlIndex, setHlIndex] = useState(-1)
+  const containerRef = useRef(null)
+  const inputRef = useRef(null)
+  const listRef = useRef(null)
+  const excludedList = useMemo(() => (Array.isArray(excluded) ? excluded : []), [excluded])
+  const excludedSet = useMemo(() => new Set(excludedList.map((a) => a.toLowerCase())), [excludedList])
+
+  const displayValue = draft !== null ? draft : value
+  const { negate: pendingNegate, query: matchQuery } = stripNegationPrefix(displayValue)
+  const q = matchQuery.trim().toLowerCase()
+
+  useDismissOnOutside(containerRef, setOpen)
+
+  const matches = useMemo(
+    () => rankSuggestions(suggestions, q, (name) => excludedSet.has(name.toLowerCase())),
+    [suggestions, excludedSet, q],
+  )
+
+  useEffect(() => {
+    setHlIndex(-1)
+  }, [matches])
+
+  const showList = open && matches.length > 0
+
+  const commitExclude = (name) => {
+    const trimmed = name.trim()
+    if (!trimmed || excludedSet.has(trimmed.toLowerCase())) {
+      setDraft(null)
+      return
+    }
+    onExcludedChange([...excludedList, trimmed])
+    setDraft(null)
+    inputRef.current?.focus()
+  }
+
+  const pickSuggestion = (name) => {
+    if (pendingNegate) commitExclude(name)
+    else {
+      onChange(name)
+      setDraft(null)
+    }
+    setOpen(false)
+  }
+
+  const onInputChange = (raw) => {
+    const { negate } = stripNegationPrefix(raw)
+    if (negate) setDraft(raw)
+    else {
+      setDraft(null)
+      onChange(raw)
+    }
+    setOpen(true)
+  }
+
+  const onKeyDown = (e) => {
+    if (e.key === 'ArrowDown' && showList) {
+      e.preventDefault()
+      setHlIndex(moveHighlight('down', matches.length, listRef))
+    } else if (e.key === 'ArrowUp' && showList) {
+      e.preventDefault()
+      setHlIndex(moveHighlight('up', matches.length, listRef))
+    } else if (e.key === 'Enter') {
+      if (showList && hlIndex >= 0 && hlIndex < matches.length) {
+        e.preventDefault()
+        pickSuggestion(matches[hlIndex][0])
+      } else if (pendingNegate && matchQuery.trim()) {
+        e.preventDefault()
+        commitExclude(matchQuery)
+        setOpen(false)
+      }
+    } else if (e.key === ',' && pendingNegate && matchQuery.trim()) {
+      e.preventDefault()
+      commitExclude(matchQuery)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      if (draft !== null) setDraft(null)
+      else setOpen(false)
+    }
+  }
+
+  const promoteExclude = (name) => {
+    onExcludedChange(excludedList.filter((a) => a !== name))
+    onChange(name)
+    setDraft(null)
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      {excludedList.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-1.5">
+          {excludedList.map((name) => (
+            <PolarityTagChip
+              key={name}
+              label={name}
+              negate
+              onToggle={() => promoteExclude(name)}
+              onRemove={() => onExcludedChange(excludedList.filter((a) => a !== name))}
+            />
+          ))}
+          {excludedList.length > 1 && (
+            <button
+              type="button"
+              onClick={() => onExcludedChange([])}
+              className="text-[10px] text-text-tertiary hover:text-text-secondary cursor-pointer px-1"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+      <div className="relative">
+        <User size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-tertiary z-10" />
+        <Input
+          ref={inputRef}
+          type="text"
+          placeholder={placeholder}
+          value={displayValue}
+          onChange={(e) => onInputChange(e.target.value)}
+          onFocus={() => setOpen(true)}
+          onKeyDown={onKeyDown}
+          className="h-7 bg-elevated rounded pl-7 pr-7 text-xs"
+        />
+        {displayValue ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            onClick={() => {
+              if (draft !== null) setDraft(null)
+              else {
+                onChange('')
+                setOpen(false)
+              }
+            }}
+            className="absolute right-1 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary"
+            aria-label="Clear"
+          >
+            <X size={12} />
+          </Button>
+        ) : null}
+      </div>
+      {showList && (
+        <div
+          ref={listRef}
+          className="absolute z-30 left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-popover border border-border rounded shadow-lg"
+        >
+          {matches.map(([name, count], i) => (
+            <button
+              key={name}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => pickSuggestion(name)}
+              onMouseEnter={() => setHlIndex(i)}
+              className={`w-full text-left px-2.5 py-1.5 text-xs flex items-center gap-2 cursor-pointer transition-colors ${i === hlIndex ? 'bg-accent-blue/10 text-text-primary' : 'hover:bg-hover'}`}
+            >
+              <span className="truncate flex-1">{pendingNegate ? `− ${name}` : name}</span>
+              <span className="text-text-tertiary text-[11px] shrink-0">{count}</span>
+            </button>
+          ))}
         </div>
       )}
     </div>
@@ -569,31 +852,10 @@ function TextAutocomplete({ value = '', onChange, suggestions = {}, placeholder 
   const containerRef = useRef(null)
   const listRef = useRef(null)
 
-  useEffect(() => {
-    const handler = (e) => {
-      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
+  useDismissOnOutside(containerRef, setOpen)
 
-  const matches = useMemo(() => {
-    const q = value.trim().toLowerCase()
-    if (!q) {
-      return Object.entries(suggestions)
-        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-        .slice(0, 20)
-    }
-    const prefix = [],
-      rest = []
-    for (const entry of Object.entries(suggestions)) {
-      const lower = entry[0].toLowerCase()
-      if (lower.startsWith(q)) prefix.push(entry)
-      else if (lower.includes(q)) rest.push(entry)
-    }
-    const byCount = (a, b) => b[1] - a[1] || a[0].localeCompare(b[0])
-    return [...prefix.sort(byCount), ...rest.sort(byCount)].slice(0, 20)
-  }, [suggestions, value])
+  const q = value.trim().toLowerCase()
+  const matches = useMemo(() => rankSuggestions(suggestions, q), [suggestions, q])
 
   useEffect(() => {
     setHlIndex(-1)
@@ -605,18 +867,10 @@ function TextAutocomplete({ value = '', onChange, suggestions = {}, placeholder 
     if (!showList) return
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      setHlIndex((i) => {
-        const next = i < matches.length - 1 ? i + 1 : 0
-        listRef.current?.children[next]?.scrollIntoView({ block: 'nearest' })
-        return next
-      })
+      setHlIndex(moveHighlight('down', matches.length, listRef))
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
-      setHlIndex((i) => {
-        const next = i > 0 ? i - 1 : matches.length - 1
-        listRef.current?.children[next]?.scrollIntoView({ block: 'nearest' })
-        return next
-      })
+      setHlIndex(moveHighlight('up', matches.length, listRef))
     } else if (e.key === 'Enter' && hlIndex >= 0 && hlIndex < matches.length) {
       e.preventDefault()
       onChange(matches[hlIndex][0])

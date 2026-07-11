@@ -16,6 +16,23 @@ export const oneOf = (allowed) => (v) => (allowed.includes(v) ? v : undefined)
 /** Validator: keep arrays, drop anything else. */
 export const asArray = (v) => (Array.isArray(v) ? v : undefined)
 
+/**
+ * Validator: polarity filter lists (`[{ value, negate }]`). Accepts legacy
+ * plain string/id arrays and upgrades each element to `{ value, negate: false }`.
+ */
+export const asPolarityList = (v) => {
+  if (!Array.isArray(v)) return undefined
+  const out = []
+  for (const el of v) {
+    if (el && typeof el === 'object' && 'value' in el) {
+      out.push({ value: el.value, negate: !!el.negate })
+    } else if (typeof el === 'string' || typeof el === 'number') {
+      out.push({ value: el, negate: false })
+    }
+  }
+  return out
+}
+
 /** Validator: keep strings, drop anything else. */
 export const asString = (v) => (typeof v === 'string' ? v : undefined)
 

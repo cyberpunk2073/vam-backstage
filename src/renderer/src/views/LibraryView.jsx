@@ -107,20 +107,35 @@ const SORT_OPTIONS = ['Recently installed', 'Type', 'Name', 'Size', 'Content', '
 
 function packageMatchesSelectedTags(p, selectedTags) {
   if (selectedTags.length === 0) return true
-  if (!p.hubTags) return false
   const tags = p.hubTags
-    .toLowerCase()
-    .split(',')
-    .map((t) => t.trim())
-  return selectedTags.every((st) => tags.includes(st))
+    ? p.hubTags
+        .toLowerCase()
+        .split(',')
+        .map((t) => t.trim())
+    : []
+  for (const item of selectedTags) {
+    const value = typeof item === 'object' ? item.value : item
+    const negate = typeof item === 'object' && !!item.negate
+    const has = tags.includes(value)
+    if (negate ? has : !has) return false
+  }
+  return true
 }
 
 function packageMatchesSelectedLabels(p, selectedLabelIds) {
   if (selectedLabelIds.length === 0) return true
-  const ids = p.labelIds
-  if (!ids?.length) return false
-  for (const id of selectedLabelIds) if (!ids.includes(id)) return false
+  const ids = p.labelIds || []
+  for (const item of selectedLabelIds) {
+    const id = typeof item === 'object' ? item.value : item
+    const negate = typeof item === 'object' && !!item.negate
+    const has = ids.includes(id)
+    if (negate ? has : !has) return false
+  }
   return true
+}
+
+function polarityScrollKey(list) {
+  return list.map((item) => (typeof item === 'object' ? `${item.value}:${item.negate ? 1 : 0}` : item)).join(',')
 }
 
 /** True when an update entry has been definitively marked as not directly
@@ -173,6 +188,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     selectedDetail,
     search,
     authorSearch,
+    excludedAuthors,
     statusFilter,
     enabledFilter,
     selectedTypes,
@@ -194,6 +210,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     packagesLoaded,
     setSearch,
     setAuthorSearch,
+    setExcludedAuthors,
     setStatusFilter,
     setEnabledFilter,
     toggleType,
@@ -292,6 +309,12 @@ export default function LibraryView({ onNavigate, navContext }) {
       const aq = authorSearch.toLowerCase()
       result = result.filter((p) => (p.creator || '').toLowerCase().includes(aq))
     }
+    if (excludedAuthors.length > 0) {
+      result = result.filter((p) => {
+        const creator = (p.creator || '').toLowerCase()
+        return !excludedAuthors.some((a) => creator.includes(a.toLowerCase()))
+      })
+    }
     if (license !== 'Any') {
       if (license === COMMERCIAL_USE_ALLOWED_LICENSE_FILTER) {
         result = result.filter((p) => isCommercialUseAllowed(p.license) === true)
@@ -303,7 +326,7 @@ export default function LibraryView({ onNavigate, navContext }) {
       }
     }
     return result
-  }, [packages, search, authorSearch, license])
+  }, [packages, search, authorSearch, excludedAuthors, license])
 
   const statusCounts = useMemo(() => {
     if (!packagesLoaded) return { direct: '…', dependency: '…', broken: '…', orphan: '…', local: '…' }
@@ -506,6 +529,7 @@ export default function LibraryView({ onNavigate, navContext }) {
               onChange: setSelectedLabelIds,
               labels,
               placeholder: 'Filter by label…',
+              allowNegate: true,
             },
           ]
         : []),
@@ -517,6 +541,7 @@ export default function LibraryView({ onNavigate, navContext }) {
         onChange: setSelectedTags,
         suggestions: tagCounts,
         placeholder: 'Filter by tags…',
+        allowNegate: true,
       },
       {
         key: 'author',
@@ -524,6 +549,8 @@ export default function LibraryView({ onNavigate, navContext }) {
         type: 'text-autocomplete',
         value: authorSearch,
         onChange: setAuthorSearch,
+        excluded: excludedAuthors,
+        onExcludedChange: setExcludedAuthors,
         suggestions: authorCounts,
         placeholder: 'Filter by author…',
         titleAction: authorSearch ? <SearchOnHubButton author={authorSearch} onNavigate={onNavigate} /> : null,
@@ -563,6 +590,7 @@ export default function LibraryView({ onNavigate, navContext }) {
       backendCounts,
       updateFacetCount,
       authorSearch,
+      excludedAuthors,
       selectedTags,
       selectedLabelIds,
       labels,
@@ -578,6 +606,7 @@ export default function LibraryView({ onNavigate, navContext }) {
       selectSingleType,
       setEnabledFilter,
       setAuthorSearch,
+      setExcludedAuthors,
       setSelectedTags,
       setSelectedLabelIds,
       setLicense,
@@ -592,7 +621,7 @@ export default function LibraryView({ onNavigate, navContext }) {
   const bulkToggleIntent = useLibraryStore((s) => s.bulkToggleIntent)
   const selectedBulkSet = useMemo(() => new Set(bulkSelectedFilenames), [bulkSelectedFilenames])
 
-  const scrollResetKey = `${search}\0${authorSearch}\0${statusFilter}\0${enabledFilter}\0${selectedTypes.join(',')}\0${selectedTags.join(',')}\0${selectedLabelIds.join(',')}\0${primarySort}\0${secondarySort}\0${license}`
+  const scrollResetKey = `${search}\0${authorSearch}\0${excludedAuthors.join(',')}\0${statusFilter}\0${enabledFilter}\0${selectedTypes.join(',')}\0${polarityScrollKey(selectedTags)}\0${polarityScrollKey(selectedLabelIds)}\0${primarySort}\0${secondarySort}\0${license}`
 
   const lastSelectedIdxRef = useRef(0)
   const prevScrollResetKeyRef = useRef(scrollResetKey)

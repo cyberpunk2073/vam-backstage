@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { toast } from '@/components/Toast'
 import { useInstalledStore } from './useInstalledStore'
-import { persistViewState, oneOf, asArray, asString, asCardWidth } from './persistViewState'
+import { persistViewState, oneOf, asArray, asPolarityList, asString, asCardWidth } from './persistViewState'
 
 /** Gallery data sources. Extend this (and the toolbar segmented control) to add future modes. */
 export const GALLERY_MODES = ['hub', 'wishlist']
@@ -87,6 +87,7 @@ export const useHubStore = create(
       wlTags: [],
       wlPaid: 'all',
       wlAuthor: '',
+      wlExcludedAuthors: [],
       wlLicense: 'Any',
       wlSort: 'added',
 
@@ -124,6 +125,7 @@ export const useHubStore = create(
       setWlTags: (wlTags) => set({ wlTags }),
       setWlPaid: (wlPaid) => set({ wlPaid }),
       setWlAuthor: (wlAuthor) => set({ wlAuthor }),
+      setWlExcludedAuthors: (wlExcludedAuthors) => set({ wlExcludedAuthors }),
       setWlLicense: (wlLicense) => set({ wlLicense }),
       setWlSort: (wlSort) => set({ wlSort }),
       setCardMode: (cardMode) => set({ cardMode }),
@@ -328,9 +330,10 @@ export const useHubStore = create(
       license: asString,
       sort: asString,
       wlType: asString,
-      wlTags: asArray,
+      wlTags: asPolarityList,
       wlPaid: oneOf(['all', 'free', 'paid']),
       wlAuthor: asString,
+      wlExcludedAuthors: asArray,
       wlLicense: asString,
       wlSort: asString,
       cardMode: oneOf(['minimal', 'medium']),

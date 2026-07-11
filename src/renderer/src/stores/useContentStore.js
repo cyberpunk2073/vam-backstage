@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware'
 import { toast } from '@/components/Toast'
 import { typeFilterSlice } from './typeFilterSlice'
 import { useLibraryStore } from './useLibraryStore'
-import { persistViewState, oneOf, asArray, asString, asCardWidth, asObject } from './persistViewState'
+import { persistViewState, oneOf, asArray, asPolarityList, asString, asCardWidth, asObject } from './persistViewState'
 
 /**
  * Attach `c.package` references onto a fresh content array. Content rows arrive
@@ -33,6 +33,7 @@ function linkContents(rows, pkgMap) {
 const FILTER_DEFAULTS = {
   search: '',
   authorSearch: '',
+  excludedAuthors: [],
   selectedTypes: [],
   selectedPackageTypes: [],
   selectedTags: [],
@@ -109,6 +110,7 @@ export const useContentStore = create(
 
       setSearch: (search) => set({ search }),
       setAuthorSearch: (authorSearch) => set({ authorSearch }),
+      setExcludedAuthors: (excludedAuthors) => set({ excludedAuthors }),
       setSelectedTags: (selectedTags) => set({ selectedTags }),
       setSelectedLabelIds: (selectedLabelIds) => set({ selectedLabelIds }),
       setPackageFilter: (packageFilter) => set({ packageFilter }),
@@ -297,8 +299,9 @@ export const useContentStore = create(
     persistViewState('content-view', {
       selectedTypes: asArray,
       selectedPackageTypes: asArray,
-      selectedTags: asArray,
-      selectedLabelIds: asArray,
+      selectedTags: asPolarityList,
+      selectedLabelIds: asPolarityList,
+      excludedAuthors: asArray,
       packageFilter: oneOf(['all', 'installed', 'dependency', 'local']),
       packageStatusFilter: oneOf(['all', 'enabled', 'disabled']),
       visibilityFilter: oneOf(['all', 'visible', 'hidden', 'favorites']),

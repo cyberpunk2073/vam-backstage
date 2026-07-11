@@ -67,8 +67,10 @@ export default function App() {
       const valid = new Set(useLabelsStore.getState().labels.map((l) => l.id))
       for (const store of [useLibraryStore, useContentStore]) {
         const ids = store.getState().selectedLabelIds
-        if (ids.some((id) => !valid.has(id))) {
-          store.setState({ selectedLabelIds: ids.filter((id) => valid.has(id)) })
+        if (ids.some((item) => !valid.has(typeof item === 'object' ? item.value : item))) {
+          store.setState({
+            selectedLabelIds: ids.filter((item) => valid.has(typeof item === 'object' ? item.value : item)),
+          })
         }
       }
     })
