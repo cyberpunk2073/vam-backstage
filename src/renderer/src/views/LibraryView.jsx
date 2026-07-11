@@ -86,7 +86,7 @@ import { useLibraryUpdateState } from '@/hooks/useLibraryUpdateState'
 import { LICENSE_FILTER_OPTIONS } from '@/lib/licenses'
 import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
 import { matchesPolarityList, matchesAuthorFilter, matchesLicenseFilter, polarityScrollKey } from '@/lib/filter-match'
-import { haystacksMatchAllTerms, searchAndTerms } from '@/lib/search-text'
+import { haystacksMatchAllTerms, packageSearchExtras, searchAndTerms } from '@/lib/search-text'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { LicenseTag } from '@/components/LicenseTag'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
@@ -290,7 +290,7 @@ export default function LibraryView({ onNavigate, navContext }) {
       const { tokens } = parseSmartQuery(search)
       result = result.filter((p) =>
         matchesSmartQuery(tokens, {
-          text: () => [p.title, p.packageName, p.filename],
+          text: () => [p.title, p.packageName, p.filename, ...packageSearchExtras(p)],
           author: () => p.creator || '',
           tags: () => packageHubTags(p),
           labels: () => (p.labelIds || []).map((id) => labelNameById.get(id)).filter(Boolean),

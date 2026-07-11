@@ -11,6 +11,7 @@ import HubDetail from '@/components/HubDetail'
 import FilterPanel from '@/components/FilterPanel'
 import { LICENSE_FILTER_OPTIONS, getHubResourceLicense } from '@/lib/licenses'
 import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
+import { wishlistSearchExtras } from '@/lib/search-text'
 import { matchesPolarityList, matchesAuthorFilter, matchesLicenseFilter } from '@/lib/filter-match'
 import { SearchOnHubButton } from '@/components/SearchOnHubButton'
 import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
@@ -89,7 +90,7 @@ function wishlistPredicates({ search, type, tags, paid, author, excludedAuthors,
     search: (r) =>
       !tokens.length ||
       matchesSmartQuery(tokens, {
-        text: () => [r.title, r.username, r.tag_line],
+        text: () => [r.title, r.username, r.tag_line, ...wishlistSearchExtras(r)],
         author: () => r.username || '',
         tags: () => parseSnapshotTags(r),
         labels: () => [],

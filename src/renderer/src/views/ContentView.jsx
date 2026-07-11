@@ -57,6 +57,7 @@ import { useKeyboardNav } from '@/hooks/useKeyboardNav'
 import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
 import { openLightbox } from '@/components/ThumbnailLightbox'
 import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
+import { contentSearchExtras } from '@/lib/search-text'
 import { matchesPolarityList, matchesAuthorFilter, polarityScrollKey } from '@/lib/filter-match'
 import { isLocalPackage } from '@shared/local-package.js'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
@@ -290,7 +291,7 @@ export default function ContentView({ onNavigate, navContext }) {
         const pkgLabel = contentPackageLabel(c)
         const owner = c.sourcePackage ?? c.package
         return matchesSmartQuery(tokens, {
-          text: () => [c.displayName, owner?.packageName, pkgLabel],
+          text: () => [c.displayName, owner?.packageName, pkgLabel, ...contentSearchExtras(c)],
           author: () => owner?.creator || '',
           tags: () => contentHubTags(c),
           labels: () =>

@@ -13,3 +13,27 @@ export function haystacksMatchAllTerms(haystacks, termsLower) {
   const lowered = haystacks.map((s) => (s || '').toLowerCase())
   return termsLower.every((term) => lowered.some((h) => h.includes(term)))
 }
+
+/** Library chip phrases with no dedicated filter (`no preset` / `extracted` / `corrupted`). */
+export function packageSearchExtras(p) {
+  const extras = []
+  if (p.noLookPresetTag && !p.hasExtractedAppearancePreset) extras.push('no preset')
+  if (p.hasExtractedAppearancePreset) extras.push('extracted')
+  if (p.isCorrupted) extras.push('corrupted')
+  return extras
+}
+
+/** Content chip phrases with no dedicated filter (Legacy / Preset / extracted). */
+export function contentSearchExtras(c) {
+  const extras = []
+  if (c.tag?.label) extras.push(c.tag.label)
+  if (c.extractedFrom || c.hasExtractedAppearancePreset) extras.push('extracted')
+  return extras
+}
+
+/** Wishlist chip phrases with no dedicated filter (`unavailable`). */
+export function wishlistSearchExtras(r) {
+  const extras = []
+  if (r._unavailable) extras.push('unavailable')
+  return extras
+}
