@@ -107,8 +107,8 @@ export const useHubStore = create(
       cardWidth: 220,
 
       // Gallery data source (see GALLERY_MODES): 'hub' search or local 'wishlist'.
-      // Persisted so the mode restores across restarts; switching it never touches
-      // hub search state (filters/results/page), so switching back is lossless.
+      // Not persisted — always start in hub mode after a restart; switching never
+      // touches hub search state (filters/results/page), so switching back is lossless.
       galleryMode: 'hub',
 
       filterOptions: null,
@@ -339,7 +339,6 @@ export const useHubStore = create(
       wlSort: asString,
       cardMode: oneOf(['minimal', 'medium']),
       cardWidth: asCardWidth,
-      galleryMode: oneOf(GALLERY_MODES),
     }),
   ),
 )
