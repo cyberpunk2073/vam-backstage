@@ -1,28 +1,28 @@
 # VaM Backstage [![CI](https://github.com/cyberpunk2073/vam-backstage/actions/workflows/ci.yml/badge.svg)](https://github.com/cyberpunk2073/vam-backstage/actions/workflows/ci.yml)
 
-A desktop app for managing [Virt-a-Mate](https://www.virtamate.com/) `.var` packages. Scans your library, builds a dependency graph, and separates content you actually installed from content that's only there because something depends on it; it then hides the clutter from VaM's content browser automatically. Browse your library contents, search and install from the VaM Hub with full dependency resolution.
+VaM Backstage is a modern way to manage your [Virt-a-Mate](https://www.virtamate.com/) library. It keeps track of the packages you install directly and their dependencies, keeping unwanted dependency content out of VaM’s browser while leaving the packages themselves untouched.
+
+Explore and organize your collection in a fast desktop interface, with powerful search, precise filters, and custom labels. Discover and install resources from the Hub in one click, with missing dependencies resolved and downloaded in parallel while you keep browsing.
 
 ![VaM Backstage — library view](docs/screenshot.png)
 
 [![Download for Windows](https://img.shields.io/github/v/release/cyberpunk2073/vam-backstage?label=Download%20for%20Windows&style=for-the-badge)](https://github.com/cyberpunk2073/vam-backstage/releases/latest/download/vam-backstage-setup.exe) [![Other platforms](https://img.shields.io/badge/Other%20platforms-releases-blue?style=for-the-badge)](https://github.com/cyberpunk2073/vam-backstage/releases/latest)
 
-## Why
-
-VaM treats every `.var` in `AddonPackages/` equally. Install a scene that pulls in 40 dependency packages and suddenly your scenes, looks, and clothing lists are full of stuff you never asked for. There's no built-in way to tell what's a dependency and what's yours, and no tooling to manage any of it.
-
 ## Features
 
-**Hide dependency clutter.** Dependency scenes, looks, poses, clothing, and hairstyles are automatically hidden from VaM's content browser. Nothing is modified or deleted; toggle hidden/favorite per-package or per-item at any time.
+**Keep dependency clutter out of VaM.** Backstage distinguishes packages you chose to install from those present only because another package needs them. It keeps those dependencies installed and working while hiding their scenes, looks, poses, clothing, and hairstyles from VaM's content browser. See the dependency tree for any package, spot missing or broken dependencies, and remove dependencies that become unused when you uninstall.
 
-**Dependency graph.** Full dependency tree for every package: what it needs, what depends on it, what's missing and broken. Uninstalling a package identifies orphaned dependencies and offers to clean them up. Reclassify any package as yours or a dependency and visibility rules follow automatically.
+**Install from the Hub without stopping what you are doing.** Search the Hub and open complete resource pages inside Backstage. Installing a resource queues its missing dependencies and downloads everything in parallel in the background, so you can keep browsing, organizing, and starting other installs. Save resources to a wishlist for later and check installed packages for updates.
 
-**Hub integration.** Search and install packages from the VaM Hub without leaving the app. Type, pricing, author, tag, and license filters. Embedded Hub page preview. Installing a package resolves all missing dependencies and downloads everything concurrently with live progress. Check for available updates to installed packages.
+**Find and organize anything.** Search packages or individual content with ordinary words, then narrow the results by author, type, tags, status, or your own labels. Apply labels, hide content, and mark favorites across whole packages or individual items, including in bulk. When you need more control, advanced searches can combine terms and exclusions such as `@MacGruber hair -male`.
 
-**Content browser.** Browse every scene, look, pose, clothing item, and hairstyle across all your packages. Filter by type, toggle hidden/favorite, cross-navigate to the owning package or its Hub page.
+**Extract the presets that look packages leave out.** Many looks ship only as demonstration scenes, leaving you to create reusable presets yourself. Backstage extracts appearance and clothing presets from a scene in one action, and can convert legacy looks as well.
 
-**Library browser.** Gallery and table views for installed packages. Filter by status (yours, dependency, missing deps, orphans, disabled), content type, author, and tags. Package detail panels show contents, the full dep tree, and actions like uninstall, disable, and force-remove.
+**Disable packages intelligently.** Temporarily take packages out of VaM without uninstalling them. Backstage follows the dependency graph: disabling a package also disables dependencies that no enabled package still needs, and enabling it restores its required dependencies. Work with one package or many at once.
 
-Picks up external file changes in real time, auto-detects the VaM directory on first launch.
+**Works with the library you already have.** Backstage handles packages in subfolders and loose content, can register existing offload directories used by tools such as BrowserAssist, and picks up changes made outside the app. No reorganization or migration is required.
+
+**Manage your library from another computer.** Run Backstage on the machine that stores your VaM library, then connect over your local network to browse, download, and manage packages from another computer.
 
 ## Development
 
