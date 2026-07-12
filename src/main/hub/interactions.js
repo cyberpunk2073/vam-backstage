@@ -359,16 +359,20 @@ export async function toggleBookmark(id, currentlyBookmarked) {
 
 /**
  * Toggle the visitor's resource *rating* (the Hub thumbs up/down, served by the
- * `/like/` endpoint). The endpoint's JSON only reports `success` — it never
- * echoes the new state — so we derive it: rating up sends `liked=1` (which also
- * clears any prior down-rating), un-rating sends both flags 0. We never set a
- * down-rating here; the UI only offers the positive rating and merely surfaces an
- * existing down-rating made on the Hub.
+ * `/like/` endpoint). The endpoint never echoes the new state — so we derive it:
+ * rating up sends `liked=1` (which also clears any prior down-rating), un-rating
+ * sends both flags 0. We never set a down-rating here; the UI only offers the
+ * positive rating and merely surfaces an existing down-rating made on the Hub.
+ *
+ * Un-rating a rating that still has a review returns `{ success: true,
+ * needsConfirmation: true }` without clearing it. The Hub would accept a force
+ * via `proceed=1` in the body; we don't send that — surface the failure so the
+ * user can remove the review on the Hub first.
  */
 export async function toggleRate(id, currentlyRated) {
   if (!(await isLoggedIn())) throw new HubAuthError()
   const rate = currentlyRated ? 0 : 1
-  await postWithRecovery(id, () => ({
+  const json = await postWithRecovery(id, () => ({
     url: `${HUB_ORIGIN}/resources/${id}/like/`,
     body: {
       liked: rate,
@@ -380,6 +384,10 @@ export async function toggleRate(id, currentlyRated) {
       _xfResponseType: 'json',
     },
   }))
+  // Unrate refused: rating has a review. Do not update snapshot / pretend success.
+  if (!rate && json?.needsConfirmation) {
+    throw new Error('This rating has a review. Remove the review on the Hub before unrating.')
+  }
   const rated = !!rate
   updateSnapshot(id, { rated, ratedDown: false })
   return { rated, ratedDown: false }
