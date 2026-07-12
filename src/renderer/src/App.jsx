@@ -14,6 +14,7 @@ import ribbonAppIcon from '@resources/icon.png?url'
 import StatusBar from '@/components/StatusBar'
 import DownloadsPanel from '@/components/DownloadsPanel'
 import FirstRun from '@/components/FirstRun'
+import DropImport from '@/components/DropImport'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import { ToastContainer, toast } from '@/components/Toast'
 import { WhatsNewDialog } from '@/components/WhatsNewDialog'
@@ -274,6 +275,7 @@ export default function App() {
           </main>
           <StatusBar />
         </div>
+        {!showWizard && <DropImport />}
         <ToastContainer />
         <WhatsNewDialog
           open={!!whatsNew}

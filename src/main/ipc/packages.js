@@ -59,6 +59,7 @@ import {
   enqueueInstallAllMissing,
   enqueueInstallRef,
   enqueueInstallBatch,
+  importLocalVar,
 } from '../downloads/manager.js'
 import {
   fetchPackagesJson,
@@ -622,6 +623,13 @@ export function registerPackageHandlers() {
 
   ipcMain.handle('packages:install-dep', async (_, hubFileData) => {
     return await enqueueInstallRef(hubFileData)
+  })
+
+  // Import a .var supplied as raw bytes (drag-and-drop add). Works locally and
+  // over the remote bridge — a client head ships the file buffer here and the
+  // server writes it into its own AddonPackages.
+  ipcMain.handle('packages:import-local', async (_, { filename, bytes }) => {
+    return await importLocalVar({ filename, bytes })
   })
 
   ipcMain.handle('packages:file-list', async (_, filename) => {

@@ -37,6 +37,7 @@ const api = {
     installAllMissing: () => invoke('packages:install-all-missing'),
     installDepsBatch: (items, autoQueueDeps) => invoke('packages:install-deps-batch', { items, autoQueueDeps }),
     installDep: (hubFileData) => invoke('packages:install-dep', hubFileData),
+    importLocal: ({ filename, bytes }) => invoke('packages:import-local', { filename, bytes }),
     missingDeps: () => invoke('packages:missing-deps'),
     enrichFromHub: (stems) => invoke('packages:enrich-from-hub', stems),
     removeOrphans: () => invoke('packages:remove-orphans'),

@@ -1,9 +1,10 @@
 import { createWriteStream } from 'fs'
-import { stat as fsStat, rename, unlink, mkdir } from 'fs/promises'
+import { stat as fsStat, rename, unlink, mkdir, writeFile } from 'fs/promises'
 import { join, dirname } from 'path'
 import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
 import { net } from 'electron'
 import { verifyZipFile } from '../var-stability.js'
+import { parseVarFilename, canonicalVarFilename } from '../scanner/var-reader.js'
 import {
   insertDownload,
   getDownload,
@@ -46,7 +47,7 @@ import {
   packageHasNoLookPresetTag,
 } from '../store.js'
 import { readAllPrefs, hidePackageContent } from '../vam-prefs.js'
-import { recordOwnedPath } from '../watcher.js'
+import { recordOwnedPath, withBulkWindow } from '../watcher.js'
 import { resolvePackageThumbnails } from '../thumb-resolver.js'
 import { applyStorageState, computeInstallTarget, parseDisableBehavior } from '../storage-state.js'
 import { getMainLibraryDirPath } from '../library-dirs.js'
@@ -477,6 +478,68 @@ export async function enqueueInstallRef(hubFileData) {
   emitUpdated()
   processQueue()
   return { ok: true }
+}
+
+/**
+ * Import a `.var` supplied as raw bytes (a drag-and-drop / "add file" action)
+ * into the main library. Bytes rather than a path so the same handler serves a
+ * remote client head: the renderer reads the dropped File and ships the buffer
+ * over the transport, and the server writes it into its own AddonPackages.
+ *
+ * Writes to a temp sibling, verifies the ZIP structure, then atomically renames
+ * into place and runs the same post-add integration the download path uses
+ * (scan + upsert, inherit-from-older-version, auto-hide, graph rebuild,
+ * install-target relocation, cascade-enable, notify). Added as a direct install
+ * with no Hub linkage (the Hub name lookup fills that in later) and without
+ * auto-queuing dependencies — missing deps surface in the normal Library UI.
+ *
+ * @param {{ filename: string, bytes: Uint8Array }} input
+ * @returns {Promise<{ ok: true, filename: string, already?: boolean }>}
+ */
+export async function importLocalVar({ filename, bytes }) {
+  if (!getSetting('vam_dir')) throw new Error('VaM directory not configured')
+  const addonDir = getMainLibraryDirPath()
+  if (!addonDir) throw new Error('Main library directory not configured')
+
+  const canonical = canonicalVarFilename(String(filename || '').trim())
+  if (!/\.var$/i.test(canonical) || !parseVarFilename(canonical)) {
+    throw new Error(`Not a valid .var filename: ${filename}`)
+  }
+  if (!bytes || bytes.byteLength === 0) throw new Error('Empty file')
+
+  // Same filename already indexed — treat as a no-op rather than clobbering the
+  // existing (possibly user-modified) file. A genuinely newer package carries a
+  // different version segment and so a different filename.
+  if (findLocalByFilename(canonical)) return { ok: true, already: true, filename: canonical }
+
+  const buf = Buffer.isBuffer(bytes)
+    ? bytes
+    : bytes instanceof Uint8Array
+      ? Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+      : Buffer.from(bytes)
+
+  const finalPath = join(addonDir, canonical)
+  const tempPath = finalPath + '.import.tmp'
+
+  await mkdir(dirname(finalPath), { recursive: true })
+  await writeFile(tempPath, buf)
+  try {
+    await verifyZipFile(tempPath)
+  } catch (err) {
+    try {
+      await unlink(tempPath)
+    } catch {}
+    throw new Error(`Not a valid .var package: ${err.message}`)
+  }
+
+  await withBulkWindow(async () => {
+    recordOwnedPath(finalPath)
+    await rename(tempPath, finalPath)
+  })
+
+  await postDownloadIntegrate(canonical, finalPath, true, null, false)
+
+  return { ok: true, filename: canonical }
 }
 
 /** @returns {Promise<string[]>} Dep refs that could not be queued (not on Hub or no download URL). */

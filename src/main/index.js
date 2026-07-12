@@ -252,6 +252,16 @@ function createWindow() {
     return { action: 'deny' }
   })
 
+  // Defense-in-depth against file drag-and-drop: if a `.var` is dropped onto the
+  // window at a moment the renderer's DropImport handler isn't mounted (e.g.
+  // during the first-run wizard, or before React hydrates), Electron would
+  // otherwise navigate the top frame to the dropped `file://` URL and blow away
+  // the app. Block any top-frame navigation away from the app's own document.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const current = mainWindow.webContents.getURL()
+    if (url !== current) event.preventDefault()
+  })
+
   attachNativeTextContextMenu(mainWindow.webContents, mainWindow)
   attachDevToolsHotkeys(mainWindow)
 
