@@ -17,3 +17,23 @@ export function notify(channel, data) {
   // server is running with at least one client.
   broadcast(channel, data)
 }
+
+/**
+ * Like `notify()`, but skips the caller that already applied the mutation.
+ * Local IPC: `sourceEvent.sender` is the invoking webContents.
+ * Remote RPC: `sourceEvent.remoteWs` is the invoking WebSocket (see server.js).
+ * Use this when the actor already has optimistic / post-RPC state and should
+ * not pay for an event-driven refetch.
+ */
+export function notifyPeers(sourceEvent, channel, data) {
+  const win = getWindow()
+  if (win) {
+    const sourceWc = sourceEvent?.sender
+    if (!sourceWc || sourceWc !== win.webContents) {
+      try {
+        win.webContents.send(channel, data)
+      } catch {}
+    }
+  }
+  broadcast(channel, data, { except: sourceEvent?.remoteWs ?? null })
+}

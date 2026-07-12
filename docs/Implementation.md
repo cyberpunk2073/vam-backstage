@@ -941,7 +941,7 @@ When search results return from the Hub, the client enriches each resource with 
 
 ### Wishlist maintenance
 
-Background Hub fetches (`getResourceDetail`, `scanHubDetails`, name lookup) piggyback wishlist snapshot refresh via `upsertHubResourceDetail` / `markWishlistItemUnavailable` in `db.js`. When a row changes, the hub client emits `wishlist:updated` so the renderer reloads annotated snapshots. Adding via `wishlist:add` also fire-and-forgets `prefetchHubResThumbnail` so icons survive later Hub removal.
+Background Hub fetches (`getResourceDetail`, `scanHubDetails`, name lookup) piggyback wishlist snapshot refresh via `upsertHubResourceDetail` / `markWishlistItemUnavailable` in `db.js`. When a row changes, the hub client emits bare `wishlist:updated` so an already-loaded wishlist refreshes. User pin/unpin via `wishlist:add` / `wishlist:remove` calls `notifyPeers('wishlist:updated', { membership: true })` so other connected clients refresh pins/count without echoing the event back to the actor (who already updated optimistically and reloads after the RPC). The membership marker preserves the old standalone behavior: background Hub traffic does not re-fetch wishlist IDs when the full list has never been loaded. Adding also fire-and-forgets `prefetchHubResThumbnail` so icons survive later Hub removal.
 
 ---
 
@@ -1078,23 +1078,24 @@ sequenceDiagram
 
 The events split into two categories:
 
-- **Invalidation events** (`packages:updated`, `contents:updated`, `labels:updated`, `wishlist:updated`, `downloads:updated`): Carry no payload. Signal "something changed" so the renderer re-fetches full datasets via `ipcMain.handle`. This avoids data consistency issues where event payloads might be stale relative to the main-process state at the time the renderer processes them.
+- **Invalidation events** (`packages:updated`, `contents:updated`, `labels:updated`, `wishlist:updated`, `downloads:updated`): Usually carry no payload and signal "something changed" so the renderer re-fetches authoritative state via `ipcMain.handle`. Peer pin/unpin adds `{ membership: true }` to `wishlist:updated` only to select the cheap ID refresh when the full wishlist is not loaded.
 - **Streaming events** (`download:progress`, `scan:progress`): Carry data payloads directly. Used for high-frequency updates where a full re-fetch would be too expensive. The renderer writes these directly into Zustand state with no IPC round-trip.
 
 ### Event Reactions by View
 
-Each event triggers a specific set of re-fetches per subscriber. Hub search/filter state lives in `useHubStore`, but `HubView` also listens for `packages:updated` (install-badge + wishlist reconciliation) and `wishlist:updated` (background snapshot refreshes).
+Each event triggers a specific set of re-fetches per subscriber. Hub search/filter state lives in `useHubStore`, but `HubView` also listens for `packages:updated` (install-badge + wishlist reconciliation) and `wishlist:updated` (peer pin/unpin and background snapshot refreshes).
 
-| Event               | LibraryView                                                                                                                                             | ContentView                                            | HubView / Wishlist                                                 | StatusBar                                                                                | DownloadStore                   |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | ------------------------------- |
-| `packages:updated`  | `fetchPackages`, `fetchBackendCounts`, `checkForUpdates`, `refreshDetail`, tag/author counts; missing-dep fetch or invalidate depending on filter state | `fetchContents`, `refreshSelection`, tag/author counts | re-sync install badges on visible cards; reload wishlist if loaded | `fetchStats`                                                                             | —                               |
-| `contents:updated`  | `refreshDetail`                                                                                                                                         | `fetchContents`, `refreshSelection`                    | —                                                                  | `fetchStats`                                                                             | —                               |
-| `labels:updated`    | `useLabelsStore.fetchLabels`; prune stale `selectedLabelIds` (App.jsx)                                                                                  | same                                                   | —                                                                  | —                                                                                        | —                               |
-| `wishlist:updated`  | —                                                                                                                                                       | —                                                      | `useWishlistStore.load()` when wishlist mode loaded                | —                                                                                        | —                               |
-| `downloads:updated` | —                                                                                                                                                       | —                                                      | —                                                                  | —                                                                                        | `fetchItems` (rebuilds indexes) |
-| `download:progress` | —                                                                                                                                                       | —                                                      | —                                                                  | —                                                                                        | updates `liveProgress` in place |
-| `download:failed`   | —                                                                                                                                                       | —                                                      | —                                                                  | —                                                                                        | toast notification              |
-| `scan:progress`     | —                                                                                                                                                       | —                                                      | —                                                                  | updates `scan` state; shows bar after 1s delay; on finalize, clears and re-fetches stats | —                               |
+| Event                     | LibraryView                                                                                                                                             | ContentView                                            | HubView / Wishlist                                                         | StatusBar                                                                                | DownloadStore                     |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | --------------------------------- |
+| `packages:updated`        | `fetchPackages`, `fetchBackendCounts`, `checkForUpdates`, `refreshDetail`, tag/author counts; missing-dep fetch or invalidate depending on filter state | `fetchContents`, `refreshSelection`, tag/author counts | re-sync install badges on visible cards; reload wishlist if loaded         | `fetchStats`                                                                             | —                                 |
+| `contents:updated`        | `refreshDetail`                                                                                                                                         | `fetchContents`, `refreshSelection`                    | —                                                                          | `fetchStats`                                                                             | —                                 |
+| `labels:updated`          | `useLabelsStore.fetchLabels`; prune stale `selectedLabelIds` (App.jsx)                                                                                  | same                                                   | —                                                                          | —                                                                                        | —                                 |
+| `wishlist:updated`        | —                                                                                                                                                       | —                                                      | `load()` if loaded; otherwise `loadIds()` only for peer membership changes | —                                                                                        | —                                 |
+| `downloads:updated`       | —                                                                                                                                                       | —                                                      | —                                                                          | —                                                                                        | `fetchItems` (rebuilds indexes)   |
+| `downloads:pause-changed` | —                                                                                                                                                       | —                                                      | —                                                                          | —                                                                                        | set peer pause state from payload |
+| `download:progress`       | —                                                                                                                                                       | —                                                      | —                                                                          | —                                                                                        | updates `liveProgress` in place   |
+| `download:failed`         | —                                                                                                                                                       | —                                                      | —                                                                          | —                                                                                        | toast notification                |
+| `scan:progress`           | —                                                                                                                                                       | —                                                      | —                                                                          | updates `scan` state; shows bar after 1s delay; on finalize, clears and re-fetches stats | —                                 |
 
 Notes on LibraryView's `packages:updated` handling:
 
@@ -1104,6 +1105,7 @@ Notes on LibraryView's `packages:updated` handling:
 Notes on DownloadStore:
 
 - `download:progress` is a pure in-memory update driven by the event payload — no IPC round-trip.
+- `downloads:pause-changed` is emitted with `notifyPeers` only for pause/resume/cancel-all. The actor remains optimistic; peers set the boolean directly. Ordinary standalone `downloads:updated` handling remains unchanged and performs no extra pause query or pruning.
 
 ### Cross-Store Synchronization
 
@@ -1494,12 +1496,12 @@ Handlers live under `src/main/ipc/` split per domain (`packages.js`, `contents.j
 
 #### Wishlist (`src/main/ipc/wishlist.js`)
 
-| Channel           | Purpose                                              |
-| ----------------- | ---------------------------------------------------- |
-| `wishlist:list`   | All wishlist snapshots, annotated with install state |
-| `wishlist:ids`    | Resource-id set for pin badges                       |
-| `wishlist:add`    | Persist snapshot (+ prefetch thumbnail)              |
-| `wishlist:remove` | Remove entry                                         |
+| Channel           | Purpose                                                                    |
+| ----------------- | -------------------------------------------------------------------------- |
+| `wishlist:list`   | All wishlist snapshots, annotated with install state                       |
+| `wishlist:ids`    | Resource-id set for pin badges                                             |
+| `wishlist:add`    | Persist snapshot (+ prefetch thumbnail); `notifyPeers('wishlist:updated')` |
+| `wishlist:remove` | Remove entry; `notifyPeers('wishlist:updated')`                            |
 
 #### Library directories (`src/main/ipc/library-dirs.js`)
 
@@ -1574,27 +1576,29 @@ When developer options are unlocked, **F12** (and Ctrl+Shift+I / Cmd+Alt+I) togg
 
 ### Event channels (Main → Renderer)
 
-| Channel                     | Payload                                                            | Frequency                                             |
-| --------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------- |
-| `packages:updated`          | —                                                                  | On package changes                                    |
-| `contents:updated`          | —                                                                  | On content changes                                    |
-| `labels:updated`            | —                                                                  | On label metadata or application counts               |
-| `wishlist:updated`          | —                                                                  | On wishlist snapshot/unavailability changes           |
-| `downloads:updated`         | —                                                                  | On download queue changes                             |
-| `thumbnails:updated`        | `{ keys }` (invalidated thumbnail cache keys, e.g. `pkg:filename`) | After background thumb resolution (batched)           |
-| `avatars:updated`           | —                                                                  | After avatar cache update                             |
-| `download:progress`         | `{id, progress, speed, bytesLoaded, fileSize}`                     | Every 250ms per active download                       |
-| `download:failed`           | `{id, error}`                                                      | On download failure                                   |
-| `scan:progress`             | `{phase, step, total, message}`                                    | During local library scan                             |
-| `scan:unreadable`           | `{filename}` per event                                             | Unreadable `.var` detected post-startup               |
-| `hub-scan:progress`         | `{current, total, found, phase, ...}`                              | During first-run / Hub enrichment                     |
-| `hub:auth-changed`          | `{ loggedIn }`                                                     | Hub session gained/lost (forwarded to remote clients) |
-| `remote:server-status`      | `{ running, port, clients }`                                       | Local server start/stop or client connect/disconnect  |
-| `auto-hide:progress`        | `{current, total, filename?, items, ...}`                          | During batch `.hide` application                      |
-| `integrity:progress`        | `{checked, total}`                                                 | During integrity check                                |
-| `updater:update-available`  | `{version, ...}`                                                   | When an update is available                           |
-| `updater:update-downloaded` | `{version, ...}`                                                   | When an update is ready to install                    |
-| `updater:error`             | `{message}`                                                        | Updater failure (check/download/mac staging)          |
+| Channel                     | Payload                                                            | Frequency                                                             |
+| --------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| `packages:updated`          | —                                                                  | On package changes                                                    |
+| `contents:updated`          | —                                                                  | On content changes                                                    |
+| `labels:updated`            | —                                                                  | On label metadata or application counts                               |
+| `wishlist:updated`          | optional `{ membership: true }`                                    | Peer pin/unpin (`notifyPeers`) + bare snapshot/unavailability changes |
+| `downloads:updated`         | —                                                                  | On download queue changes                                             |
+| `downloads:pause-changed`   | boolean                                                            | Peer-only pause/resume/cancel-all state                               |
+| `thumbnails:updated`        | `{ keys }` (invalidated thumbnail cache keys, e.g. `pkg:filename`) | After background thumb resolution (batched)                           |
+| `avatars:updated`           | —                                                                  | After avatar cache update                                             |
+| `download:progress`         | `{id, progress, speed, bytesLoaded, fileSize}`                     | Every 250ms per active download                                       |
+| `download:failed`           | `{id, error}`                                                      | On download failure                                                   |
+| `scan:progress`             | `{phase, step, total, message}`                                    | During local library scan                                             |
+| `scan:unreadable`           | `{filename}` per event                                             | Unreadable `.var` detected post-startup                               |
+| `hub-scan:progress`         | `{current, total, found, phase, ...}`                              | During first-run / Hub enrichment                                     |
+| `hub:auth-changed`          | `{ loggedIn }`                                                     | Hub session gained/lost (local only; not broadcast)                   |
+| `updater:update-*` / error  | version / message                                                  | Host updater status (local only; not broadcast)                       |
+| `remote:server-status`      | `{ running, port, clients }`                                       | Local server start/stop or client connect/disconnect                  |
+| `auto-hide:progress`        | `{current, total, filename?, items, ...}`                          | During batch `.hide` application                                      |
+| `integrity:progress`        | `{checked, total}`                                                 | During integrity check                                                |
+| `updater:update-available`  | `{version, ...}`                                                   | When an update is available                                           |
+| `updater:update-downloaded` | `{version, ...}`                                                   | When an update is ready to install                                    |
+| `updater:error`             | `{message}`                                                        | Updater failure (check/download/mac staging)                          |
 
 ---
 
@@ -1668,7 +1672,7 @@ Scenes and legacy looks share VaM's `{ atoms: [{ type: "Person", storables }] }`
 
 **Probe path**: At scan time, scene-source rows store `person_atom_ids` (v17). During `buildFromDb()`, `extractedAppearanceBasenames` collects basenames of loose `look` rows under `Appearance/extracted/`; package cards compare scene rows against that set for the "no preset" / checkmark UI.
 
-**Write path**: Context menus in `LibraryPackageContextMenu` and `ContentItemContextMenu` call `extract:run` (single/batch) or `extract:run-for-packages` (bulk selection). Modes: `create` (skip existing), `overwrite`, `refresh`. After any write, `refreshAfterExtract()` runs `runLocalScan` + `buildFromDb()` + `packages:updated` so library cards flip immediately (the watcher would debounce 500ms).
+**Write path**: Context menus in `LibraryPackageContextMenu` and `ContentItemContextMenu` call `extract:run` (single/batch) or `extract:run-for-packages` (bulk selection). Modes: `create` (skip existing), `overwrite`, `refresh`. After any write, `refreshAfterExtract()` runs `runLocalScan` + `buildFromDb()` + `packages:updated` so library cards flip immediately (the watcher emits `contents:updated` after its debounce).
 
 **Extracted preset lifecycle**: Loose presets are `__local__` content rows attributed to an owning package via `extractedFrom` / `extractedByPackage`. They appear in Content with an "Extracted" tag and inherit the owner's storage state. Disable/delete of extracted `.vap` files uses `scenes/extracted-lifecycle.js` rename/unlink plans (`.disabled` suffix + sidecar carry).
 
@@ -1678,9 +1682,9 @@ Scenes and legacy looks share VaM's `{ atoms: [{ type: "Person", storables }] }`
 
 One Electron instance can host the full main-process backend on the LAN while others connect as thin clients.
 
-**Server** (`remote/server.js`): A `ws` listener on `0.0.0.0` (default port `42069`, see `shared/remote-config.js`). `remote/registry.js` captures every `ipcMain.handle` registration into a lookup map; incoming `{ channel, args }` frames invoke the same handlers locally. `notify()` events (except `remote:server-status`) are rebroadcast to all connected clients. No authentication — trusted-LAN assumption. Version mismatch is rejected unless the peer runs in dev/unlocked-developer mode.
+**Server** (`remote/server.js`): A `ws` listener on `0.0.0.0` (default port `42069`, see `shared/remote-config.js`). `remote/registry.js` captures every `ipcMain.handle` registration into a lookup map; incoming `{ channel, args }` frames invoke the same handlers locally unless denied by `remote/channel-policy.js` (`shell:*`, `remote:*`, `updater:*`, `dev:*`, native browse/detect, Hub session toggles, database-path disclosure). `notify()` events are rebroadcast to all connected clients except machine-local channels (`hub:auth-changed`, `updater:*`). `notifyPeers()` skips the invoking renderer or WebSocket when the actor is already current. No authentication — trusted-LAN assumption. Version mismatch is rejected unless the peer runs in dev/unlocked-developer mode.
 
-**Client** (`preload/remote-transport.js`): When launched with `--connect=<ws://host:port>`, all `window.api.*` invokes become WebSocket RPC; event subscriptions receive rebroadcast payloads. `remote:*` control channels and `hub:isLoggedIn` still use local IPC (session partition stays on the client machine).
+**Client** (`preload/remote-transport.js`): When launched with `--connect=<ws://host:port>`, all `window.api.*` invokes become WebSocket RPC; event subscriptions receive rebroadcast payloads. `remote:*`, `shell:openExternal`, updater, and Hub session channels still use local IPC (or stubs); the server denylist is the backstop against raw peers bypassing that routing.
 
 **Settings UX**: Enable remote mode, optional serve-on-launch, pick port, copy `ws://<ip>:<port>`. Connecting/disconnecting relaunches the app with/without `--connect=` (hot-switching transport mid-session is intentionally not supported). Client autoconnect URL is stored in a standalone file (`remote/autostart.js`) because a pure client head may have no DB yet.
 

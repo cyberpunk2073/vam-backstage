@@ -3,6 +3,7 @@ import { app } from 'electron'
 import { encode, decode } from '@shared/net-codec.js'
 import { DEFAULT_REMOTE_PORT } from '@shared/remote-config.js'
 import { getHandler } from './registry.js'
+import { CLIENT_LOCAL_EVENTS, isRemoteChannelDenied } from './channel-policy.js'
 import { getWindow } from '../notify.js'
 import { getSetting } from '../db.js'
 
@@ -21,12 +22,9 @@ function isDevMode() {
 /**
  * LAN WebSocket bridge that re-exposes the captured ipcMain handlers (see
  * registry.js) as RPC, and rebroadcasts `notify()` events to every connected
- * client. Single-user / trusted-LAN: no auth, binds 0.0.0.0.
+ * client. Single-user / trusted-LAN: no auth, binds 0.0.0.0. Machine-local
+ * channels are denied at dispatch (see channel-policy.js).
  */
-
-// Handlers destructure their first arg (`_`, the IpcMainInvokeEvent) and never
-// use it, so a null-sender stub is enough for remote dispatch.
-const stubEvent = { sender: null }
 
 let wss = null
 let currentPort = null
@@ -102,12 +100,14 @@ export async function stopServer() {
   emitStatus()
 }
 
-// Events tied to handlers the client runs locally must not be fanned out from
-// the server.
-const CLIENT_LOCAL_EVENTS = new Set(['hub:auth-changed'])
-
-/** Fan a `notify()` event out to every connected client. */
-export function broadcast(channel, data) {
+/**
+ * Fan a `notify()` event out to connected clients.
+ * @param {string} channel
+ * @param {*} data
+ * @param {{ except?: import('ws').WebSocket | null }} [opts] — skip one socket
+ *   (the remote peer that already applied the mutation via RPC).
+ */
+export function broadcast(channel, data, { except = null } = {}) {
   if (!wss || clients.size === 0 || CLIENT_LOCAL_EVENTS.has(channel)) return
   let frame
   try {
@@ -117,6 +117,7 @@ export function broadcast(channel, data) {
     return
   }
   for (const ws of clients) {
+    if (except && ws === except) continue
     if (ws.readyState === ws.OPEN) {
       try {
         ws.send(frame)
@@ -143,15 +144,27 @@ async function handleMessage(ws, raw) {
   if (!msg || msg.t !== 'rpc') return
 
   const { id, channel, args } = msg
+  if (isRemoteChannelDenied(channel)) {
+    send(ws, {
+      t: 'err',
+      id,
+      error: { name: 'Error', message: `Remote channel not allowed: "${channel}"` },
+    })
+    return
+  }
+
   const handler = getHandler(channel)
   if (!handler) {
     send(ws, { t: 'err', id, error: { name: 'Error', message: `No remote handler for "${channel}"` } })
     return
   }
 
+  // Handlers ignore the Electron IpcMainInvokeEvent; we only attach `remoteWs`
+  // so `notifyPeers()` can exclude this socket from the fan-out.
+  const event = { sender: null, remoteWs: ws }
   let result
   try {
-    result = await handler(stubEvent, ...(args || []))
+    result = await handler(event, ...(args || []))
   } catch (err) {
     sendError(ws, id, err)
     return

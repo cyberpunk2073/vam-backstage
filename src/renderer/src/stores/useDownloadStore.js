@@ -58,6 +58,9 @@ export const useDownloadStore = create((set, get) => ({
     window.api.onDownloadsUpdated(() => {
       get().fetchItems()
     })
+    window.api.onDownloadsPauseChanged((paused) => {
+      set({ paused: !!paused })
+    })
 
     window.api.onDownloadProgress((data) => {
       set((state) => ({

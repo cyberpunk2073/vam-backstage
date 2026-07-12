@@ -248,11 +248,14 @@ export default function HubView({ onNavigate }) {
   useEffect(() => {
     if (wishlistMode) useWishlistStore.getState().load()
   }, [wishlistMode])
-  // Main fires `wishlist:updated` on background snapshot/unavailability changes;
-  // re-list so the gallery stays live without a manual refresh.
+  // Main fires `wishlist:updated` for background snapshot changes and peer
+  // pin/unpin. Keep the old local behavior for bare events; only peer membership
+  // invalidations refresh ids when the full wishlist has never been loaded.
   useEffect(() => {
-    return window.api.onWishlistUpdated(() => {
-      if (useWishlistStore.getState().loaded) useWishlistStore.getState().load()
+    return window.api.onWishlistUpdated((data) => {
+      const s = useWishlistStore.getState()
+      if (s.loaded) s.load()
+      else if (data?.membership) s.loadIds()
     })
   }, [])
 

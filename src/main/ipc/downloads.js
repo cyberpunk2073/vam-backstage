@@ -12,6 +12,7 @@ import {
   cancelAll,
   onNetworkOnline,
 } from '../downloads/manager.js'
+import { notifyPeers } from '../notify.js'
 
 export function registerDownloadHandlers() {
   ipcMain.handle('downloads:list', () => {
@@ -47,18 +48,21 @@ export function registerDownloadHandlers() {
     return isPaused()
   })
 
-  ipcMain.handle('downloads:pause-all', () => {
+  ipcMain.handle('downloads:pause-all', (event) => {
     pauseAll()
+    notifyPeers(event, 'downloads:pause-changed', true)
     return { ok: true }
   })
 
-  ipcMain.handle('downloads:resume-all', () => {
+  ipcMain.handle('downloads:resume-all', (event) => {
     resumeAll()
+    notifyPeers(event, 'downloads:pause-changed', false)
     return { ok: true }
   })
 
-  ipcMain.handle('downloads:cancel-all', async () => {
+  ipcMain.handle('downloads:cancel-all', async (event) => {
     await cancelAll()
+    notifyPeers(event, 'downloads:pause-changed', false)
     return { ok: true }
   })
 

@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { addWishlistItem, removeWishlistItem, getAllWishlistItems, getWishlistIds } from '../db.js'
 import { annotateInstallState } from '../store.js'
 import { prefetchHubResThumbnail } from '../thumbnails.js'
+import { notifyPeers } from '../notify.js'
 
 /**
  * Parse a stored snapshot and re-attach runtime annotations: shared install
@@ -33,17 +34,21 @@ export function registerWishlistHandlers() {
 
   // `snapshot` is the renderer's fully-annotated detail object; addWishlistItem
   // strips the `_`-prefixed annotations before persisting (see db.js).
-  ipcMain.handle('wishlist:add', async (_, resourceId, snapshot) => {
+  // Peer-only notify: the actor already updated optimistic ids + will `load()`
+  // after this RPC; other clients need the invalidation to refresh pins/count.
+  ipcMain.handle('wishlist:add', async (event, resourceId, snapshot) => {
     addWishlistItem(resourceId, snapshot)
     // Cache the thumbnail now, before the resource can vanish from the Hub.
     // Fire-and-forget: the gallery reads it later from disk via `hub-icon:` keys.
     void prefetchHubResThumbnail(resourceId, snapshot?.image_url)
+    notifyPeers(event, 'wishlist:updated', { membership: true })
     // TODO (future): a bounded background trickle could refresh visible wishlist
     // snapshots older than N days (concurrency 1–2) when the wishlist opens.
     // Deliberately out of scope for v1 — refresh piggybacks on detail opens.
   })
 
-  ipcMain.handle('wishlist:remove', async (_, resourceId) => {
+  ipcMain.handle('wishlist:remove', async (event, resourceId) => {
     removeWishlistItem(resourceId)
+    notifyPeers(event, 'wishlist:updated', { membership: true })
   })
 }

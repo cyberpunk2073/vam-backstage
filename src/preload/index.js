@@ -184,10 +184,11 @@ const api = {
   on: (channel, callback) => transport.on(channel, callback),
   // Convenience: well-known event channels
   onPackagesUpdated: (cb) => transport.on('packages:updated', () => cb()),
-  onWishlistUpdated: (cb) => transport.on('wishlist:updated', () => cb()),
+  onWishlistUpdated: (cb) => transport.on('wishlist:updated', (data) => cb(data)),
   onContentsUpdated: (cb) => transport.on('contents:updated', () => cb()),
   onLabelsUpdated: (cb) => transport.on('labels:updated', () => cb()),
   onDownloadsUpdated: (cb) => transport.on('downloads:updated', () => cb()),
+  onDownloadsPauseChanged: (cb) => transport.on('downloads:pause-changed', (paused) => cb(paused)),
   onDownloadProgress: (cb) => transport.on('download:progress', (data) => cb(data)),
   onDownloadFailed: (cb) => transport.on('download:failed', (data) => cb(data)),
   onInstallLookNoPreset: (cb) => transport.on('install:look-no-preset', (data) => cb(data)),
