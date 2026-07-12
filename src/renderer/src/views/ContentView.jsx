@@ -36,7 +36,7 @@ import {
 } from '@/lib/utils'
 import { toastIfBulkToggleFailures, toastIfSingleToggleFailed } from '@/lib/packageStorageToggleResults'
 import { useThumbnail } from '@/hooks/createBlobCacheHook'
-import { useContentStore } from '@/stores/useContentStore'
+import { useContentStore, FILTER_DEFAULTS } from '@/stores/useContentStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
 import { useLabelsStore } from '@/stores/useLabelsStore'
 import { AuthorAvatar, AuthorLink, ContentCard, ContentTableRow } from '@/components/PackageCard'
@@ -48,7 +48,7 @@ import { useAddLabel } from '@/components/labels/useAddLabel'
 import { useLabelObjects } from '@/components/labels/useLabelObjects'
 import { bulkStateMap } from '@/components/labels/labelHelpers'
 import { ContentCategory, buildContentGallery } from '@/components/ContentCategory'
-import FilterPanel from '@/components/FilterPanel'
+import FilterPanel, { sectionActive } from '@/components/FilterPanel'
 import { SearchOnHubButton } from '@/components/SearchOnHubButton'
 import ResizeHandle from '@/components/ResizeHandle'
 import { VirtualGrid, VirtualList } from '@/components/VirtualGrid'
@@ -209,6 +209,7 @@ export default function ContentView({ onNavigate, navContext }) {
     setVisibilityFilter,
     setPrimarySort,
     setSecondarySort,
+    resetFilters,
     setViewMode,
     cardWidth,
     setCardWidth,
@@ -523,6 +524,7 @@ export default function ContentView({ onNavigate, navContext }) {
         label: 'Type',
         type: 'tags',
         value: new Set(selectedTypes),
+        default: FILTER_DEFAULTS.selectedTypes,
         onChange: selectSingleType,
         onToggle: toggleType,
         items: [
@@ -543,6 +545,7 @@ export default function ContentView({ onNavigate, navContext }) {
         collapsedByDefault: true,
         onCollapsedChange: resetPackageTypeFilter,
         value: new Set(selectedPackageTypes),
+        default: FILTER_DEFAULTS.selectedPackageTypes,
         onChange: selectSinglePackageType,
         onToggle: togglePackageType,
         items: [
@@ -560,6 +563,7 @@ export default function ContentView({ onNavigate, navContext }) {
         label: 'Visibility',
         type: 'list',
         value: visibilityFilter,
+        default: FILTER_DEFAULTS.visibilityFilter,
         onChange: setVisibilityFilter,
         items: [
           { value: 'all', label: 'All', count: visibilityCounts.all },
@@ -573,6 +577,7 @@ export default function ContentView({ onNavigate, navContext }) {
         label: 'Package status',
         type: 'list',
         value: packageStatusFilter,
+        default: FILTER_DEFAULTS.packageStatusFilter,
         onChange: setPackageStatusFilter,
         items: [
           { value: 'all', label: 'All', count: packageStatusCounts.all },
@@ -585,6 +590,7 @@ export default function ContentView({ onNavigate, navContext }) {
         label: 'Package',
         type: 'select',
         value: packageFilter,
+        default: FILTER_DEFAULTS.packageFilter,
         onChange: setPackageFilter,
         options: [
           { value: 'all', label: 'All', count: packageFilterCounts.all },
@@ -600,6 +606,7 @@ export default function ContentView({ onNavigate, navContext }) {
               label: 'Labels',
               type: 'labels-autocomplete',
               value: selectedLabelIds,
+              default: FILTER_DEFAULTS.selectedLabelIds,
               onChange: setSelectedLabelIds,
               labels,
               placeholder: 'Filter by label…',
@@ -612,6 +619,7 @@ export default function ContentView({ onNavigate, navContext }) {
         label: 'Tags',
         type: 'tags-autocomplete',
         value: selectedTags,
+        default: FILTER_DEFAULTS.selectedTags,
         onChange: setSelectedTags,
         suggestions: tagCounts,
         placeholder: 'Filter by tags…',
@@ -622,6 +630,7 @@ export default function ContentView({ onNavigate, navContext }) {
         label: 'Author',
         type: 'text-autocomplete',
         value: authorSearch,
+        default: FILTER_DEFAULTS.authorSearch,
         onChange: setAuthorSearch,
         excluded: excludedAuthors,
         onExcludedChange: setExcludedAuthors,
@@ -683,6 +692,8 @@ export default function ContentView({ onNavigate, navContext }) {
       onNavigate,
     ],
   )
+
+  const activeFilterCount = sections.filter((s) => sectionActive(s) === true).length
 
   const handleToggleHidden = useCallback(async (item) => {
     try {
@@ -1119,6 +1130,26 @@ export default function ContentView({ onNavigate, navContext }) {
         ) : (
           <div className="h-10 flex flex-nowrap items-center px-4 border-b border-border shrink-0 gap-2 min-w-0 overflow-x-auto [&::-webkit-scrollbar]:h-0 [&::-webkit-scrollbar]:bg-transparent">
             <span className="shrink-0 whitespace-nowrap text-[11px] text-text-tertiary">{filtered.length} items</span>
+            {activeFilterCount > 0 && (
+              <span className="shrink-0 flex items-center gap-1.5 whitespace-nowrap text-[11px] text-text-tertiary">
+                <span aria-hidden="true">·</span>
+                <span>
+                  {activeFilterCount} {activeFilterCount === 1 ? 'filter' : 'filters'}
+                </span>
+                <span>
+                  (
+                  <button
+                    type="button"
+                    onClick={() => resetFilters()}
+                    title="Reset all filters to their defaults"
+                    className="text-text-tertiary hover:text-text-secondary transition-colors cursor-pointer"
+                  >
+                    Reset
+                  </button>
+                  )
+                </span>
+              </span>
+            )}
             <div className="flex-1 min-w-0" />
             <div className="flex shrink-0 flex-nowrap items-center gap-2">
               {viewMode !== 'table' && (

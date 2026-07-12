@@ -23,6 +23,31 @@ export function hubFilterSignature(state) {
   ].join('\u0000')
 }
 
+/** Hub-search filter defaults (server-side query). `sort` is excluded — its default is
+ *  resolved dynamically from the server's option list, and reordering doesn't hide content. */
+export const HUB_FILTER_DEFAULTS = {
+  search: '',
+  selectedType: 'All',
+  paidFilter: 'all',
+  authorSearch: '',
+  /** Hub tag filter — joined with comma for `getResources` */
+  selectedHubTags: [],
+  license: 'Any',
+}
+
+/** Wishlist gallery filter defaults — client-side only (the wishlist is a local list,
+ *  never a hub query), independent from the hub-search filters above so the two modes
+ *  never clobber each other. `wlSort` is excluded like `sort`. */
+export const WISHLIST_FILTER_DEFAULTS = {
+  wlSearch: '',
+  wlType: 'All',
+  wlTags: [],
+  wlPaid: 'all',
+  wlAuthor: '',
+  wlExcludedAuthors: [],
+  wlLicense: 'Any',
+}
+
 let fetchSeq = 0
 
 function syncInstalledFromResources(resources) {
@@ -69,26 +94,12 @@ export const useHubStore = create(
       // reset+fetch on reveal. Not persisted (nor are resources), so launch refetches.
       lastFetchedKey: null,
 
-      search: '',
-      selectedType: 'All',
-      paidFilter: 'all',
-      authorSearch: '',
-      /** Hub tag filter — joined with comma for `getResources` */
-      selectedHubTags: [],
+      ...HUB_FILTER_DEFAULTS,
       sort: '',
-      license: 'Any',
 
-      // Wishlist gallery filters/sort — client-side only (the wishlist is a local
-      // list, never a hub query), independent from the hub search filters above so
-      // the two modes never clobber each other. `wlSort` values are the local sort
-      // keys defined in HubView (WISHLIST_SORTS); default 'added' = created_at DESC.
-      wlSearch: '',
-      wlType: 'All',
-      wlTags: [],
-      wlPaid: 'all',
-      wlAuthor: '',
-      wlExcludedAuthors: [],
-      wlLicense: 'Any',
+      // `wlSort` values are the local sort keys defined in HubView (WISHLIST_SORTS);
+      // default 'added' = created_at DESC.
+      ...WISHLIST_FILTER_DEFAULTS,
       wlSort: 'added',
 
       detailResource: null,
@@ -301,17 +312,13 @@ export const useHubStore = create(
       resetFilters: () => {
         const sortOptions = get().filterOptions?.sort
         const nextSort = sortOptions?.[0] || ''
-        set({
-          search: '',
-          selectedType: 'All',
-          paidFilter: 'all',
-          authorSearch: '',
-          selectedHubTags: [],
-          sort: nextSort,
-          license: 'Any',
-          page: 1,
-        })
+        set({ ...HUB_FILTER_DEFAULTS, sort: nextSort, page: 1 })
       },
+
+      /** Reset the client-side wishlist filters (incl. search) to defaults. Separate from
+       *  `resetFilters` (hub search) since the two modes never share filter state; `wlSort`
+       *  is left as-is — reordering doesn't hide content. */
+      resetWishlistFilters: () => set({ ...WISHLIST_FILTER_DEFAULTS }),
 
       // Jump to a Hub search scoped to one author. Only sets the author and
       // switches to hub mode — the other hub filters are left as-is (the wishlist

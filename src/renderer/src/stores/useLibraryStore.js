@@ -86,6 +86,21 @@ async function _enrichUpdateCheck(nonce, set, get) {
   }
 }
 
+/** Single source of truth for the content-narrowing filter defaults: spread into the
+ *  store's initial state and reused by `resetFilters`. Sort order and view/layout prefs
+ *  live outside this — they don't hide content. Mirrors `useContentStore`. */
+export const FILTER_DEFAULTS = {
+  search: '',
+  authorSearch: '',
+  excludedAuthors: [],
+  statusFilter: 'direct',
+  enabledFilter: 'all',
+  selectedTypes: [],
+  selectedTags: [],
+  selectedLabelIds: [],
+  license: 'Any',
+}
+
 export const useLibraryStore = create(
   persist(
     (set, get) => ({
@@ -98,17 +113,10 @@ export const useLibraryStore = create(
       bulkSelectedFilenames: [],
       bulkAnchorFilename: null,
 
-      search: '',
-      authorSearch: '',
-      excludedAuthors: [],
-      statusFilter: 'direct',
-      enabledFilter: 'all',
+      ...FILTER_DEFAULTS,
       ...typeFilterSlice(set, get),
-      selectedTags: [],
-      selectedLabelIds: [],
       primarySort: 'Type',
       secondarySort: 'Recently installed',
-      license: 'Any',
       viewMode: 'grid',
       cardWidth: 220,
       compactCards: false,
@@ -135,6 +143,10 @@ export const useLibraryStore = create(
       /** Active intent of an in-flight bulk `packages.setEnabled` IPC, or null when idle.
        *  Captured at the start so the toolbar label/icon don't flip as packages flip mid-batch. */
       bulkToggleIntent: null,
+
+      /** Reset the content-narrowing filters (incl. search) to their shipped defaults.
+       *  Sort order and view/layout prefs are intentionally left untouched. */
+      resetFilters: () => set({ ...FILTER_DEFAULTS }),
 
       setSearch: (search) => set({ search }),
       setAuthorSearch: (authorSearch) => set({ authorSearch }),

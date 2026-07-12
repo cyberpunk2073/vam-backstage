@@ -30,7 +30,7 @@ function linkContents(rows, pkgMap) {
   return out
 }
 
-const FILTER_DEFAULTS = {
+export const FILTER_DEFAULTS = {
   search: '',
   authorSearch: '',
   excludedAuthors: [],

@@ -2,13 +2,13 @@ import { useState, useEffect, useCallback, useRef, useMemo, Activity } from 'rea
 import { Grid2x2, Grid3x3, Loader2, RefreshCw, Pin } from 'lucide-react'
 import { dismissTransientOverlays } from '@/lib/dismissOverlays'
 import { CONTENT_TYPES, compareContentTypes, getTypeColor } from '@/lib/utils'
-import { useHubStore, hubFilterSignature } from '@/stores/useHubStore'
+import { useHubStore, hubFilterSignature, HUB_FILTER_DEFAULTS, WISHLIST_FILTER_DEFAULTS } from '@/stores/useHubStore'
 import { useWishlistStore } from '@/stores/useWishlistStore'
 import { useDownloadStore } from '@/stores/useDownloadStore'
 import { useInstalledStore } from '@/stores/useInstalledStore'
 import { HubCard } from '@/components/PackageCard'
 import HubDetail from '@/components/HubDetail'
-import FilterPanel from '@/components/FilterPanel'
+import FilterPanel, { sectionActive } from '@/components/FilterPanel'
 import { LICENSE_FILTER_OPTIONS, getHubResourceLicense } from '@/lib/licenses'
 import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
 import { wishlistSearchExtras } from '@/lib/search-text'
@@ -163,6 +163,8 @@ export default function HubView({ onNavigate }) {
     setWlExcludedAuthors,
     setWlLicense,
     setWlSort,
+    resetFilters,
+    resetWishlistFilters,
     setCardMode,
     setCardWidth,
     fetchResources,
@@ -515,6 +517,7 @@ export default function HubView({ onNavigate }) {
         label: 'Type',
         type: 'list',
         value: selectedType,
+        default: HUB_FILTER_DEFAULTS.selectedType,
         onChange: setSelectedType,
         items: [
           { value: 'All', label: 'All' },
@@ -526,6 +529,7 @@ export default function HubView({ onNavigate }) {
         label: 'Pricing',
         type: 'list',
         value: paidFilter,
+        default: HUB_FILTER_DEFAULTS.paidFilter,
         onChange: setPaidFilter,
         items: [
           { value: 'all', label: 'All' },
@@ -538,6 +542,7 @@ export default function HubView({ onNavigate }) {
         label: 'Tags',
         type: 'tags-autocomplete',
         value: selectedHubTags,
+        default: HUB_FILTER_DEFAULTS.selectedHubTags,
         onChange: setSelectedHubTags,
         suggestions: tagSuggestions,
         placeholder: 'Filter by tags…',
@@ -547,6 +552,7 @@ export default function HubView({ onNavigate }) {
         label: 'Author',
         type: 'text-autocomplete',
         value: authorSearch,
+        default: HUB_FILTER_DEFAULTS.authorSearch,
         onChange: setAuthorSearch,
         suggestions: userSuggestions,
         placeholder: 'Filter by author…',
@@ -556,6 +562,7 @@ export default function HubView({ onNavigate }) {
         label: 'License',
         type: 'select',
         value: license,
+        default: HUB_FILTER_DEFAULTS.license,
         onChange: setLicense,
         options: LICENSE_FILTER_OPTIONS,
       },
@@ -649,6 +656,7 @@ export default function HubView({ onNavigate }) {
         label: 'Type',
         type: 'list',
         value: wlType,
+        default: WISHLIST_FILTER_DEFAULTS.wlType,
         onChange: setWlType,
         items: wishlistFacets.typeItems,
       },
@@ -657,6 +665,7 @@ export default function HubView({ onNavigate }) {
         label: 'Pricing',
         type: 'list',
         value: wlPaid,
+        default: WISHLIST_FILTER_DEFAULTS.wlPaid,
         onChange: setWlPaid,
         items: wishlistFacets.paidItems,
       },
@@ -665,6 +674,7 @@ export default function HubView({ onNavigate }) {
         label: 'Tags',
         type: 'tags-autocomplete',
         value: wlTags,
+        default: WISHLIST_FILTER_DEFAULTS.wlTags,
         onChange: setWlTags,
         suggestions: wishlistFacets.tagCounts,
         placeholder: 'Filter by tags…',
@@ -675,6 +685,7 @@ export default function HubView({ onNavigate }) {
         label: 'Author',
         type: 'text-autocomplete',
         value: wlAuthor,
+        default: WISHLIST_FILTER_DEFAULTS.wlAuthor,
         onChange: setWlAuthor,
         excluded: wlExcludedAuthors,
         onExcludedChange: setWlExcludedAuthors,
@@ -687,6 +698,7 @@ export default function HubView({ onNavigate }) {
         label: 'License',
         type: 'select',
         value: wlLicense,
+        default: WISHLIST_FILTER_DEFAULTS.wlLicense,
         onChange: setWlLicense,
         options: LICENSE_FILTER_OPTIONS,
       },
@@ -710,6 +722,9 @@ export default function HubView({ onNavigate }) {
       setWlSort,
     ],
   )
+
+  const activeSections = wishlistMode ? wishlistSections : sections
+  const activeFilterCount = activeSections.filter((s) => sectionActive(s) === true).length
 
   const refreshBusy = loading && resources.length === 0
 
@@ -765,6 +780,26 @@ export default function HubView({ onNavigate }) {
                 ? 'Searching…'
                 : `${totalFound.toLocaleString()} packages`}
           </span>
+          {activeFilterCount > 0 && (
+            <span className="shrink-0 flex items-center gap-1.5 whitespace-nowrap text-[11px] text-text-tertiary">
+              <span aria-hidden="true">·</span>
+              <span>
+                {activeFilterCount} {activeFilterCount === 1 ? 'filter' : 'filters'}
+              </span>
+              <span>
+                (
+                <button
+                  type="button"
+                  onClick={() => (wishlistMode ? resetWishlistFilters() : resetFilters())}
+                  title="Reset all filters to their defaults"
+                  className="text-text-tertiary hover:text-text-secondary transition-colors cursor-pointer"
+                >
+                  Reset
+                </button>
+                )
+              </span>
+            </span>
+          )}
           {/* Network-backed hub search gets a cache-busting refresh; the wishlist
               is local + live, so it needs none. */}
           {!wishlistMode && (

@@ -64,11 +64,11 @@ import { LabelApplyPopover } from '@/components/labels/LabelApplyPopover'
 import { bulkStateMap } from '@/components/labels/labelHelpers'
 import { Tag } from 'lucide-react'
 import { useThumbnail } from '@/hooks/createBlobCacheHook'
-import { useLibraryStore } from '@/stores/useLibraryStore'
+import { useLibraryStore, FILTER_DEFAULTS } from '@/stores/useLibraryStore'
 import { useLabelsStore } from '@/stores/useLabelsStore'
 import { useContentStore } from '@/stores/useContentStore'
 import { useDownloadStore } from '@/stores/useDownloadStore'
-import FilterPanel from '@/components/FilterPanel'
+import FilterPanel, { sectionActive } from '@/components/FilterPanel'
 import { SearchOnHubButton } from '@/components/SearchOnHubButton'
 import ResizeHandle from '@/components/ResizeHandle'
 import { LibraryCard, LibraryTableRow, DepRow, AuthorAvatar, AuthorLink } from '@/components/PackageCard'
@@ -200,6 +200,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     setPrimarySort,
     setSecondarySort,
     setLicense,
+    resetFilters,
     setViewMode,
     setCardWidth,
     setCompactCards,
@@ -419,6 +420,7 @@ export default function LibraryView({ onNavigate, navContext }) {
         label: 'Status',
         type: 'list',
         value: statusFilter,
+        default: FILTER_DEFAULTS.statusFilter,
         onChange: setStatusFilter,
         listCollapsible: false,
         items: [
@@ -462,6 +464,7 @@ export default function LibraryView({ onNavigate, navContext }) {
         label: 'Type',
         type: 'tags',
         value: new Set(selectedTypes),
+        default: FILTER_DEFAULTS.selectedTypes,
         onChange: selectSingleType,
         onToggle: toggleType,
         items: [
@@ -488,6 +491,7 @@ export default function LibraryView({ onNavigate, navContext }) {
         label: 'Enabled',
         type: 'list',
         value: enabledFilter,
+        default: FILTER_DEFAULTS.enabledFilter,
         onChange: setEnabledFilter,
         listCollapsible: false,
         items: [
@@ -504,6 +508,7 @@ export default function LibraryView({ onNavigate, navContext }) {
               label: 'Labels',
               type: 'labels-autocomplete',
               value: selectedLabelIds,
+              default: FILTER_DEFAULTS.selectedLabelIds,
               onChange: setSelectedLabelIds,
               labels,
               placeholder: 'Filter by label…',
@@ -516,6 +521,7 @@ export default function LibraryView({ onNavigate, navContext }) {
         label: 'Tags',
         type: 'tags-autocomplete',
         value: selectedTags,
+        default: FILTER_DEFAULTS.selectedTags,
         onChange: setSelectedTags,
         suggestions: tagCounts,
         placeholder: 'Filter by tags…',
@@ -526,6 +532,7 @@ export default function LibraryView({ onNavigate, navContext }) {
         label: 'Author',
         type: 'text-autocomplete',
         value: authorSearch,
+        default: FILTER_DEFAULTS.authorSearch,
         onChange: setAuthorSearch,
         excluded: excludedAuthors,
         onExcludedChange: setExcludedAuthors,
@@ -538,6 +545,7 @@ export default function LibraryView({ onNavigate, navContext }) {
         label: 'License',
         type: 'select',
         value: license,
+        default: FILTER_DEFAULTS.license,
         onChange: setLicense,
         options: LICENSE_FILTER_OPTIONS,
       },
@@ -593,6 +601,8 @@ export default function LibraryView({ onNavigate, navContext }) {
       onNavigate,
     ],
   )
+
+  const activeFilterCount = sections.filter((s) => sectionActive(s) === true).length
 
   const orderedLibraryFilenames = useMemo(() => filtered.map((p) => p.filename), [filtered])
   const bulkActive = bulkSelectedFilenames.length > 0
@@ -1022,6 +1032,26 @@ export default function LibraryView({ onNavigate, navContext }) {
                   ? `${updateCheckLoading ? '…' : '?'} packages`
                   : `${filtered.length} packages`}
             </span>
+            {activeFilterCount > 0 && (
+              <span className="shrink-0 flex items-center gap-1.5 whitespace-nowrap text-[11px] text-text-tertiary">
+                <span aria-hidden="true">·</span>
+                <span>
+                  {activeFilterCount} {activeFilterCount === 1 ? 'filter' : 'filters'}
+                </span>
+                <span>
+                  (
+                  <button
+                    type="button"
+                    onClick={() => resetFilters()}
+                    title="Reset all filters to their defaults"
+                    className="text-text-tertiary hover:text-text-secondary transition-colors cursor-pointer"
+                  >
+                    Reset
+                  </button>
+                  )
+                </span>
+              </span>
+            )}
             <div className="flex-1 min-w-0" />
             {statusFilter !== 'missing' && (
               <div className="flex shrink-0 flex-nowrap items-center gap-2">
