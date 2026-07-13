@@ -137,6 +137,7 @@ const DOMAIN_NAMES = {
   'booth.pm': 'Booth',
   'ko-fi.com': 'Ko-fi',
   'subscribestar.adult': 'SubscribeStar',
+  'github.com': 'GitHub',
 }
 
 export function extractDomainLabel(url) {
