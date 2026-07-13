@@ -1207,16 +1207,17 @@ function stringifyWishlistSnapshot(snapshot) {
 }
 
 /** Add or replace a wishlist item, refreshing its snapshot and clearing any prior unavailability. */
-export function addWishlistItem(resourceId, snapshot) {
+export function addWishlistItem(resourceId, snapshot, { createdAt } = {}) {
   const rid = toIntString(resourceId)
   if (rid === null) return
+  const created = createdAt != null ? Number(createdAt) : null
   stmt(`INSERT INTO hub_wishlist (resource_id, snapshot_json, created_at, snapshot_at)
-    VALUES (?, ?, unixepoch(), unixepoch())
+    VALUES (?, ?, COALESCE(?, unixepoch()), unixepoch())
     ON CONFLICT(resource_id) DO UPDATE SET
       snapshot_json = excluded.snapshot_json,
       snapshot_at = excluded.snapshot_at,
       unavailable_at = NULL
-  `).run(rid, stringifyWishlistSnapshot(snapshot))
+  `).run(rid, stringifyWishlistSnapshot(snapshot), created)
 }
 
 export function removeWishlistItem(resourceId) {

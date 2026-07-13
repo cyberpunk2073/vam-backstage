@@ -19,6 +19,7 @@ const DENIED_CHANNELS = new Set([
   'hub:toggleBookmark',
   'hub:toggleRate',
   'hub:toggleLike',
+  'wishlist:import-collect',
 ])
 
 /** Events that stay on the host machine and must not cross the WS bridge. */

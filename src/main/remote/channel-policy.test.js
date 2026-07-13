@@ -24,6 +24,7 @@ describe('isRemoteChannelDenied', () => {
     expect(isRemoteChannelDenied('hub:toggleBookmark')).toBe(true)
     expect(isRemoteChannelDenied('hub:toggleRate')).toBe(true)
     expect(isRemoteChannelDenied('hub:toggleLike')).toBe(true)
+    expect(isRemoteChannelDenied('wishlist:import-collect')).toBe(true)
   })
 
   it('allows shared library / hub / wishlist / settings data channels', () => {
@@ -33,6 +34,7 @@ describe('isRemoteChannelDenied', () => {
     expect(isRemoteChannelDenied('wishlist:add')).toBe(false)
     expect(isRemoteChannelDenied('wishlist:remove')).toBe(false)
     expect(isRemoteChannelDenied('wishlist:list')).toBe(false)
+    expect(isRemoteChannelDenied('wishlist:import')).toBe(false)
     expect(isRemoteChannelDenied('downloads:pause-all')).toBe(false)
     expect(isRemoteChannelDenied('hub:search')).toBe(false)
     expect(isRemoteChannelDenied('hub:detail')).toBe(false)

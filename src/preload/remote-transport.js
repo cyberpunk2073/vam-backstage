@@ -32,6 +32,7 @@ const LOCAL_CHANNELS = new Set([
   'hub:toggleBookmark',
   'hub:toggleRate',
   'hub:toggleLike',
+  'wishlist:import-collect',
 ])
 
 // Channels resolved locally without hitting the server. A function value is

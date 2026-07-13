@@ -7,6 +7,9 @@ import {
   CheckCircle,
   AlertTriangle,
   Bug,
+  Bookmark,
+  Heart,
+  Wrench,
   Trash2,
   ShieldCheck,
   Compass,
@@ -56,7 +59,11 @@ export default function SettingsView() {
   const [hubScanProgress, setHubScanProgress] = useState(null)
   const [baSyncing, setBaSyncing] = useState(false)
   const [baSyncResult, setBaSyncResult] = useState(null)
+  const [wishlistImporting, setWishlistImporting] = useState(null)
+  const [wishlistImportProgress, setWishlistImportProgress] = useState(null)
+  const [wishlistImportResult, setWishlistImportResult] = useState(null)
   const [baDirPresent, setBaDirPresent] = useState(false)
+  const [hubLoggedIn, setHubLoggedIn] = useState(false)
   const [appVersion, setAppVersion] = useState('')
   const [updateChannel, setUpdateChannel] = useState('stable')
   const [libDirs, setLibDirs] = useState({ main: '', aux: [] })
@@ -163,6 +170,18 @@ export default function SettingsView() {
       cancelled = true
     }
   }, [vamDir])
+
+  useEffect(() => {
+    let cancelled = false
+    window.api.hub.isLoggedIn().then((v) => {
+      if (!cancelled) setHubLoggedIn(!!v)
+    })
+    const off = window.api.onHubAuthChanged((data) => setHubLoggedIn(!!data?.loggedIn))
+    return () => {
+      cancelled = true
+      off?.()
+    }
+  }, [])
 
   const handleBrowseDir = useCallback(async () => {
     const result = await window.api.wizard.browseVamDir(vamDir || undefined)
@@ -308,6 +327,63 @@ export default function SettingsView() {
       setBaSyncing(false)
     }
   }, [baSyncing, baDirPresent])
+
+  useEffect(() => {
+    if (!wishlistImporting) return
+    return window.api.onWishlistImportProgress((data) => setWishlistImportProgress(data))
+  }, [wishlistImporting])
+
+  const formatWishlistImportProgress = useCallback((data) => {
+    if (!data) return null
+    if (data.phase === 'collect') {
+      if (data.source === 'bookmarks') {
+        return `Scanning Hub bookmarks (page ${data.page}/${data.pageCount}) — ${data.found} found`
+      }
+      if (data.source === 'favorites') {
+        return `Scanning Hub favorites (collection ${data.collectionId}, page ${data.page}/${data.pageCount}) — ${data.found} found`
+      }
+      return null
+    }
+    if (data.phase === 'import') {
+      return `Fetching resource details (${data.current}/${data.total}) — ${data.added} added, ${data.skipped} already wishlisted`
+    }
+    return null
+  }, [])
+
+  const handleImportHubListToWishlist = useCallback(
+    async (source) => {
+      if (wishlistImporting) return
+      setWishlistImporting(source)
+      setWishlistImportProgress(null)
+      setWishlistImportResult(null)
+      try {
+        // Collect on this machine (Hub webview cookies); persist on the host DB.
+        const collected = await window.api.wishlist.importCollect(source)
+        if (!collected?.ok) {
+          setWishlistImportResult({ error: collected?.error || 'Collect failed' })
+          return
+        }
+        const res = await window.api.wishlist.importPersist({
+          source,
+          resourceIds: collected.resourceIds,
+        })
+        if (!res?.ok) {
+          setWishlistImportResult({ error: res?.error || 'Import failed' })
+          return
+        }
+        const msg = `Wishlist import (${source}): ${res.found} on Hub — ${res.added} added, ${res.skipped} already wishlisted${res.failed ? `, ${res.failed} failed` : ''}.`
+        if (res.failed)
+          setWishlistImportResult({ success: msg, warnings: [`${res.failed} resource(s) could not be fetched`] })
+        else setWishlistImportResult({ success: msg })
+      } catch (err) {
+        setWishlistImportResult({ error: err.message })
+      } finally {
+        setWishlistImporting(null)
+        setWishlistImportProgress(null)
+      }
+    },
+    [wishlistImporting],
+  )
 
   const handleOpenApplicationFolder = useCallback(async () => {
     const dbPath = await window.api.settings.getDatabasePath()
@@ -765,9 +841,101 @@ export default function SettingsView() {
           </div>
         </Section>
 
+        {(hubLoggedIn || baDirPresent) && (
+          <Section
+            title="Experimental"
+            icon={FlaskConical}
+            construction
+            description="Early features that may change or be removed. Feedback welcome."
+          >
+            <div className="space-y-4">
+              {hubLoggedIn && (
+                <div className="space-y-3">
+                  <div>
+                    <div className="text-xs text-text-primary font-medium">Import Hub lists to wishlist</div>
+                    <div className="text-[11px] text-text-tertiary mt-0.5">
+                      Reads your Hub favorites or bookmarks and adds them to the local wishlist. Already-wishlisted
+                      items are skipped.
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="lg"
+                        onClick={() => void handleImportHubListToWishlist('favorites')}
+                        disabled={!!wishlistImporting}
+                        className="shrink-0 gap-2 text-xs"
+                      >
+                        {wishlistImporting === 'favorites' ? (
+                          <Loader2 size={14} className="animate-spin shrink-0" />
+                        ) : (
+                          <Heart size={14} className="shrink-0" />
+                        )}
+                        {wishlistImporting === 'favorites' ? 'Importing favorites…' : 'Import favorites to wishlist'}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="lg"
+                        onClick={() => void handleImportHubListToWishlist('bookmarks')}
+                        disabled={!!wishlistImporting}
+                        className="shrink-0 gap-2 text-xs"
+                      >
+                        {wishlistImporting === 'bookmarks' ? (
+                          <Loader2 size={14} className="animate-spin shrink-0" />
+                        ) : (
+                          <Bookmark size={14} className="shrink-0" />
+                        )}
+                        {wishlistImporting === 'bookmarks' ? 'Importing bookmarks…' : 'Import bookmarks to wishlist'}
+                      </Button>
+                    </div>
+                    {wishlistImportProgress && wishlistImporting && (
+                      <div className="text-[11px] text-text-tertiary select-text cursor-text">
+                        {formatWishlistImportProgress(wishlistImportProgress)}
+                      </div>
+                    )}
+                    <ResultBanner result={wishlistImportResult} />
+                  </div>
+                </div>
+              )}
+
+              {baDirPresent && (
+                <div className={`space-y-3 ${hubLoggedIn ? 'border-t border-border pt-4' : ''}`}>
+                  <div>
+                    <div className="text-xs text-text-primary font-medium">Sync with BrowserAssist</div>
+                    <div className="text-[11px] text-text-tertiary mt-0.5">
+                      Write User tags (scene-real / scene-look / scene-other) plus user-defined Labels (own + inherited
+                      from package) into JayJayWon BrowserAssist settings for matching resources in this app&apos;s
+                      library.
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      onClick={handleSyncBrowserAssist}
+                      disabled={baSyncing}
+                      className="shrink-0 gap-2 text-xs"
+                    >
+                      {baSyncing ? (
+                        <Loader2 size={14} className="animate-spin shrink-0" />
+                      ) : (
+                        <RefreshCw size={14} className="shrink-0" />
+                      )}
+                      {baSyncing ? 'Syncing…' : 'Sync with BrowserAssist'}
+                    </Button>
+                    <ResultBanner result={baSyncResult} />
+                  </div>
+                </div>
+              )}
+            </div>
+          </Section>
+        )}
+
         {(remoteEnabled || remoteSectionForced) && (
           <Section
             title="Client-server mode"
+            icon={Network}
             description="Use one library from several devices. Run this app on the PC that stores your library (the host), then point another device on the same network at it to browse and manage that library remotely."
           >
             {isRemoteClient ? (
@@ -923,8 +1091,9 @@ export default function SettingsView() {
         {showDevSection && (
           <Section
             title="Developer"
+            icon={Wrench}
             danger
-            description="Debug logging, BrowserAssist sync, and database tools. In release builds, tap the app version below seven times to show this section."
+            description="Debug logging and database tools. In release builds, tap the app version below seven times to show this section."
           >
             <div className="space-y-4">
               {developerUnlocked && !isDev && (
@@ -982,62 +1151,6 @@ export default function SettingsView() {
                 <Switch checked={hubDebugRequests} onCheckedChange={handleToggleHubDebug} />
               </label>
 
-              <div className="border-t border-border pt-4 space-y-3">
-                <div>
-                  <div className="text-xs text-text-primary font-medium">Sync with BrowserAssist</div>
-                  <div className="text-[11px] text-text-tertiary mt-0.5">
-                    Write User tags (scene-real / scene-look / scene-other) plus user-defined Labels (own + inherited
-                    from package) into JayJayWon BrowserAssist settings for matching resources in this app&apos;s
-                    library.
-                  </div>
-                </div>
-                <Button
-                  variant="outline"
-                  size="lg"
-                  onClick={handleSyncBrowserAssist}
-                  disabled={baSyncing || !baDirPresent}
-                  className="shrink-0 gap-2 text-xs"
-                >
-                  {baSyncing ? (
-                    <Loader2 size={14} className="animate-spin shrink-0" />
-                  ) : (
-                    <RefreshCw size={14} className="shrink-0" />
-                  )}
-                  {baSyncing ? 'Syncing…' : 'Sync with BrowserAssist'}
-                </Button>
-                {baSyncResult && (
-                  <div
-                    className={`flex items-start gap-2 p-3 rounded-lg text-xs ${
-                      baSyncResult.error
-                        ? 'bg-error/10 border border-error/20 text-error'
-                        : baSyncResult.warnings?.length
-                          ? 'bg-warning/10 border border-warning/20 text-warning'
-                          : 'bg-success/10 border border-success/20 text-success'
-                    }`}
-                  >
-                    {baSyncResult.error ? (
-                      <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                    ) : baSyncResult.warnings?.length ? (
-                      <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                    ) : (
-                      <CheckCircle size={14} className="shrink-0 mt-0.5" />
-                    )}
-                    <div className="min-w-0 space-y-1.5">
-                      <span className="select-text cursor-text">{baSyncResult.error || baSyncResult.success}</span>
-                      {baSyncResult.warnings?.length > 0 && (
-                        <ul className="mt-1 space-y-0.5 text-[11px] opacity-90">
-                          {baSyncResult.warnings.map((w, i) => (
-                            <li key={`${i}:${w}`} className="select-text cursor-text">
-                              · {w}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-
               <div className="border-t border-border pt-4">
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
@@ -1093,10 +1206,10 @@ export default function SettingsView() {
   )
 }
 
-function Section({ title, description, danger, children }) {
+function Section({ title, description, danger, construction, icon: Icon, children }) {
   return (
     <div className="rounded-xl border border-border bg-surface overflow-hidden">
-      {danger && (
+      {(danger || construction) && (
         <div
           aria-hidden
           className="h-2"
@@ -1108,10 +1221,42 @@ function Section({ title, description, danger, children }) {
       )}
       <div className="p-4 space-y-3">
         <div>
-          <h2 className="text-sm font-medium text-text-primary">{title}</h2>
-          {description && <p className="text-[11px] mt-0.5 text-text-tertiary">{description}</p>}
+          <h2 className="text-[15px] font-semibold tracking-tight text-text-primary flex items-center gap-2">
+            {Icon && <Icon size={16} className="text-text-tertiary shrink-0" />}
+            {title}
+          </h2>
+          {description && <p className="text-[11px] mt-1 text-text-tertiary">{description}</p>}
         </div>
         {children}
+      </div>
+    </div>
+  )
+}
+
+/** Result callout with error / warning / success tones plus an optional list of warnings. */
+function ResultBanner({ result }) {
+  if (!result) return null
+  const hasWarnings = result.warnings?.length > 0
+  const tone = result.error
+    ? 'bg-error/10 border border-error/20 text-error'
+    : hasWarnings
+      ? 'bg-warning/10 border border-warning/20 text-warning'
+      : 'bg-success/10 border border-success/20 text-success'
+  const Icon = result.error || hasWarnings ? AlertTriangle : CheckCircle
+  return (
+    <div className={`flex items-start gap-2 p-3 rounded-lg text-xs ${tone}`}>
+      <Icon size={14} className="shrink-0 mt-0.5" />
+      <div className="min-w-0 space-y-1.5">
+        <span className="select-text cursor-text">{result.error || result.success}</span>
+        {hasWarnings && (
+          <ul className="mt-1 space-y-0.5 text-[11px] opacity-90">
+            {result.warnings.map((w, i) => (
+              <li key={`${i}:${w}`} className="select-text cursor-text">
+                · {w}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </div>
   )

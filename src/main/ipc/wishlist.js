@@ -3,6 +3,7 @@ import { addWishlistItem, removeWishlistItem, getAllWishlistItems, getWishlistId
 import { annotateInstallState } from '../store.js'
 import { prefetchHubResThumbnail } from '../thumbnails.js'
 import { notifyPeers } from '../notify.js'
+import { collectHubListResourceIds, persistHubListToWishlist } from '../hub/wishlist-import.js'
 
 /**
  * Parse a stored snapshot and re-attach runtime annotations: shared install
@@ -50,5 +51,29 @@ export function registerWishlistHandlers() {
   ipcMain.handle('wishlist:remove', async (event, resourceId) => {
     removeWishlistItem(resourceId)
     notifyPeers(event, 'wishlist:updated', { membership: true })
+  })
+
+  // Collect scrapes Hub list pages via persist:hub cookies — machine-local
+  // (see remote LOCAL_CHANNELS / DENIED_CHANNELS). Persist hydrates details via
+  // the public Hub API and writes the host DB — safe to proxy remotely.
+  ipcMain.handle('wishlist:import-collect', async (_event, source) => {
+    if (source !== 'bookmarks' && source !== 'favorites') return { ok: false, error: 'invalid source' }
+    try {
+      const result = await collectHubListResourceIds(source)
+      return { ok: true, ...result }
+    } catch (err) {
+      return { ok: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle('wishlist:import', async (_event, { source, resourceIds } = {}) => {
+    if (source !== 'bookmarks' && source !== 'favorites') return { ok: false, error: 'invalid source' }
+    if (!Array.isArray(resourceIds)) return { ok: false, error: 'invalid resourceIds' }
+    try {
+      const result = await persistHubListToWishlist(source, resourceIds)
+      return { ok: true, ...result }
+    } catch (err) {
+      return { ok: false, error: err.message }
+    }
   })
 }

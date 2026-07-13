@@ -99,6 +99,8 @@ const api = {
     ids: () => invoke('wishlist:ids'),
     add: (resourceId, snapshot) => invoke('wishlist:add', resourceId, snapshot),
     remove: (resourceId) => invoke('wishlist:remove', resourceId),
+    importCollect: (source) => invoke('wishlist:import-collect', source),
+    importPersist: ({ source, resourceIds }) => invoke('wishlist:import', { source, resourceIds }),
   },
   downloads: {
     list: () => invoke('downloads:list'),
@@ -186,6 +188,7 @@ const api = {
   // Convenience: well-known event channels
   onPackagesUpdated: (cb) => transport.on('packages:updated', () => cb()),
   onWishlistUpdated: (cb) => transport.on('wishlist:updated', (data) => cb(data)),
+  onWishlistImportProgress: (cb) => transport.on('wishlist:import-progress', (data) => cb(data)),
   onContentsUpdated: (cb) => transport.on('contents:updated', () => cb()),
   onLabelsUpdated: (cb) => transport.on('labels:updated', () => cb()),
   onDownloadsUpdated: (cb) => transport.on('downloads:updated', () => cb()),

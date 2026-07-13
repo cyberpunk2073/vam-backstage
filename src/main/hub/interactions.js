@@ -1,7 +1,7 @@
 import { app, net, session } from 'electron'
 import { notify } from '../notify.js'
 
-const HUB_ORIGIN = 'https://hub.virtamate.com'
+export const HUB_ORIGIN = 'https://hub.virtamate.com'
 
 /**
  * Match the User-Agent the persist:hub webview used to authenticate. Cloudflare
@@ -58,7 +58,7 @@ export async function isLoggedIn() {
 }
 
 /** GET a Hub page through persist:hub cookies. Resolves { canonicalUrl, html }. */
-function hubGet(url, { maxRedirects = 5 } = {}) {
+export function hubGet(url, { maxRedirects = 5 } = {}) {
   return new Promise((resolve, reject) => {
     const request = net.request({
       method: 'GET',
@@ -93,11 +93,11 @@ function hubGet(url, { maxRedirects = 5 } = {}) {
   })
 }
 
-/** POST urlencoded body through persist:hub cookies. Resolves parsed JSON. */
-function hubPost(url, bodyParams, { referer }) {
+/** JSON XHR through persist:hub cookies. Resolves parsed JSON. */
+function hubJsonRequest(method, url, { body, referer } = {}) {
   return new Promise((resolve, reject) => {
     const request = net.request({
-      method: 'POST',
+      method,
       url,
       session: getSession(),
       useSessionCookies: true,
@@ -108,7 +108,7 @@ function hubPost(url, bodyParams, { referer }) {
     request.setHeader('X-Requested-With', 'XMLHttpRequest')
     request.setHeader('Origin', HUB_ORIGIN)
     request.setHeader('Referer', referer || HUB_ORIGIN)
-    request.setHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8')
+    if (body != null) request.setHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8')
 
     request.on('response', (response) => {
       const chunks = []
@@ -124,14 +124,73 @@ function hubPost(url, bodyParams, { referer }) {
       response.on('error', reject)
     })
     request.on('error', reject)
-    request.end(encodeBody(bodyParams))
+    if (body != null) request.end(body)
+    else request.end()
   })
+}
+
+/** POST urlencoded body through persist:hub cookies. Resolves parsed JSON. */
+function hubPost(url, bodyParams, { referer }) {
+  return hubJsonRequest('POST', url, { body: encodeBody(bodyParams), referer })
+}
+
+/** GET with XenForo ajax query params; resolves parsed JSON. */
+export function hubXfGet(path, { xfToken, xfRequestUri, params = {}, referer } = {}) {
+  const url = new URL(path, HUB_ORIGIN)
+  url.searchParams.set('_xfWithData', '1')
+  url.searchParams.set('_xfResponseType', 'json')
+  if (xfToken != null) url.searchParams.set('_xfToken', xfToken)
+  url.searchParams.set('_xfRequestUri', xfRequestUri)
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v))
+  return hubJsonRequest('GET', url.toString(), { referer: referer || `${HUB_ORIGIN}${xfRequestUri}` })
 }
 
 function encodeBody(params) {
   return Object.entries(params)
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
     .join('&')
+}
+
+export function parseCsrfToken(html) {
+  const csrf = html.match(/data-csrf=(["'])(.*?)\1/)
+  if (csrf) return csrf[2]
+  const tok = html.match(/name="_xfToken"\s+value="([^"]+)"/)
+  if (tok) return tok[1]
+  const cfg = html.match(/["']csrf["']\s*:\s*["']([^"']+)["']/)
+  if (cfg) return cfg[1]
+  return null
+}
+
+export function parseLoggedInUserId(html) {
+  const m = html.match(/\buserId:\s*(\d+)\s*,/)
+  return m ? m[1] : null
+}
+
+/** Profile slug from account nav, e.g. `boss.23453`. */
+export function parseMemberSlug(html) {
+  const patterns = [
+    /blockLink"\s+href="\/members\/([^"/]+)\/"[^>]*>[\s\S]*?navMenuTitle">(?:Your )?Profile/i,
+    /menu-linkRow[^>]*href="\/members\/([^"/]+)\/#favorites"/i,
+  ]
+  for (const re of patterns) {
+    const m = html.match(re)
+    if (m) return m[1]
+  }
+  return null
+}
+
+/** True if an XenForo json error payload signals a logged-out session. */
+function isXfAuthError(json) {
+  const first = (json?.errors && json.errors[0]) || ''
+  const title = json?.errorHtml?.title || ''
+  return title === 'Log in' || /logged-in/i.test(first) || /logged-in/i.test(title)
+}
+
+export function assertXfOk(json) {
+  if (!json || json.status === 'ok') return
+  const first = (json.errors && json.errors[0]) || json.errorHtml?.title || ''
+  if (isXfAuthError(json)) throw new HubAuthError(first || undefined)
+  throw new Error(first || 'Hub request failed')
 }
 
 /** Scoped regex parse of a resource page — no DOM parser. */
@@ -150,17 +209,7 @@ function parseResourcePage(html, finalUrl) {
     }
   }
 
-  let token = null
-  const csrf = html.match(/data-csrf=(["'])(.*?)\1/)
-  if (csrf) token = csrf[2]
-  if (!token) {
-    const tok = html.match(/name="_xfToken"\s+value="([^"]+)"/)
-    if (tok) token = tok[1]
-  }
-  if (!token) {
-    const cfg = html.match(/["']csrf["']\s*:\s*["']([^"']+)["']/)
-    if (cfg) token = cfg[1]
-  }
+  const token = parseCsrfToken(html)
 
   // User's own favorite/bookmark state comes from the action buttons. Test the
   // state class only inside the element's `class` attribute — the toggle markup
@@ -283,9 +332,8 @@ export async function getResourceUserState(id) {
 /** @returns {'auth'|'security'|'generic'|null} */
 function classifyError(json) {
   if (!json || json.status !== 'error') return null
+  if (isXfAuthError(json)) return 'auth'
   const first = (json.errors && json.errors[0]) || ''
-  const title = json.errorHtml?.title || ''
-  if (title === 'Log in' || /logged-in/i.test(first)) return 'auth'
   if (/security error/i.test(first)) return 'security'
   return 'generic'
 }
