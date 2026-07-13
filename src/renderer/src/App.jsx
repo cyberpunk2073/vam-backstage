@@ -34,6 +34,7 @@ import { useLibraryStore } from '@/stores/useLibraryStore'
 import { useContentStore } from '@/stores/useContentStore'
 import { useLabelsStore } from '@/stores/useLabelsStore'
 import { useViewStore } from '@/stores/useViewStore'
+import { useRemoteUiStore } from '@/stores/useRemoteUiStore'
 
 const NAV_ITEMS = [
   { id: 'hub', icon: Compass, label: 'Hub' },
@@ -43,6 +44,7 @@ const NAV_ITEMS = [
 export default function App() {
   const view = useViewStore((s) => s.view)
   const setView = useViewStore((s) => s.setView)
+  const blurThumbnails = useRemoteUiStore((s) => s.blurThumbnails)
   const [dlPanelOpen, setDlPanelOpen] = useState(false)
   const [showWizard, setShowWizard] = useState(null) // null=checking, true/false
   const [whatsNew, setWhatsNew] = useState(null) // { entries, current } | null
@@ -121,10 +123,11 @@ export default function App() {
     window.api.settings.get('initial_scan_done').then((val) => {
       setShowWizard(!val)
     })
-    window.api.settings.get('blur_thumbnails').then((val) => {
-      document.documentElement.toggleAttribute('data-blur-thumbs', val === '1')
-    })
   }, [])
+
+  useEffect(() => {
+    document.documentElement.toggleAttribute('data-blur-thumbs', blurThumbnails)
+  }, [blurThumbnails])
 
   useEffect(() => {
     if (showWizard === null) return

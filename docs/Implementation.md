@@ -251,7 +251,7 @@ All gradients are computed client-side with no server dependency and serve as th
 
 - **Typography**: Geist Variable font (system sans-serif fallback); `user-select: none` by default for an app-chrome feel.
 - **Scrollbars**: custom 6px — transparent track, `border-bright` thumb, `text-tertiary` on hover, 3px border-radius.
-- **Privacy mode**: when enabled, `html[data-blur-thumbs]` triggers a strong CSS blur filter on all `.thumb` elements.
+- **Privacy mode**: when enabled, `html[data-blur-thumbs]` triggers a strong CSS blur filter on all `.thumb` elements. Preference lives in renderer localStorage (`useRemoteUiStore`) so it stays per-machine (including remote clients) rather than in the host SQLite settings.
 
 ---
 
@@ -510,7 +510,6 @@ CREATE TABLE settings (
 - `auto_hide_foreign_hair` / `auto_hide_foreign_poses` / `auto_hide_foreign_clothing` — `'1'` to auto-manage `.hide` files for content of that category bundled inside packages whose own effective type is _not_ that category (e.g. hide a stray hair shipped inside a clothing pack). Looks/Scenes intentionally have no equivalent — they're commonly bundled as demos. All four auto-hide settings flow through one declarative rule table (`AUTO_HIDE_RULES` in `src/main/scanner/index.js`); each rule contributes a `matches(pkgCtx, content)` predicate. **Targeted-sweep + deference invariant**: a remove sweep for rule X unhides only items rule X claims that are currently hidden AND that no other active rule still claims; an apply sweep for rule X hides only items in rule X's claim that aren't already hidden. Rules can stack freely — overlapping claims (e.g. a hair in a dep clothing pack with both `auto_hide_deps` and `auto_hide_foreign_hair` on) stay hidden until the _last_ rule claiming them is turned off and swept.
 - `hub_debug_requests` — `'1'` to log all Hub API requests
 - `hub_filters_json` — cached Hub filter metadata (types, tags, sort options)
-- `blur_thumbnails` — `'1'` when thumbnail blur (privacy) is enabled
 - `update_channel` — `'stable'` | `'dev'`; selects updater feed (see §23)
 - `disable_behavior` — `'suffix'` (rename to `.var.disabled` in main; default) or `'move-to:<auxDirId>'` (move to the named aux library directory). Removing the referenced aux dir resets this to `'suffix'`.
 - `remote_mode_enabled` — `'1'` when the Settings remote section is enabled (server UI + optional auto-start).
@@ -1034,7 +1033,7 @@ All renderer state is managed by **Zustand** stores (no Redux, no Context provid
 | `useLabelsStore`    | Label definitions + counts         | `labels[]`, `byId`, `fetchLabels()` on `labels:updated`                                                           |
 | `useWishlistStore`  | Local Hub wishlist                 | `items[]`, `ids` Set, `load()` / `toggle()` backed by SQLite snapshots                                            |
 | `useViewStore`      | Active ribbon view (persisted)     | `view`: `'hub'` \| `'library'` \| `'content'` — Settings/Downloads never restored as the launch view              |
-| `useRemoteUiStore`  | Remote-mode UI state (persisted)   | `warningDismissed` for the client-mode security banner                                                            |
+| `useRemoteUiStore`  | Local-only UI state (persisted)    | `warningDismissed` (client-mode security banner); `blurThumbnails` (privacy blur) — both localStorage, not SQLite |
 | `useStatusStore`    | Status bar stats and scan progress | `stats{}`, `scan{}`                                                                                               |
 | `useToastStore`     | Notification toasts                | `toasts[]`, `add()`, `dismiss()`                                                                                  |
 

@@ -3,19 +3,26 @@ import { persist } from 'zustand/middleware'
 import { persistViewState, asBool } from './persistViewState'
 
 /**
- * Ephemeral renderer-only UI state for client-server mode, persisted to
- * localStorage. Just the dismissal of the "no auth / trusted network" warning —
- * low-stakes, and if it resets the user simply sees the caution again.
+ * Ephemeral renderer-only UI state persisted to localStorage. Low-stakes —
+ * if it resets, the user simply sees the caution again / blur off.
  *
- * The durable settings (whether the section is enabled, the serve port, and
- * start-on-launch) stay in SQLite.
+ * - `warningDismissed` — "no auth / trusted network" banner
+ * - `blurThumbnails` — privacy blur for thumbnails (per-machine, incl. remote clients)
+ *
+ * Durable settings (remote section enabled, serve port, start-on-launch) stay
+ * in SQLite.
  */
 export const useRemoteUiStore = create(
   persist(
     (set) => ({
       warningDismissed: false,
       dismissWarning: () => set({ warningDismissed: true }),
+      blurThumbnails: false,
+      setBlurThumbnails: (blurThumbnails) => set({ blurThumbnails }),
     }),
-    persistViewState('remote-ui', { warningDismissed: asBool }),
+    persistViewState('remote-ui', {
+      warningDismissed: asBool,
+      blurThumbnails: asBool,
+    }),
   ),
 )

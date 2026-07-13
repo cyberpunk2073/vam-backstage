@@ -46,7 +46,8 @@ import {
 
 export default function SettingsView() {
   const [vamDir, setVamDir] = useState('')
-  const [blurThumbnails, setBlurThumbnails] = useState(false)
+  const blurThumbnails = useRemoteUiStore((s) => s.blurThumbnails)
+  const setBlurThumbnails = useRemoteUiStore((s) => s.setBlurThumbnails)
   const [hubDebugRequests, setHubDebugRequests] = useState(false)
   const [isDev, setIsDev] = useState(false)
   const [developerUnlocked, setDeveloperUnlocked] = useState(false)
@@ -97,7 +98,6 @@ export default function SettingsView() {
 
   useEffect(() => {
     window.api.settings.get('vam_dir').then((v) => setVamDir(v || ''))
-    window.api.settings.get('blur_thumbnails').then((v) => setBlurThumbnails(v === '1'))
     window.api.settings.get('hub_debug_requests').then((v) => setHubDebugRequests(v === '1'))
     window.api.settings.get('developer_options_unlocked').then((v) => setDeveloperUnlocked(v === '1'))
     window.api.settings.get('disable_behavior').then((v) => setDisableBehavior(v || 'suffix'))
@@ -265,12 +265,6 @@ export default function SettingsView() {
       setVerifyProgress(null)
     }
   }, [verifying, hubScanning, fetchStats])
-
-  const handleToggleBlurThumbnails = useCallback(async (checked) => {
-    setBlurThumbnails(checked)
-    document.documentElement.toggleAttribute('data-blur-thumbs', checked)
-    await window.api.settings.set('blur_thumbnails', checked ? '1' : '0')
-  }, [])
 
   const handleToggleHubDebug = useCallback(async (checked) => {
     setHubDebugRequests(checked)
@@ -799,7 +793,7 @@ export default function SettingsView() {
                   Apply a blur to all package and content thumbnail images to keep it SFW.
                 </div>
               </div>
-              <Switch checked={blurThumbnails} onCheckedChange={handleToggleBlurThumbnails} />
+              <Switch checked={blurThumbnails} onCheckedChange={setBlurThumbnails} />
             </label>
             <label className="flex items-center gap-3 cursor-pointer">
               <div className="flex-1 min-w-0">
