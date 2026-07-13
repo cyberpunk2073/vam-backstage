@@ -104,6 +104,23 @@ if (IS_CLIENT) {
   app.setPath('userData', app.getPath('userData') + '-client')
 }
 
+// Single-instance guard. After the client userData swap on purpose: the lock is
+// keyed on the userData dir, so a client head and the normal/serve backend (which
+// use different dirs) coexist, while two of the same kind don't — a duplicate
+// backend against the shared backstage.db + Chromium profile causes IO errors and
+// racing writers. The loser quits before opening anything (whenReady early-returns).
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    if (!mainWindow.isVisible()) mainWindow.show()
+    mainWindow.focus()
+  })
+}
+
 /**
  * Chromium often does not show the native text edit menu in Electron; with a hidden menu bar
  * it may never appear. Use standard menu roles for inputs and Copy for selected text elsewhere.
@@ -424,6 +441,9 @@ async function startupScan() {
 }
 
 app.whenReady().then(async () => {
+  // Lost the single-instance lock: quit is in flight, don't touch DB/profile.
+  if (!gotSingleInstanceLock) return
+
   // Warm @parcel/watcher's native backend on a worker thread, before the heavy startup scan
   // and window creation, so the real (main-thread) watchers attach without the ~5s
   // Explorer-launch stall. Fire-and-forget; startWatcher awaits it. See watcher-warm.js.
