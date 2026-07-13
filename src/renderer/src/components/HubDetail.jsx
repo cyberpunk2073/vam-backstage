@@ -50,6 +50,7 @@ import { useIsDev } from '@/hooks/useIsDev'
 import { getHubResourceLicense } from '@/lib/licenses'
 import { LicenseTag } from '@/components/LicenseTag'
 import { Tag } from '@/components/ui/tag'
+import { toFullHubUrl } from '@/lib/hub-panel-url'
 
 const HUB_INTERACTIONS_ENABLED = true
 
@@ -680,6 +681,8 @@ export default function HubDetail({
 
   const hubUrl = `https://hub.virtamate.com/resources/${resourceId}`
   const externalOpenUrl = pkg.download_url || pkg.external_url || hubUrl
+  // Address-bar copy / open-in-browser: map known *-panel URLs to full pages.
+  const fullBrowserUrl = toFullHubUrl(displayUrl)
 
   useEffect(() => {
     if (!tabs.some((t) => t.key === browserTab)) setBrowserTab('overview')
@@ -1088,12 +1091,7 @@ export default function HubDetail({
               title={urlCopied ? 'Copied!' : 'Copy URL'}
               className="shrink-0 relative"
               onClick={() => {
-                // Strip trailing *-panel segment so the copied URL is shareable (e.g. …/overview-panel → …/).
-                const url = displayUrl.replace(
-                  /^(https:\/\/hub\.virtamate\.com\/(?:resources|threads)\/[^/]+)\/[^/]+-panel\/?$/,
-                  '$1/',
-                )
-                navigator.clipboard.writeText(url).then(() => {
+                navigator.clipboard.writeText(fullBrowserUrl).then(() => {
                   setUrlCopied(true)
                   setTimeout(() => setUrlCopied(false), 1500)
                 })
@@ -1115,12 +1113,13 @@ export default function HubDetail({
             )}
             <Button variant="ghost" size="icon-sm" className="ml-1" asChild>
               <a
-                href={hubUrl}
+                href={fullBrowserUrl}
                 target="_blank"
                 rel="noreferrer"
+                title="Open in browser"
                 onClick={(e) => {
                   e.preventDefault()
-                  void window.api.shell.openExternal(hubUrl)
+                  void window.api.shell.openExternal(fullBrowserUrl)
                 }}
               >
                 <ExternalLink size={14} />
