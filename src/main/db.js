@@ -707,6 +707,21 @@ export function deleteLibraryDir(id) {
   stmt('DELETE FROM library_dirs WHERE id = ?').run(id)
 }
 
+/**
+ * Force-remove an offload dir that still holds packages: delete its package rows
+ * (cascading to contents and label links) then the dir row itself, atomically.
+ * On-disk `.var` files are untouched — this only drops tracked DB state. Returns
+ * the number of package rows removed.
+ */
+export function deleteLibraryDirWithPackages(id) {
+  const tx = db.transaction((dirId) => {
+    const { changes } = stmt('DELETE FROM packages WHERE library_dir_id = ?').run(dirId)
+    stmt('DELETE FROM library_dirs WHERE id = ?').run(dirId)
+    return changes
+  })
+  return tx(id)
+}
+
 export function countPackagesInLibraryDir(id) {
   if (id == null) {
     return stmt(

@@ -147,7 +147,9 @@ const api = {
     list: () => invoke('library-dirs:list'),
     browse: () => invoke('library-dirs:browse'),
     add: (path) => invoke('library-dirs:add', path),
-    remove: (id) => invoke('library-dirs:remove', id),
+    register: (path) => invoke('library-dirs:register', path),
+    suggest: () => invoke('library-dirs:suggest'),
+    remove: (id, opts) => invoke('library-dirs:remove', id, opts),
   },
   dev: {
     isDev: () => invoke('dev:is-dev'),

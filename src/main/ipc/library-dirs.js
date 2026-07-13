@@ -18,6 +18,7 @@ import { join } from 'path'
 import {
   insertLibraryDir,
   deleteLibraryDir,
+  deleteLibraryDirWithPackages,
   getLibraryDirByPath,
   getLibraryDir,
   countPackagesInLibraryDir,
@@ -25,6 +26,7 @@ import {
   setSetting,
 } from '../db.js'
 import { getMainLibraryDirPath, getAuxLibraryDirs, validateNewAuxDirPath, refreshLibraryDirs } from '../library-dirs.js'
+import { detectOffloadSuggestions, matchOffloadToolId } from '../offload-suggestions.js'
 import { restartPackageWatcher } from '../watcher.js'
 import { runScan } from '../scanner/index.js'
 import { buildFromDb } from '../store.js'
@@ -78,6 +80,37 @@ async function probeSameFs(mainPath, auxPath) {
   return null
 }
 
+/**
+ * Validate → stat → dedupe → same-FS probe → insert a new offload dir row.
+ * Returns `{ id, path }`. Does NOT scan or restart the watcher — callers decide
+ * (Settings rescans immediately; the first-run wizard defers to its single scan).
+ */
+async function registerAuxDir(path) {
+  refreshLibraryDirs()
+  const error = await validateNewAuxDirPath(path)
+  if (error) throw new Error(error)
+
+  try {
+    const s = await stat(path)
+    if (!s.isDirectory()) throw new Error('Path is not a directory')
+  } catch (err) {
+    if (err.code === 'ENOENT') throw new Error(`Directory does not exist: ${path}`)
+    throw err
+  }
+
+  const existing = getLibraryDirByPath(path)
+  if (existing) throw new Error('Directory already registered')
+
+  const mainPath = getMainLibraryDirPath()
+  if (!mainPath) throw new Error('Main library directory is not configured yet')
+  const probeError = await probeSameFs(mainPath, path)
+  if (probeError) throw new Error(probeError)
+
+  const id = insertLibraryDir(path)
+  refreshLibraryDirs()
+  return { id, path }
+}
+
 export function registerLibraryDirHandlers() {
   ipcMain.handle('library-dirs:list', () => {
     refreshLibraryDirs()
@@ -99,28 +132,7 @@ export function registerLibraryDirHandlers() {
   })
 
   ipcMain.handle('library-dirs:add', async (_, path) => {
-    refreshLibraryDirs()
-    const error = await validateNewAuxDirPath(path)
-    if (error) throw new Error(error)
-
-    try {
-      const s = await stat(path)
-      if (!s.isDirectory()) throw new Error('Path is not a directory')
-    } catch (err) {
-      if (err.code === 'ENOENT') throw new Error(`Directory does not exist: ${path}`)
-      throw err
-    }
-
-    const existing = getLibraryDirByPath(path)
-    if (existing) throw new Error('Directory already registered')
-
-    const mainPath = getMainLibraryDirPath()
-    if (!mainPath) throw new Error('Main library directory is not configured yet')
-    const probeError = await probeSameFs(mainPath, path)
-    if (probeError) throw new Error(probeError)
-
-    const id = insertLibraryDir(path)
-    refreshLibraryDirs()
+    const result = await registerAuxDir(path)
 
     const vamDir = getSetting('vam_dir')
     if (vamDir) {
@@ -130,18 +142,44 @@ export function registerLibraryDirHandlers() {
       notify('contents:updated')
     }
 
-    return { id, path }
+    return result
   })
 
-  ipcMain.handle('library-dirs:remove', async (_, id) => {
+  // Register an offload dir WITHOUT scanning — the first-run wizard registers
+  // detected dirs before its single library scan, which then indexes them and
+  // the watcher subscribes to them (both enumerate the library_dirs registry).
+  ipcMain.handle('library-dirs:register', async (_, path) => {
+    return await registerAuxDir(path)
+  })
+
+  // Detected default offload folders from known third-party tools (BrowserAssist,
+  // var_browser) that exist on disk and aren't registered yet.
+  ipcMain.handle('library-dirs:suggest', async () => {
+    refreshLibraryDirs()
+    return await detectOffloadSuggestions(getSetting('vam_dir'))
+  })
+
+  // `opts.force` un-registers a non-empty offload dir: its package rows (and the
+  // cascading contents + label links) are dropped so the FK RESTRICT lifts. The
+  // on-disk `.var` files are left untouched — re-adding + rescanning re-indexes
+  // them, but user-set metadata (labels, category overrides) is gone.
+  ipcMain.handle('library-dirs:remove', async (_, id, opts) => {
     const row = getLibraryDir(id)
     if (!row) throw new Error('Library directory not found')
     const { n: count } = countPackagesInLibraryDir(id)
-    if (count > 0) {
-      throw new Error(`Cannot remove: ${count} package(s) are still stored in this directory. Move them first.`)
-    }
+    // If this was a known tool's default offload folder, tell the renderer so it
+    // can dismiss the re-suggestion — the folder still exists on disk after removal.
+    const matchedToolId = matchOffloadToolId(row.path, getSetting('vam_dir'))
 
-    deleteLibraryDir(id)
+    let forgotten = 0
+    if (count > 0) {
+      if (!opts?.force) {
+        throw new Error(`Cannot remove: ${count} package(s) are still stored in this directory. Move them first.`)
+      }
+      forgotten = deleteLibraryDirWithPackages(id)
+    } else {
+      deleteLibraryDir(id)
+    }
 
     if (getSetting('disable_behavior') === disableBehaviorMoveTo(id)) {
       setSetting('disable_behavior', DISABLE_BEHAVIOR_SUFFIX)
@@ -151,7 +189,8 @@ export function registerLibraryDirHandlers() {
     await restartPackageWatcher()
     buildFromDb()
     notify('packages:updated')
+    notify('contents:updated')
 
-    return { ok: true }
+    return { ok: true, forgotten, matchedToolId }
   })
 }

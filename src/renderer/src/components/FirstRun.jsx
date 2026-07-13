@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Zap,
   Folder,
+  Check,
   CheckCircle2,
   Package,
   Eye,
@@ -55,6 +56,9 @@ export default function FirstRun({ onDone }) {
   const [applying, setApplying] = useState(false)
   const [hideProgress, setHideProgress] = useState(null)
   const [detectSource, setDetectSource] = useState(null)
+  const [offloadSuggestions, setOffloadSuggestions] = useState([])
+  const [selectedOffload, setSelectedOffload] = useState(() => new Set())
+  const [registeringOffload, setRegisteringOffload] = useState(false)
 
   useEffect(() => {
     window.api.wizard.detectVamDir().then(({ path, varCount: count, source }) => {
@@ -82,7 +86,7 @@ export default function FirstRun({ onDone }) {
     }
   }, [vamDir])
 
-  const handleScan = useCallback(async () => {
+  const runScanFlow = useCallback(async () => {
     if (!vamDir) return
     setStep('scanning')
     setActivePhaseIdx(0)
@@ -98,7 +102,6 @@ export default function FirstRun({ onDone }) {
     })
 
     try {
-      await window.api.settings.set('vam_dir', vamDir)
       const scanResult = await window.api.scan.start()
       cleanup()
 
@@ -156,6 +159,53 @@ export default function FirstRun({ onDone }) {
     }
   }, [vamDir])
 
+  // From the welcome step: persist the VaM dir, then offer any detected offload
+  // folders from known tools before scanning (so the single scan indexes them).
+  const handleProceed = useCallback(async () => {
+    if (!vamDir) return
+    setScanError(null)
+    await window.api.settings.set('vam_dir', vamDir)
+    let suggestions = []
+    try {
+      suggestions = await window.api.libraryDirs.suggest()
+    } catch (err) {
+      console.warn('Offload suggestion detection failed:', err.message)
+    }
+    if (suggestions.length > 0) {
+      setOffloadSuggestions(suggestions)
+      setSelectedOffload(new Set(suggestions.map((s) => s.id)))
+      setStep('offload')
+    } else {
+      runScanFlow()
+    }
+  }, [vamDir, runScanFlow])
+
+  const toggleOffload = useCallback((id) => {
+    setSelectedOffload((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const handleOffloadContinue = useCallback(async () => {
+    setRegisteringOffload(true)
+    try {
+      for (const s of offloadSuggestions) {
+        if (!selectedOffload.has(s.id)) continue
+        try {
+          await window.api.libraryDirs.register(s.path)
+        } catch (err) {
+          console.warn(`Failed to register offload dir ${s.path}:`, err.message)
+        }
+      }
+    } finally {
+      setRegisteringOffload(false)
+    }
+    runScanFlow()
+  }, [offloadSuggestions, selectedOffload, runScanFlow])
+
   const handleApply = useCallback(async () => {
     setApplying(true)
     setHideProgress(null)
@@ -211,7 +261,16 @@ export default function FirstRun({ onDone }) {
                 browseError={browseError}
                 scanError={scanError}
                 onBrowse={handleBrowse}
-                onScan={handleScan}
+                onScan={handleProceed}
+              />
+            )}
+            {step === 'offload' && (
+              <OffloadStep
+                suggestions={offloadSuggestions}
+                selected={selectedOffload}
+                onToggle={toggleOffload}
+                registering={registeringOffload}
+                onContinue={handleOffloadContinue}
               />
             )}
             {step === 'scanning' && <ScanningStep progress={scanProgress} activePhaseIdx={activePhaseIdx} />}
@@ -345,6 +404,86 @@ function WelcomeStep({ vamDir, varCount, detected, detectSource, browseError, sc
         className="w-full rounded-[10px] text-[13px]"
       >
         Scan library <ArrowRight size={15} />
+      </Button>
+    </div>
+  )
+}
+
+function OffloadStep({ suggestions, selected, onToggle, registering, onContinue }) {
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-5">
+        <div className="w-11 h-11 rounded-xl shrink-0 flex items-center justify-center bg-linear-to-br from-accent-blue to-accent-pink">
+          <Folder size={20} className="text-white" strokeWidth={2} />
+        </div>
+        <h2 className="m-0 text-xl font-semibold text-text-primary tracking-tight">Offload folders detected</h2>
+      </div>
+
+      <p className="text-[13px] leading-[1.7] text-white/55 mb-6">
+        You already use tools that move packages out of <strong className="text-white/70">AddonPackages</strong> to keep
+        VaM light. Add their folders and Backstage will index those packages as{' '}
+        <strong className="text-white/70">offloaded</strong> instead of reporting them missing.
+      </p>
+
+      <div className="flex flex-col gap-2.5 mb-7">
+        {suggestions.map((s) => {
+          const on = selected.has(s.id)
+          return (
+            <label
+              key={s.id}
+              className={`flex items-center gap-3.5 px-4 py-3.5 rounded-[10px] cursor-pointer text-left transition-colors duration-150 ${
+                on
+                  ? 'bg-[rgba(74,145,241,0.08)] border border-[rgba(74,145,241,0.35)]'
+                  : 'bg-white/4 border border-white/8 hover:bg-white/[0.07]'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={on}
+                disabled={registering}
+                onChange={() => onToggle(s.id)}
+                className="sr-only"
+              />
+              <span
+                aria-hidden
+                className={`shrink-0 flex items-center justify-center w-[18px] h-[18px] rounded-[6px] border transition-colors ${
+                  on ? 'bg-accent-blue border-accent-blue text-white' : 'border-white/20 bg-white/5'
+                }`}
+              >
+                {on && <Check size={12} strokeWidth={3} />}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className={`m-0 text-[13px] font-medium mb-1 ${on ? 'text-[#d0d1de]' : 'text-white/70'}`}>
+                  {s.label}
+                  <span className="ml-2 text-[11px] font-normal text-white/35">
+                    {s.varCount.toLocaleString()} var{s.varCount === 1 ? '' : 's'}
+                  </span>
+                </p>
+                <p className="m-0 text-[11px] font-mono text-white/35 leading-snug truncate select-text cursor-text">
+                  {s.path}
+                </p>
+              </div>
+            </label>
+          )
+        })}
+      </div>
+
+      <Button
+        variant="gradient"
+        size="lg"
+        onClick={onContinue}
+        disabled={registering}
+        className="w-full rounded-[10px] text-[13px]"
+      >
+        {registering ? (
+          <>
+            <Loader2 size={14} className="spin-slow" /> Adding folders…
+          </>
+        ) : (
+          <>
+            Scan library <ArrowRight size={15} />
+          </>
+        )}
       </Button>
     </div>
   )

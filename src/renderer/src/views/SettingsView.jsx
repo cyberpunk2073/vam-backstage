@@ -70,6 +70,8 @@ export default function SettingsView() {
   const [libDirs, setLibDirs] = useState({ main: '', aux: [] })
   const [libDirsLoading, setLibDirsLoading] = useState(false)
   const [disableBehavior, setDisableBehavior] = useState('suffix')
+  const [offloadSuggestions, setOffloadSuggestions] = useState([])
+  const [dismissedOffload, setDismissedOffload] = useState(() => new Set())
   const stats = useStatusStore((s) => s.stats)
   const fetchStats = useStatusStore((s) => s.fetchStats)
   const dimInactive = useLibraryStore((s) => s.dimInactive)
@@ -94,6 +96,11 @@ export default function SettingsView() {
     } catch (err) {
       console.warn('library-dirs:list failed:', err.message)
     }
+    try {
+      setOffloadSuggestions(await window.api.libraryDirs.suggest())
+    } catch (err) {
+      console.warn('library-dirs:suggest failed:', err.message)
+    }
   }, [])
 
   useEffect(() => {
@@ -101,6 +108,16 @@ export default function SettingsView() {
     window.api.settings.get('hub_debug_requests').then((v) => setHubDebugRequests(v === '1'))
     window.api.settings.get('developer_options_unlocked').then((v) => setDeveloperUnlocked(v === '1'))
     window.api.settings.get('disable_behavior').then((v) => setDisableBehavior(v || 'suffix'))
+    window.api.settings.get('offload_suggestions_dismissed').then((v) =>
+      setDismissedOffload(
+        new Set(
+          (v || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean),
+        ),
+      ),
+    )
     window.api.settings.get('remote_serve_port').then((v) => setServerPort(v || String(DEFAULT_REMOTE_PORT)))
     window.api.settings.get('remote_serve_on_launch').then((v) => setServeOnLaunch(v === '1'))
     window.api.settings.get('remote_mode_enabled').then((v) => setRemoteEnabled(v === '1'))
@@ -132,24 +149,59 @@ export default function SettingsView() {
     }
   }, [libDirsLoading, refreshLibDirs, fetchStats])
 
-  const handleRemoveAuxDir = useCallback(
-    async (id) => {
+  const handleAddSuggestion = useCallback(
+    async (suggestion) => {
       if (libDirsLoading) return
       setLibDirsLoading(true)
       try {
-        await window.api.libraryDirs.remove(id)
+        await window.api.libraryDirs.add(suggestion.path)
+        await refreshLibDirs()
+        fetchStats()
+        toast(`${suggestion.label} offload directory added`, 'success')
+      } catch (err) {
+        toast(`Failed to add directory: ${err.message}`, 'error')
+      } finally {
+        setLibDirsLoading(false)
+      }
+    },
+    [libDirsLoading, refreshLibDirs, fetchStats],
+  )
+
+  const dismissOffloadSuggestion = useCallback((id) => {
+    setDismissedOffload((prev) => {
+      if (prev.has(id)) return prev
+      const next = new Set(prev)
+      next.add(id)
+      void window.api.settings.set('offload_suggestions_dismissed', [...next].join(','))
+      return next
+    })
+  }, [])
+
+  const handleRemoveAuxDir = useCallback(
+    async (id, opts) => {
+      if (libDirsLoading) return
+      setLibDirsLoading(true)
+      try {
+        const res = await window.api.libraryDirs.remove(id, opts)
+        if (res?.matchedToolId) dismissOffloadSuggestion(res.matchedToolId)
         await refreshLibDirs()
         const next = await window.api.settings.get('disable_behavior')
         setDisableBehavior(next || 'suffix')
         fetchStats()
-        toast('Library directory removed', 'success')
+        const forgotten = res?.forgotten || 0
+        toast(
+          forgotten > 0
+            ? `Offload directory removed — ${forgotten} package${forgotten === 1 ? '' : 's'} forgotten (files kept on disk)`
+            : 'Offload directory removed',
+          'success',
+        )
       } catch (err) {
         toast(`Failed to remove: ${err.message}`, 'error')
       } finally {
         setLibDirsLoading(false)
       }
     },
-    [libDirsLoading, refreshLibDirs, fetchStats],
+    [libDirsLoading, refreshLibDirs, fetchStats, dismissOffloadSuggestion],
   )
 
   const handleDisableBehaviorChange = useCallback(async (value) => {
@@ -571,28 +623,50 @@ export default function SettingsView() {
             {libDirs.aux.length > 0 && (
               <ul className="rounded-lg border border-border divide-y divide-border bg-surface/50">
                 {libDirs.aux.map((d) => (
-                  <li key={d.id} className="flex items-center gap-3 px-3 py-2">
-                    <TruncateWithTooltip
-                      text={d.path}
-                      className="flex-1 min-w-0 text-xs font-mono truncate select-text cursor-text text-text-secondary"
-                    />
-                    <div className="text-[11px] text-text-tertiary tabular-nums whitespace-nowrap shrink-0">
-                      {d.packageCount} pkg · {formatBytes(d.sizeBytes)}
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => handleRemoveAuxDir(d.id)}
-                      disabled={libDirsLoading || d.packageCount > 0}
-                      title={d.packageCount > 0 ? 'Move all packages out before removing' : 'Remove'}
-                      className="shrink-0 text-text-tertiary hover:text-error"
-                    >
-                      <Trash2 size={14} />
-                    </Button>
-                  </li>
+                  <AuxDirRow key={d.id} d={d} vamDir={vamDir} disabled={libDirsLoading} onRemove={handleRemoveAuxDir} />
                 ))}
               </ul>
             )}
+            {offloadSuggestions
+              .filter((s) => !dismissedOffload.has(s.id))
+              .map((s) => (
+                <div
+                  key={s.id}
+                  className="flex items-center gap-3 px-3 py-2 rounded-lg border border-accent-blue/25 bg-accent-blue/6"
+                >
+                  <Compass size={14} className="text-accent-blue shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs text-text-primary">
+                      Detected <span className="font-medium">{s.label}</span> offload folder
+                      <span className="ml-1.5 text-[11px] text-text-tertiary">
+                        · {s.varCount.toLocaleString()} var{s.varCount === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    <div className="text-[11px] font-mono text-text-tertiary truncate select-text cursor-text">
+                      {s.path}
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleAddSuggestion(s)}
+                    disabled={libDirsLoading}
+                    className="shrink-0"
+                  >
+                    Add
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => dismissOffloadSuggestion(s.id)}
+                    disabled={libDirsLoading}
+                    title="Dismiss suggestion"
+                    className="shrink-0 text-text-tertiary hover:text-text-primary"
+                  >
+                    <X size={14} />
+                  </Button>
+                </div>
+              ))}
           </div>
 
           {libDirs.aux.length > 0 && (
@@ -618,7 +692,7 @@ export default function SettingsView() {
                   <SelectItem value="suffix">VaM native (rename to .var.disabled)</SelectItem>
                   {libDirs.aux.map((d) => (
                     <SelectItem key={d.id} value={disableBehaviorMoveTo(d.id)} title={d.path}>
-                      <span className="block min-w-0 truncate">Move to {d.path}</span>
+                      <span className="block min-w-0 truncate">Move to {shortenLibraryPath(d.path, vamDir)}</span>
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1253,6 +1327,111 @@ function ResultBanner({ result }) {
       </div>
     </div>
   )
+}
+
+/**
+ * A registered offload directory row. When the dir is empty, the trash button
+ * removes it directly. When it still holds packages, the trash button opens a
+ * warning dialog that spells out what "un-registering" forgets before removing.
+ */
+function AuxDirRow({ d, vamDir, disabled, onRemove }) {
+  const hasPackages = d.packageCount > 0
+  return (
+    <li className="flex items-center gap-3 px-3 py-2">
+      <TruncateWithTooltip
+        text={d.path}
+        className="flex-1 min-w-0 text-xs font-mono truncate select-text cursor-text text-text-secondary"
+      >
+        {shortenLibraryPath(d.path, vamDir)}
+      </TruncateWithTooltip>
+      <div className="text-[11px] text-text-tertiary tabular-nums whitespace-nowrap shrink-0">
+        {d.packageCount} pkg · {formatBytes(d.sizeBytes)}
+      </div>
+      {hasPackages ? (
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              disabled={disabled}
+              title="Remove (stops tracking these packages)"
+              className="shrink-0 text-text-tertiary hover:text-error"
+            >
+              <Trash2 size={14} />
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="select-text cursor-text">
+                Stop tracking this offload directory?
+              </AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="text-[13px] leading-relaxed text-text-secondary space-y-2.5">
+                  <p>
+                    <span className="font-mono text-text-primary select-text cursor-text">
+                      {shortenLibraryPath(d.path, vamDir)}
+                    </span>{' '}
+                    currently holds{' '}
+                    <span className="font-medium text-text-primary">
+                      {d.packageCount.toLocaleString()} package{d.packageCount === 1 ? '' : 's'}
+                    </span>
+                    . Removing it un-registers the folder and makes Backstage forget those packages.
+                  </p>
+                  <p>
+                    <span className="font-medium text-success">No files are deleted</span> — every{' '}
+                    <span className="font-mono">.var</span> stays where it is on disk, and VaM&apos;s own state for
+                    those packages (including the <span className="font-medium">favorite</span> and{' '}
+                    <span className="font-medium">hidden</span> status of their content) is untouched. You can re-add
+                    the folder and rescan later to index them again.
+                  </p>
+                  <p>
+                    <span className="font-medium text-warning">Backstage data is irreversibly forgotten</span> — things
+                    like the labels and category overrides you set for these packages.
+                  </p>
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction variant="destructive" onClick={() => onRemove(d.id, { force: true })}>
+                Remove and forget
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => onRemove(d.id)}
+          disabled={disabled}
+          title="Remove"
+          className="shrink-0 text-text-tertiary hover:text-error"
+        >
+          <Trash2 size={14} />
+        </Button>
+      )}
+    </li>
+  )
+}
+
+/**
+ * Show an offload path that lives inside the VaM dir as `<VaM base dir name>/<relative>`
+ * for brevity while keeping context (e.g. `VaM/AllPackages`). Paths outside the VaM
+ * dir are returned unchanged.
+ */
+function shortenLibraryPath(path, vamDir) {
+  if (!path || !vamDir) return path
+  const strip = (p) => p.replace(/[\\/]+$/, '')
+  const v = strip(vamDir)
+  const p = strip(path)
+  if (p === v) return path
+  if (p.startsWith(v + '/') || p.startsWith(v + '\\')) {
+    const rel = p.slice(v.length + 1).replace(/\\/g, '/')
+    const base = v.split(/[\\/]/).pop() || v
+    return base + '/' + rel
+  }
+  return path
 }
 
 function getDisableBehaviorLabel(value, auxDirs) {
