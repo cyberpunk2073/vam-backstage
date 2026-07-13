@@ -14,6 +14,7 @@ describe('isRemoteChannelDenied', () => {
   })
 
   it('denies exact machine-local channels', () => {
+    expect(isRemoteChannelDenied('packages:import-local-copy')).toBe(true)
     expect(isRemoteChannelDenied('library-dirs:browse')).toBe(true)
     expect(isRemoteChannelDenied('wizard:browse-vam-dir')).toBe(true)
     expect(isRemoteChannelDenied('wizard:detect-vam-dir')).toBe(true)

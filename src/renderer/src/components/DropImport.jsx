@@ -86,6 +86,24 @@ async function importFileChunked(name, file, onProgress) {
   }
 }
 
+/**
+ * Import one dropped file. Locally (main can see the file), take the fast path:
+ * hand main the source path so it copies the bytes directly (reflink where
+ * supported) — nothing is read into the renderer or crossed over IPC. Remotely,
+ * or when the file has no resolvable path, fall back to the chunked upload.
+ */
+async function importOneFile(name, file, onProgress) {
+  if (!window.api.remote.isRemote) {
+    const sourcePath = window.api.packages.getPathForFile?.(file) || ''
+    if (sourcePath) {
+      const res = await window.api.packages.importLocalCopy(name, sourcePath)
+      onProgress?.(1)
+      return res
+    }
+  }
+  return importFileChunked(name, file, onProgress)
+}
+
 /** True when a drag payload carries OS files (not an internal element drag). */
 function dragHasFiles(e) {
   const types = e.dataTransfer?.types
@@ -123,9 +141,9 @@ async function walkEntry(entry, out) {
 /**
  * Window-wide drag-and-drop target: dropping `.var` files (or folders that
  * contain them) anywhere on the app chrome offers to add them to the library.
- * Reads the dropped File bytes in the renderer and ships them to
- * `packages:import-local`, so the same flow works for a remote client head — the
- * server writes each buffer into its own library.
+ * Locally, main copies each file straight from its source path; a remote client
+ * head streams the bytes over the socket into the server's own library. Either
+ * way the file lands in the main library and is scanned as a direct install.
  *
  * Files are imported sequentially (one RPC at a time): the main-process add
  * pipeline mutates a shared in-memory graph, so overlapping imports could race.
@@ -255,9 +273,7 @@ export default function DropImport() {
       setProgress({ current: i, total: items.length })
       const { file, name } = items[i]
       try {
-        const res = await importFileChunked(name, file, (frac) =>
-          setProgress({ current: i + frac, total: items.length }),
-        )
+        const res = await importOneFile(name, file, (frac) => setProgress({ current: i + frac, total: items.length }))
         if (res?.already) already += 1
         else added += 1
       } catch (err) {

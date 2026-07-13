@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import { createRemoteTransport } from './remote-transport.js'
 
@@ -37,6 +37,11 @@ const api = {
     installAllMissing: () => invoke('packages:install-all-missing'),
     installDepsBatch: (items, autoQueueDeps) => invoke('packages:install-deps-batch', { items, autoQueueDeps }),
     installDep: (hubFileData) => invoke('packages:install-dep', hubFileData),
+    // Resolve a dropped File to its absolute on-disk path (Electron 39: File.path
+    // is gone). Empty string when there's no backing path — caller falls back to
+    // the streamed upload. Local only; a remote head's paths mean nothing here.
+    getPathForFile: (file) => webUtils.getPathForFile(file),
+    importLocalCopy: (filename, sourcePath) => invoke('packages:import-local-copy', { filename, sourcePath }),
     importLocalBegin: (filename) => invoke('packages:import-local-begin', { filename }),
     importLocalChunk: (uploadId, chunk) => invoke('packages:import-local-chunk', { uploadId, chunk }),
     importLocalFinish: (uploadId) => invoke('packages:import-local-finish', { uploadId }),

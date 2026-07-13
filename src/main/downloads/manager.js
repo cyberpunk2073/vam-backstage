@@ -1,5 +1,5 @@
-import { createWriteStream } from 'fs'
-import { stat as fsStat, rename, unlink, mkdir } from 'fs/promises'
+import { createWriteStream, constants as fsConstants } from 'fs'
+import { stat as fsStat, rename, unlink, mkdir, copyFile } from 'fs/promises'
 import { join, dirname } from 'path'
 import { randomUUID } from 'crypto'
 import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
@@ -528,6 +528,36 @@ async function finalizeImportedVar(canonical, tempPath, finalPath) {
   await postDownloadIntegrate(canonical, finalPath, true, null, false)
 
   return { ok: true, filename: canonical }
+}
+
+/**
+ * Import a dragged-in .var that the main process can read directly by path —
+ * the local (non-remote) fast path. Copies the source into place instead of
+ * streaming its bytes through the renderer/IPC: no read into renderer memory,
+ * no structured-clone copy per chunk. `COPYFILE_FICLONE` makes this a
+ * copy-on-write reflink on filesystems that support it (e.g. APFS/Btrfs), so a
+ * same-volume import is near-instant; elsewhere it falls back to a plain copy.
+ * The source file is left untouched. Verify + atomic rename + integrate are
+ * shared with the streamed path via `finalizeImportedVar`.
+ */
+export async function importLocalFromPath({ filename, sourcePath }) {
+  const { addonDir, canonical } = resolveImportTarget(filename)
+  if (findLocalByFilename(canonical)) return { already: true, filename: canonical }
+
+  const finalPath = join(addonDir, canonical)
+  const tempPath = finalPath + '.import.tmp'
+  await mkdir(dirname(finalPath), { recursive: true })
+
+  try {
+    await copyFile(sourcePath, tempPath, fsConstants.COPYFILE_FICLONE)
+  } catch (err) {
+    try {
+      await unlink(tempPath)
+    } catch {}
+    throw err
+  }
+
+  return finalizeImportedVar(canonical, tempPath, finalPath)
 }
 
 /**

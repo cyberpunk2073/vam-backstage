@@ -9,6 +9,10 @@
 const DENIED_PREFIXES = ['shell:', 'remote:', 'updater:', 'dev:']
 
 const DENIED_CHANNELS = new Set([
+  // Local-only fast path: reads a source path on the host machine. A remote
+  // head has no such path and uses the chunked upload instead, so a raw peer
+  // must not be able to make the server copy arbitrary local files.
+  'packages:import-local-copy',
   'library-dirs:browse',
   'wizard:browse-vam-dir',
   'wizard:detect-vam-dir',

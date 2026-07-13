@@ -59,6 +59,7 @@ import {
   enqueueInstallAllMissing,
   enqueueInstallRef,
   enqueueInstallBatch,
+  importLocalFromPath,
   beginImportLocalVar,
   appendImportLocalVar,
   finishImportLocalVar,
@@ -631,6 +632,13 @@ export function registerPackageHandlers() {
   // Import a .var supplied as raw bytes (drag-and-drop add). Works locally and
   // over the remote bridge — a client head ships the file buffer here and the
   // server writes it into its own AddonPackages.
+  // Local fast path: main copies the dropped file straight from its source path
+  // (reflink where supported), skipping the renderer/IPC byte streaming. Only
+  // valid when main can see the file — i.e. not a remote head.
+  ipcMain.handle('packages:import-local-copy', async (_, { filename, sourcePath }) => {
+    return await importLocalFromPath({ filename, sourcePath })
+  })
+
   // Chunked import: begin → chunk* → finish (or abort). The file is streamed to
   // a temp file in bounded pieces — required over the remote bridge, where the
   // wire codec base64s each buffer into one string and a whole large .var can't
