@@ -51,6 +51,41 @@ function hasValidVarName(name) {
   return /^\d+$/.test(parts[parts.length - 1])
 }
 
+// Upload chunk size for streaming a .var to the (possibly remote) main process.
+// Usage is overwhelmingly local, where chunks cross as raw bytes (structured
+// clone) and larger chunks just mean fewer round-trips. The ceiling is the
+// remote case: the wire codec base64s each buffer into one JS string, so a
+// chunk must stay under Node's max string length and the WS `maxPayload`
+// (100 MiB). 32 MiB → ~42.7 MiB base64, leaving ample headroom.
+const IMPORT_CHUNK_BYTES = 32 * 1024 * 1024
+
+/**
+ * Stream one dropped file to `packages:import-local-*` in bounded chunks so a
+ * large .var never has to cross the IPC/remote boundary as a single buffer.
+ * Reads each slice lazily via `Blob.slice` so peak memory stays ~one chunk.
+ * `onProgress(fraction)` reports 0..1 completion for the current file.
+ */
+async function importFileChunked(name, file, onProgress) {
+  const begin = await window.api.packages.importLocalBegin(name)
+  if (begin?.already) return { already: true }
+
+  const { uploadId } = begin
+  try {
+    for (let offset = 0; offset < file.size; offset += IMPORT_CHUNK_BYTES) {
+      const end = Math.min(offset + IMPORT_CHUNK_BYTES, file.size)
+      const chunk = new Uint8Array(await file.slice(offset, end).arrayBuffer())
+      await window.api.packages.importLocalChunk(uploadId, chunk)
+      onProgress?.(end / file.size)
+    }
+    return await window.api.packages.importLocalFinish(uploadId)
+  } catch (err) {
+    try {
+      await window.api.packages.importLocalAbort(uploadId)
+    } catch {}
+    throw err
+  }
+}
+
 /** True when a drag payload carries OS files (not an internal element drag). */
 function dragHasFiles(e) {
   const types = e.dataTransfer?.types
@@ -220,8 +255,9 @@ export default function DropImport() {
       setProgress({ current: i, total: items.length })
       const { file, name } = items[i]
       try {
-        const bytes = new Uint8Array(await file.arrayBuffer())
-        const res = await window.api.packages.importLocal({ filename: name, bytes })
+        const res = await importFileChunked(name, file, (frac) =>
+          setProgress({ current: i + frac, total: items.length }),
+        )
         if (res?.already) already += 1
         else added += 1
       } catch (err) {
@@ -312,7 +348,7 @@ export default function DropImport() {
                       <div className="mt-3">
                         <div className="flex justify-between text-xs text-text-secondary">
                           <span>
-                            Adding {Math.min((progress?.current ?? 0) + 1, count)} / {count}…
+                            Adding {Math.min(Math.floor(progress?.current ?? 0) + 1, count)} / {count}…
                           </span>
                           <span>{pct}%</span>
                         </div>

@@ -59,7 +59,10 @@ import {
   enqueueInstallAllMissing,
   enqueueInstallRef,
   enqueueInstallBatch,
-  importLocalVar,
+  beginImportLocalVar,
+  appendImportLocalVar,
+  finishImportLocalVar,
+  abortImportLocalVar,
 } from '../downloads/manager.js'
 import {
   fetchPackagesJson,
@@ -628,8 +631,24 @@ export function registerPackageHandlers() {
   // Import a .var supplied as raw bytes (drag-and-drop add). Works locally and
   // over the remote bridge — a client head ships the file buffer here and the
   // server writes it into its own AddonPackages.
-  ipcMain.handle('packages:import-local', async (_, { filename, bytes }) => {
-    return await importLocalVar({ filename, bytes })
+  // Chunked import: begin → chunk* → finish (or abort). The file is streamed to
+  // a temp file in bounded pieces — required over the remote bridge, where the
+  // wire codec base64s each buffer into one string and a whole large .var can't
+  // cross in a single frame.
+  ipcMain.handle('packages:import-local-begin', async (_, { filename }) => {
+    return await beginImportLocalVar({ filename })
+  })
+
+  ipcMain.handle('packages:import-local-chunk', async (_, { uploadId, chunk }) => {
+    return await appendImportLocalVar({ uploadId, chunk })
+  })
+
+  ipcMain.handle('packages:import-local-finish', async (_, { uploadId }) => {
+    return await finishImportLocalVar({ uploadId })
+  })
+
+  ipcMain.handle('packages:import-local-abort', async (_, { uploadId }) => {
+    return await abortImportLocalVar({ uploadId })
   })
 
   ipcMain.handle('packages:file-list', async (_, filename) => {
