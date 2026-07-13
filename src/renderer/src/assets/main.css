@@ -116,6 +116,10 @@ html[data-nav-dismiss]
     html {
         @apply font-sans;
     }
+    ::selection {
+        background-color: color-mix(in srgb, var(--color-accent-blue) 40%, transparent);
+        color: var(--color-text-primary);
+    }
 }
 
 /* Scrollbar */
