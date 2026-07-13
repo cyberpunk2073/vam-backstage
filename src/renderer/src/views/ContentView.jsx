@@ -1213,7 +1213,7 @@ export default function ContentView({ onNavigate, navContext }) {
           />
         ) : (
           <div className="flex-1 flex flex-col overflow-hidden p-4">
-            <div className="border border-border rounded-lg overflow-hidden flex flex-col min-h-0">
+            <div className="border border-border rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
               <div className="bg-elevated text-[10px] uppercase tracking-wider text-text-tertiary flex border-b border-border shrink-0">
                 {bulkActive && (
                   <div className="w-8 shrink-0 flex items-center justify-center border-r border-border/50 py-2">
