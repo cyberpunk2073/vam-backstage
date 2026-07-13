@@ -15,7 +15,7 @@
  * `watcher.js` and never go through this function.
  */
 
-import { rename, mkdir } from 'fs/promises'
+import { rename, mkdir, stat } from 'fs/promises'
 import { join, dirname } from 'path'
 import { getPackageIndex, patchStorageState } from './store.js'
 import { setStorageState } from './db.js'
@@ -78,6 +78,20 @@ export async function applyStorageState(filename, target) {
   // computeInstallTarget returning null, so this is mostly defensive. (If memory
   // disagrees with disk here it's a watcher-reconciliation responsibility, not ours.)
   if (fromPath === toPath) return { ok: true, fromPath, toPath, changed: false }
+
+  // A file already sitting at the destination should be a byte-identical copy of the
+  // same canonical (content-addressed, immutable) `.var` — in which case rename safely
+  // replaces it. If sizes differ it's an unexpected, non-identical duplicate (stale,
+  // corrupt, or a foreign build sharing the filename); refuse rather than silently
+  // clobber it. Same-size proxy for equality mirrors `normalizeAuxDisabled`; missing
+  // source is left to the ENOENT branch below.
+  const [fromStat, toStat] = await Promise.all([stat(fromPath).catch(() => null), stat(toPath).catch(() => null)])
+  if (toStat && fromStat && toStat.size !== fromStat.size) {
+    throw new Error(
+      `Refusing to move ${filename}: a different file already exists at destination ` +
+        `(${toPath}: ${toStat.size} bytes vs source ${fromStat.size} bytes)`,
+    )
+  }
 
   recordOwnedPath(fromPath)
   recordOwnedPath(toPath)

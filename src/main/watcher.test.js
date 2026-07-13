@@ -242,6 +242,60 @@ describe('applyStorageState — nested .var preserves its subfolder', () => {
   })
 })
 
+describe('applyStorageState — destination collision size guard', () => {
+  async function seedEnabled() {
+    const buf = await buildVar({
+      meta: { packageName: 'Guard.Pkg', creator: 'Guard' },
+      files: { 'Saves/scene/s.json': '{"atoms":[]}' },
+    })
+    await placeVar(tmp.addonPackages, 'Guard.Pkg.1.var', buf)
+    await runScan(tmp.vamDir)
+    buildFromDb()
+  }
+
+  it('throws and leaves both files in place when a different-size file occupies the destination', async () => {
+    await seedEnabled()
+    const aux = await mkAuxDir(tmp.vamDir)
+    const auxId = insertLibraryDir(aux)
+    refreshLibraryDirs()
+
+    // A foreign file sharing the canonical name but with different bytes already lives at the aux dest.
+    const auxDest = join(aux, 'Guard.Pkg.1.var')
+    await writeFile(auxDest, 'not the same package at all')
+
+    await expect(
+      applyStorageState('Guard.Pkg.1.var', { storageState: 'offloaded', libraryDirId: auxId }),
+    ).rejects.toThrow(/different file already exists at destination/)
+
+    // Neither side was touched: source stays in main, foreign dest is intact.
+    expect(await readdir(tmp.addonPackages)).toContain('Guard.Pkg.1.var')
+    expect(await readFile(auxDest, 'utf8')).toBe('not the same package at all')
+    const row = getAllPackages().find((r) => r.filename === 'Guard.Pkg.1.var')
+    expect(row.storage_state).toBe('enabled')
+    expect(row.library_dir_id).toBeNull()
+  })
+
+  it('replaces a byte-identical (same-size) file already at the destination', async () => {
+    await seedEnabled()
+    const aux = await mkAuxDir(tmp.vamDir)
+    const auxId = insertLibraryDir(aux)
+    refreshLibraryDirs()
+
+    // A byte-identical copy already sits at the aux dest (same canonical, same bytes).
+    const mainPath = join(tmp.addonPackages, 'Guard.Pkg.1.var')
+    const auxDest = join(aux, 'Guard.Pkg.1.var')
+    await writeFile(auxDest, await readFile(mainPath))
+
+    await applyStorageState('Guard.Pkg.1.var', { storageState: 'offloaded', libraryDirId: auxId })
+
+    const row = getAllPackages().find((r) => r.filename === 'Guard.Pkg.1.var')
+    expect(row.storage_state).toBe('offloaded')
+    expect(row.library_dir_id).toBe(auxId)
+    expect(await readdir(aux)).toContain('Guard.Pkg.1.var')
+    expect(await readdir(tmp.addonPackages)).not.toContain('Guard.Pkg.1.var')
+  })
+})
+
 describe('watcher.processBatch — aux .var.disabled normalization', () => {
   it('aux .var.disabled add normalizes to bare .var', async () => {
     const aux = await mkAuxDir(tmp.vamDir)
