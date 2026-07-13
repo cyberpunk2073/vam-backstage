@@ -78,6 +78,13 @@ let mainWindow = null
 
 const HUB_ORIGIN = new URL('https://hub.virtamate.com').origin
 
+// `npm run dev` sets VAM_DEV_USERDATA to isolate dev in a `-dev` userData;
+// `dev:installed` leaves it unset to attach to the installed data. Must run
+// before initAutostart and the `-client` swap so both inherit the dev root.
+if (process.env.VAM_DEV_USERDATA) {
+  app.setPath('userData', app.getPath('userData') + '-dev')
+}
+
 // Bind the client-autostart file to the BASE userData dir now, before the
 // `-client` swap below — both instances must resolve the same path.
 initAutostart(app.getPath('userData'))
