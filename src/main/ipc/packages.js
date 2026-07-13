@@ -39,6 +39,7 @@ import {
   resolveHubDownloadUrl,
   getExtractedByPackage,
   effectivePackageType,
+  recomputeInactiveDeps,
 } from '../store.js'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import {
@@ -370,6 +371,10 @@ async function applyStorageStateChange(filenames, intentFn) {
       }
     }
 
+    // Toggles patch packageIndex in place without a full rebuild, so refresh the
+    // one aggregate that tracks disabled/offloaded deps of active packages.
+    recomputeInactiveDeps()
+
     notify('packages:updated')
     return filenames.length === 1 ? out[0] : { ok: true, results: out }
   })
@@ -548,6 +553,19 @@ export function registerPackageHandlers() {
   ipcMain.handle('packages:set-enabled', async (_, { filenames, enabled }) => {
     const intent = enabled ? 'enable' : 'disable'
     return await applyStorageStateChange(normalizeFilenameArgs(filenames), () => intent)
+  })
+
+  // Enable all currently-inactive (disabled/offloaded) transitive dependencies of
+  // the given package(s), without touching the package itself. Backs the "enable
+  // them all" action surfaced when an active package has inactive deps.
+  ipcMain.handle('packages:enable-deps', async (_, filenameOrFilenames) => {
+    const toEnable = new Set()
+    for (const filename of normalizeFilenameArgs(filenameOrFilenames)) {
+      for (const dep of computeCascadeEnable(filename, getPackageIndex(), getForwardDeps())) toEnable.add(dep)
+    }
+    if (toEnable.size === 0) return { ok: true, count: 0 }
+    const res = await applyStorageStateChange([...toEnable], () => 'enable')
+    return { ok: true, count: toEnable.size, result: res }
   })
 
   ipcMain.handle('packages:force-remove', async (_, filenameOrFilenames) => {

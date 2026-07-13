@@ -4,7 +4,6 @@ import {
   List,
   Compass,
   Library as LibraryIcon,
-  AlertTriangle,
   Eye,
   EyeOff,
   Power,
@@ -39,7 +38,7 @@ import { useThumbnail } from '@/hooks/createBlobCacheHook'
 import { useContentStore, FILTER_DEFAULTS } from '@/stores/useContentStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
 import { useLabelsStore } from '@/stores/useLabelsStore'
-import { AuthorAvatar, AuthorLink, ContentCard, ContentTableRow } from '@/components/PackageCard'
+import { AuthorAvatar, AuthorLink, ContentCard, ContentTableRow, depIssues } from '@/components/PackageCard'
 import { ContentItemContextMenu } from '@/components/ContentItemContextMenu'
 import { LabelsRow } from '@/components/labels/LabelsRow'
 import { LabelChip } from '@/components/labels/LabelChip'
@@ -1403,6 +1402,7 @@ function ContentDetailPanel({
 
   const pkgTitle = pkg ? displayName(pkg) : ''
   const pkgVersionStr = pkg && pkg.version != null && pkg.version !== '' ? String(pkg.version) : null
+  const pkgDepIssue = pkg ? depIssues(pkg, (pkg.storageState ?? 'enabled') === 'enabled') : null
 
   return (
     <div className="flex shrink-0" style={{ width: panelWidth }}>
@@ -1573,10 +1573,13 @@ function ContentDetailPanel({
                 >
                   {formatBytes(pkg.sizeBytes + (pkg.removableSize || 0))}
                 </span>
-                {pkg.missingDeps > 0 && (
-                  <span className="ml-auto flex items-center gap-1 text-warning shrink-0">
-                    <AlertTriangle size={10} className="shrink-0" />
-                    {pkg.missingDeps} missing
+                {pkgDepIssue && (
+                  <span
+                    className={`ml-auto flex items-center gap-1 shrink-0 ${pkgDepIssue.summary.tone}`}
+                    title={pkgDepIssue.title}
+                  >
+                    <pkgDepIssue.summary.Icon size={10} className="shrink-0" />
+                    {pkgDepIssue.summary.count} {pkgDepIssue.summary.word}
                   </span>
                 )}
               </div>

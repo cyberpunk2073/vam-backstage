@@ -347,6 +347,48 @@ describe('buildFromDb — graph aggregates', () => {
     expect(getPackageDetail('Top.P.1.var').missingDepsTotal).toBeGreaterThanOrEqual(1)
   })
 
+  it('transitiveInactiveMap: counts disabled/offloaded resolved deps down the subtree', async () => {
+    const db = getDb()
+    seedPackage(db, {
+      filename: 'Leaf.I.1.var',
+      package_name: 'Leaf.I',
+      version: '1',
+      is_direct: 0,
+      storage_state: 'disabled',
+      dep_refs: '[]',
+    })
+    seedPackage(db, {
+      filename: 'Mid.I.1.var',
+      package_name: 'Mid.I',
+      version: '1',
+      is_direct: 0,
+      storage_state: 'offloaded',
+      dep_refs: JSON.stringify(['Leaf.I.1']),
+    })
+    seedPackage(db, {
+      filename: 'Active.I.1.var',
+      package_name: 'Active.I',
+      version: '1',
+      is_direct: 0,
+      storage_state: 'enabled',
+      dep_refs: '[]',
+    })
+    seedPackage(db, {
+      filename: 'Top.I.1.var',
+      package_name: 'Top.I',
+      version: '1',
+      is_direct: 1,
+      storage_state: 'enabled',
+      dep_refs: JSON.stringify(['Mid.I.1', 'Active.I.1']),
+    })
+    buildFromDb()
+    const byName = new Map(getFilteredPackages().map((p) => [p.filename, p]))
+    expect(byName.get('Top.I.1.var').inactiveDeps).toBe(2)
+    expect(byName.get('Mid.I.1.var').inactiveDeps).toBe(1)
+    expect(byName.get('Leaf.I.1.var').inactiveDeps).toBe(0)
+    expect(byName.get('Active.I.1.var').inactiveDeps).toBe(0)
+  })
+
   it('orphanSet and orphan totalSize', async () => {
     const db = getDb()
     seedPackage(db, {
@@ -449,6 +491,41 @@ describe('buildFromDb — counts / filters', () => {
     })
     buildFromDb()
     expect(getStatusCounts().broken).toBeGreaterThanOrEqual(1)
+  })
+
+  it('broken counts an active package with a disabled dep, but not an inactive one', async () => {
+    const db = getDb()
+    seedPackage(db, {
+      filename: 'Dis.D.1.var',
+      package_name: 'Dis.D',
+      version: '1',
+      is_direct: 0,
+      storage_state: 'disabled',
+      dep_refs: '[]',
+    })
+    seedPackage(db, {
+      filename: 'ActiveRoot.A.1.var',
+      package_name: 'ActiveRoot.A',
+      version: '1',
+      is_direct: 1,
+      storage_state: 'enabled',
+      dep_refs: JSON.stringify(['Dis.D.1']),
+    })
+    seedPackage(db, {
+      filename: 'DisabledRoot.R.1.var',
+      package_name: 'DisabledRoot.R',
+      version: '1',
+      is_direct: 1,
+      storage_state: 'disabled',
+      dep_refs: JSON.stringify(['Dis.D.1']),
+    })
+    buildFromDb()
+    const byName = new Map(getFilteredPackages().map((p) => [p.filename, p]))
+    expect(byName.get('ActiveRoot.A.1.var').inactiveDeps).toBe(1)
+    expect(byName.get('DisabledRoot.R.1.var').inactiveDeps).toBe(1)
+    // Only the active root is broken; the disabled root's inactive deps are expected.
+    expect(getStatusCounts().broken).toBe(1)
+    expect(getStats().brokenCount).toBe(1)
   })
 
   it('getStatusCounts.missingUnique groups missing dep refs by packageName', async () => {

@@ -239,6 +239,14 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
       toast(`Failed to toggle package: ${err.message}`)
     }
   }
+  const handleEnableInactiveDeps = async () => {
+    try {
+      const res = await window.api.packages.enableDeps(p.filename)
+      if (res?.count > 0) toast(`Enabled ${res.count} dependenc${res.count === 1 ? 'y' : 'ies'}`, 'success')
+    } catch (err) {
+      toast(`Failed to enable dependencies: ${err.message}`)
+    }
+  }
   const handlePromote = async () => {
     try {
       await window.api.packages.promote(p.filename)
@@ -611,6 +619,12 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                 >
                   <Download size={12} className="shrink-0" />
                   Install missing dependencies
+                </ContextMenuItem>
+              )}
+              {isPackageActive(p.storageState ?? 'enabled') && p.inactiveDeps > 0 && (
+                <ContextMenuItem onSelect={() => void handleEnableInactiveDeps()}>
+                  <Power size={12} className="shrink-0" />
+                  Enable disabled dependencies
                 </ContextMenuItem>
               )}
               {p.isCorrupted && !p.isLocalOnly && (

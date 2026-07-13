@@ -21,6 +21,7 @@ import {
 import { categoryOf, isGalleryVisible, isVisible, LOOK_ITEM_EXACT_TYPES, tagOf } from '@shared/content-types.js'
 import { getPackagesIndex, loadPackagesJsonFromCache } from './hub/packages-json.js'
 import { isLocalPackage } from '@shared/local-package.js'
+import { isPackageActive } from '@shared/storage-state-predicates.js'
 import {
   packageHasExtractedAppearance,
   contentHasExtractedAppearance,
@@ -90,6 +91,7 @@ let extractedByPackage = new Map() // packageFilename -> local extracted content
 let aggregateMorphCountMap = new Map() // filename -> morph count (own + all resolved deps)
 let transitiveDepsCountMap = new Map() // filename -> total unique deps (resolved + missing) in subtree
 let transitiveMissingMap = new Map() // filename -> count of unique missing dep refs in subtree
+let transitiveInactiveMap = new Map() // filename -> count of resolved-but-inactive (disabled/offloaded) deps in subtree
 let creatorsNeedingUserId = new Map() // normalized creator → filenames[]
 let orphanSet = new Set() // filenames of all orphan deps (direct + cascade)
 let directOrphanSet = new Set() // filenames of direct orphans only (zero reverse deps)
@@ -382,6 +384,7 @@ export function buildFromDb({ skipGraph = false } = {}) {
   }
 
   computeTransitiveMissing()
+  computeTransitiveInactive()
   computeStats()
   computeAllRemovableSizes()
   computeAllMorphCounts()
@@ -507,6 +510,56 @@ function computeTransitiveMissing() {
   }
 }
 
+/**
+ * For every package, count the resolved dependencies in its subtree whose file
+ * is present but *inactive* (disabled or offloaded) — i.e. installed yet not
+ * loadable by VaM. Independent of the owning package's own storage state (the
+ * UI only surfaces the count for active packages), so the memo is reusable.
+ */
+function computeTransitiveInactive() {
+  transitiveInactiveMap = new Map()
+  const memo = new Map()
+  function collect(filename) {
+    if (memo.has(filename)) return memo.get(filename)
+    const inactive = new Set()
+    memo.set(filename, inactive)
+    for (const dep of forwardDeps.get(filename) || []) {
+      if (!dep.resolved) continue
+      const depPkg = packageIndex.get(dep.resolved)
+      if (depPkg && !isPackageActive(depPkg.storage_state)) inactive.add(dep.resolved)
+      for (const r of collect(dep.resolved)) inactive.add(r)
+    }
+    return inactive
+  }
+  for (const filename of packageIndex.keys()) {
+    const inactive = collect(filename)
+    if (inactive.size > 0) transitiveInactiveMap.set(filename, inactive.size)
+  }
+}
+
+/**
+ * A package is "broken" when it's corrupted, has missing deps, or — while active —
+ * has installed-but-inactive (disabled/offloaded) deps that VaM won't load.
+ * Inactive packages aren't flagged for their inactive deps (that's expected).
+ * Shared by `computeStats` and the live `getStatusCounts`.
+ */
+function isBrokenPkg(filename, pkg) {
+  if (pkg.is_corrupted) return true
+  if ((transitiveMissingMap.get(filename) || 0) > 0) return true
+  return isPackageActive(pkg.storage_state) && (transitiveInactiveMap.get(filename) || 0) > 0
+}
+
+/**
+ * Refresh the aggregates that depend on storage state after a bulk
+ * enable/disable/offload. Toggles patch `packageIndex` rows in place (no full
+ * `buildFromDb`), so both the inactive-deps map and `stats` (whose `brokenCount`
+ * now counts active packages with inactive deps) must be recomputed here.
+ */
+export function recomputeInactiveDeps() {
+  computeTransitiveInactive()
+  computeStats()
+}
+
 function computeStats() {
   let directCount = 0,
     depCount = 0,
@@ -527,7 +580,7 @@ function computeStats() {
       depSize += pkg.size_bytes
     }
     totalSize += pkg.size_bytes
-    if ((transitiveMissingMap.get(filename) || 0) > 0 || pkg.is_corrupted) brokenCount++
+    if (isBrokenPkg(filename, pkg)) brokenCount++
   }
 
   let depContentCount = 0
@@ -741,6 +794,7 @@ function enrichPackageSummary(pkg) {
     favoriteContentCount,
     depCount,
     missingDeps,
+    inactiveDeps: transitiveInactiveMap.get(pkg.filename) || 0,
     morphCount: aggregateMorphCountMap.get(pkg.filename) || 0,
     firstSeenAt: pkg.first_seen_at,
     fileMtime: pkg.file_mtime,
@@ -913,7 +967,7 @@ export function getStatusCounts() {
   for (const [filename, pkg] of userPackageEntries()) {
     if (pkg.is_direct) direct++
     else dependency++
-    if ((transitiveMissingMap.get(filename) || 0) > 0 || pkg.is_corrupted) broken++
+    if (isBrokenPkg(filename, pkg)) broken++
     if (isNotDownloadable(pkg)) local++
     if (pkg.storage_state === 'offloaded') offloaded++
   }
@@ -1114,23 +1168,24 @@ export function patchTypeOverride(filename, typeOverride) {
  * via `c.package.storageState` after relink — so there is nothing to patch on
  * the content side here.
  *
- * NOT refreshed by this function (and currently fine because none of these
- * aggregates depend on `storage_state`):
+ * NOT refreshed by this function:
  *  - `forwardDeps` / `reverseDeps` / `groupIndex` — graph topology, keyed on filename + package_name.
  *  - `removableSizeMap`, `aggregateMorphCountMap`, `transitiveDepsCountMap`,
  *    `transitiveMissingMap` — derived from `is_direct` and the dep graph.
  *  - `orphanSet` / `directOrphanSet` — derived from `is_direct` + reverse deps.
- *  - `stats` (broken count, sizes, content totals) — `brokenCount` uses `is_corrupted`
- *    + `transitiveMissingMap`, sizes/counts use `is_direct`.
  *  - `tagCounts`, `authorCounts`, `nonDownloadableRids` — Hub/metadata, state-independent.
  *
- * Live count `getStatusCounts().offloaded` re-iterates `packageIndex` on every call,
- * so it sees the patch immediately without needing to be invalidated here.
+ * State-dependent aggregates ARE storage-state sensitive and must NOT be read stale:
+ *  - `transitiveInactiveMap` and `stats.brokenCount` (which now counts active
+ *    packages with inactive deps) are refreshed by `recomputeInactiveDeps()`,
+ *    which the toggle chokepoint (`applyStorageStateChange`) calls after the bulk.
+ *  - Live count `getStatusCounts()` re-iterates `packageIndex` on every call, so it
+ *    sees `storage_state` patches (offloaded count, broken) immediately.
  *
- * If you ever add a derived map that branches on `storage_state` (e.g. an
- * "effective broken" set that treats offloaded deps as missing), either extend
- * this function or fall back to `buildFromDb()` at the call site — otherwise
- * a toggle-enabled will silently leave that map stale until the next rescan.
+ * If you add another derived map that branches on `storage_state`, either refresh
+ * it in `recomputeInactiveDeps()` / at the toggle chokepoint, compute it live, or
+ * fall back to `buildFromDb()` — otherwise a toggle will leave it stale until the
+ * next rescan.
  */
 export function patchStorageState(filenames, storageState, libraryDirId) {
   for (const fn of filenames) {

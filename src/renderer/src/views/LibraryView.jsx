@@ -23,6 +23,7 @@ import {
   X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { HoverCard, HoverCardTrigger, HoverCardContent } from '@/components/ui/hover-card'
 import { toast } from '@/components/Toast'
 import {
   AlertDialog,
@@ -136,11 +137,18 @@ function isUpdateChecking(updateInfo) {
   return updateInfo.downloadUrl === undefined
 }
 
+/** A package counts as "broken" when it's corrupted, has missing deps, or — while
+ *  active — has dependencies that are installed but disabled/offloaded (VaM won't
+ *  load them). Inactive packages aren't flagged: their inactive deps are expected. */
+function isBrokenPackage(p) {
+  return p.missingDeps > 0 || p.isCorrupted || (p.inactiveDeps > 0 && isPackageActive(p.storageState))
+}
+
 function filterPackagesByStatus(items, statusFilter, updateCheckResults) {
   if (statusFilter === 'missing') return []
   if (statusFilter === 'direct') return items.filter((p) => p.isDirect)
   if (statusFilter === 'dependency') return items.filter((p) => !p.isDirect)
-  if (statusFilter === 'broken') return items.filter((p) => p.missingDeps > 0 || p.isCorrupted)
+  if (statusFilter === 'broken') return items.filter(isBrokenPackage)
   if (statusFilter === 'orphan') return items.filter((p) => p.isOrphan)
   if (statusFilter === 'updates') return items.filter((p) => updateCheckResults?.[p.filename])
   if (statusFilter === 'local') return items.filter((p) => p.isLocalOnly)
@@ -322,7 +330,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     for (const p of items) {
       if (p.isDirect) direct++
       else dependency++
-      if (p.missingDeps > 0 || p.isCorrupted) broken++
+      if (isBrokenPackage(p)) broken++
       if (!p.isDirect && p.isOrphan) orphan++
       if (p.isLocalOnly) local++
     }
@@ -1889,6 +1897,14 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
       toast(`Failed to toggle package: ${err.message}`)
     }
   }
+  const handleEnableInactiveDeps = async () => {
+    try {
+      const res = await window.api.packages.enableDeps(pkg.filename)
+      if (res?.count > 0) toast(`Enabled ${res.count} dependenc${res.count === 1 ? 'y' : 'ies'}`, 'success')
+    } catch (err) {
+      toast(`Failed to enable dependencies: ${err.message}`)
+    }
+  }
   const handlePromote = async () => {
     try {
       await window.api.packages.promote(pkg.filename)
@@ -2198,7 +2214,9 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
               items={pkg.deps}
               depCount={pkg.depCount}
               missingDeps={pkg.missingDeps}
+              inactiveDeps={isPackageActive(pkg.storageState) ? pkg.inactiveDeps : 0}
               onInstallMissing={() => useDownloadStore.getState().installMissing(pkg.filename)}
+              onEnableInactive={handleEnableInactiveDeps}
               onSelectPackage={handleSelectPackage}
             />
           </div>
@@ -2330,7 +2348,43 @@ function flattenDepRows(items, depth = 0) {
   return out
 }
 
-function DepList({ items, depCount, missingDeps, onInstallMissing, onSelectPackage }) {
+/**
+ * Well-header issue chip: a calm amber status that reveals an inline fix-all link
+ * on hover (via an interactive hover-card), so stray hovers never reflow the header.
+ */
+function DepIssueAction({ Icon, label, description, actionLabel, onAction }) {
+  return (
+    <HoverCard openDelay={300} closeDelay={100}>
+      <HoverCardTrigger asChild>
+        <span className="flex shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap text-[10px] leading-none text-warning transition-[filter] hover:brightness-125">
+          <Icon size={10} className="shrink-0" /> {label}
+        </span>
+      </HoverCardTrigger>
+      <HoverCardContent align="end" className="max-w-[220px]">
+        <p className="text-[11px] leading-snug text-text-secondary">
+          {description}{' '}
+          <button
+            type="button"
+            onClick={onAction}
+            className="cursor-pointer font-medium text-accent-blue transition-[filter] hover:brightness-125"
+          >
+            {actionLabel}
+          </button>
+        </p>
+      </HoverCardContent>
+    </HoverCard>
+  )
+}
+
+function DepList({
+  items,
+  depCount,
+  missingDeps,
+  inactiveDeps = 0,
+  onInstallMissing,
+  onEnableInactive,
+  onSelectPackage,
+}) {
   const [expanded, setExpanded] = useState(false)
   const [query, setQuery] = useState('')
   const byPackageRef = useDownloadStore((s) => s.byPackageRef)
@@ -2397,23 +2451,30 @@ function DepList({ items, depCount, missingDeps, onInstallMissing, onSelectPacka
               <span className="shrink-0 whitespace-nowrap text-[11px] font-medium text-text-primary">
                 Dependencies <span className="text-text-tertiary font-normal">({depCount})</span>
               </span>
-              {missingDeps > 0 && (
-                <span className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[10px] text-warning">
-                  <AlertTriangle size={10} className="shrink-0" /> {missingDeps} missing
-                </span>
-              )}
             </div>
           )}
         </div>
+        {/* Each issue reads as a calm, static amber status. Hovering it opens an interactive
+            hover-card holding an inline fix-all link — so accidental mouse-overs cause no
+            motion in the header, and the action is one deliberate move away. */}
         <div className="flex shrink-0 items-center gap-2">
+          {!showSearch && inactiveDeps > 0 && onEnableInactive && (
+            <DepIssueAction
+              Icon={Power}
+              label={`${inactiveDeps} disabled`}
+              description={`${inactiveDeps} dependenc${inactiveDeps === 1 ? 'y is' : 'ies are'} disabled or offloaded.`}
+              actionLabel="Enable all"
+              onAction={onEnableInactive}
+            />
+          )}
           {!showSearch && missingDeps > 0 && (
-            <button
-              type="button"
-              onClick={onInstallMissing}
-              className="shrink-0 cursor-pointer text-[10px] text-accent-blue transition-[filter] hover:brightness-125"
-            >
-              Install missing
-            </button>
+            <DepIssueAction
+              Icon={AlertTriangle}
+              label={`${missingDeps} missing`}
+              description={`${missingDeps} dependenc${missingDeps === 1 ? 'y is' : 'ies are'} missing.`}
+              actionLabel="Install all"
+              onAction={onInstallMissing}
+            />
           )}
           {expanded && collapsible && (
             <button

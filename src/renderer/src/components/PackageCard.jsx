@@ -62,6 +62,50 @@ function useInactiveStyle(pkg) {
 
 const inactiveTitle = (isOffloaded) => (isOffloaded ? 'Package offloaded' : 'Package disabled')
 
+/**
+ * Describe a package's dependency problems (missing and/or disabled+offloaded)
+ * in two shapes so each surface renders consistently:
+ *  - `summary`: one consolidated worded label for contexts that show words —
+ *    `N missing`, `N disabled`, or `N issues` (total) when mixed, with the
+ *    highest-severity icon.
+ *  - `segments`: per-type icon+count pairs for icon-only contexts (minimal
+ *    card, table, compressed footer), where no words means no crowding.
+ * `packageActive` gates the inactive signal — an already-inactive package's
+ * inactive deps are expected, not a flag. Returns null when there are no issues.
+ */
+export function depIssues(pkg, packageActive) {
+  const missing = pkg.missingDeps || 0
+  const inactive = packageActive ? pkg.inactiveDeps || 0 : 0
+  if (!missing && !inactive) return null
+  const plural = (n) => (n === 1 ? 'y' : 'ies')
+  const segments = []
+  // Disabled/offloaded (fixable locally) sits left; missing (may be unresolvable) sits right.
+  if (inactive) {
+    segments.push({
+      key: 'inactive',
+      Icon: Power,
+      count: inactive,
+      tone: 'text-warning',
+      title: `${inactive} disabled or offloaded dependenc${plural(inactive)}`,
+    })
+  }
+  if (missing) {
+    segments.push({
+      key: 'missing',
+      Icon: AlertTriangle,
+      count: missing,
+      tone: 'text-warning',
+      title: `${missing} missing dependenc${plural(missing)}`,
+    })
+  }
+  let summary
+  if (missing && inactive)
+    summary = { Icon: AlertTriangle, count: missing + inactive, word: 'issues', tone: 'text-warning' }
+  else if (missing) summary = { Icon: AlertTriangle, count: missing, word: 'missing', tone: 'text-warning' }
+  else summary = { Icon: Power, count: inactive, word: 'disabled', tone: 'text-warning' }
+  return { segments, summary, title: segments.map((s) => s.title).join(' · ') }
+}
+
 /** Drop-shadow for outline/stroke glyphs sitting directly on a thumbnail (Power, Eye, EyeOff, Archive). */
 const THUMB_OUTLINE_ICON_SHADOW =
   '[&_svg]:filter-[drop-shadow(0_0_1px_rgba(0,0,0,1))_drop-shadow(0_0_2.5px_rgba(0,0,0,1))_drop-shadow(0_0_5px_rgba(0,0,0,1))_drop-shadow(0_1px_10px_rgba(0,0,0,0.85))]'
@@ -488,6 +532,7 @@ export function LibraryCard({
   const inactiveStyle = useInactiveStyle(pkg)
   const { isOffloaded, inactive } = inactiveStyle
   const dim = inactiveStyle.dim || dimmed
+  const depIssue = depIssues(pkg, !inactive)
   const name = displayName(pkg)
   const thumbUrl = useThumbnail(`pkg:${pkg.filename}`)
   const versionStr = pkg.version != null && pkg.version !== '' ? String(pkg.version) : null
@@ -517,7 +562,7 @@ export function LibraryCard({
           !pkg.isDirect ||
           pkg.isLocalOnly ||
           pkg.noLookPresetTag ||
-          (minimal && pkg.missingDeps > 0)) && (
+          (minimal && !!depIssue)) && (
           <div className="absolute top-2 left-2 z-2 flex max-w-[calc(100%-2.75rem)] items-center gap-1 overflow-x-auto scrollbar-hide flex-nowrap">
             {bulkMode && <BulkSelectChip checked={bulkSelected} />}
             {!hideType && (
@@ -557,14 +602,17 @@ export function LibraryCard({
                 LOCAL
               </div>
             )}
-            {minimal && pkg.missingDeps > 0 && !bulkMode && (
-              <div
-                className={`${THUMB_OVERLAY_CHIP} bg-warning/20 text-warning backdrop-blur-sm flex items-center gap-0.5`}
-                title={`${pkg.missingDeps} missing dependencies`}
-              >
-                <AlertTriangle size={10} className="shrink-0" /> {pkg.missingDeps}
-              </div>
-            )}
+            {minimal &&
+              depIssue &&
+              depIssue.segments.map((s) => (
+                <div
+                  key={s.key}
+                  className={`${THUMB_OVERLAY_CHIP} bg-warning/15 backdrop-blur-sm flex items-center gap-0.5 ${s.tone}`}
+                  title={s.title}
+                >
+                  <s.Icon size={10} className="shrink-0" /> {s.count}
+                </div>
+              ))}
           </div>
         )}
         <div className="absolute top-2 right-2 flex items-center gap-1 z-1">
@@ -654,14 +702,21 @@ export function LibraryCard({
                 <span className="@max-[158px]:hidden"> items</span>
               </span>
             </span>
-            {pkg.missingDeps > 0 && (
-              <span
-                className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-warning tabular-nums @max-[138px]:hidden"
-                title={`${pkg.missingDeps} missing dependencies`}
-              >
-                <AlertTriangle size={10} className="shrink-0" />
-                <span>{pkg.missingDeps}</span>
-                <span className="@max-[228px]:hidden">missing</span>
+            {depIssue && (
+              <span className="inline-flex shrink-0 items-center whitespace-nowrap tabular-nums" title={depIssue.title}>
+                <span className={`hidden items-center gap-1 @min-[228px]:inline-flex ${depIssue.summary.tone}`}>
+                  <depIssue.summary.Icon size={10} className="shrink-0" />
+                  <span>{depIssue.summary.count}</span>
+                  <span>{depIssue.summary.word}</span>
+                </span>
+                <span className="inline-flex items-center gap-2 @min-[228px]:hidden">
+                  {depIssue.segments.map((s) => (
+                    <span key={s.key} className={`inline-flex items-center gap-1 ${s.tone}`}>
+                      <s.Icon size={10} className="shrink-0" />
+                      <span>{s.count}</span>
+                    </span>
+                  ))}
+                </span>
               </span>
             )}
           </div>
@@ -686,6 +741,7 @@ export function LibraryTableRow({
   const inactiveStyle = useInactiveStyle(pkg)
   const { isOffloaded, inactive } = inactiveStyle
   const dim = inactiveStyle.dim || dimmed
+  const depIssue = depIssues(pkg, !inactive)
   const name = displayName(pkg)
   const versionStr = pkg.version != null && pkg.version !== '' ? String(pkg.version) : null
   const thumbUrl = useThumbnail(`pkg:${pkg.filename}`)
@@ -793,9 +849,13 @@ export function LibraryTableRow({
         <span className="tabular-nums">{pkg.contentCount}</span>
       </div>
       <div className="w-14 py-2 px-3">
-        {pkg.missingDeps > 0 ? (
-          <span className="text-[10px] text-warning">
-            <AlertTriangle size={10} className="inline" /> {pkg.missingDeps}
+        {depIssue ? (
+          <span className="inline-flex items-center gap-1.5 text-[10px]" title={depIssue.title}>
+            {depIssue.segments.map((s) => (
+              <span key={s.key} className={`inline-flex items-center gap-0.5 ${s.tone}`}>
+                <s.Icon size={10} className="shrink-0" /> {s.count}
+              </span>
+            ))}
           </span>
         ) : (
           <span className="text-[10px] text-text-tertiary">{pkg.depCount}</span>
