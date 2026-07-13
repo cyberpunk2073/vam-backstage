@@ -845,7 +845,6 @@ export default function SettingsView() {
           <Section
             title="Experimental"
             icon={FlaskConical}
-            construction
             description="Early features that may change or be removed. Feedback welcome."
           >
             <div className="space-y-4">
@@ -1206,10 +1205,10 @@ export default function SettingsView() {
   )
 }
 
-function Section({ title, description, danger, construction, icon: Icon, children }) {
+function Section({ title, description, danger, icon: Icon, children }) {
   return (
     <div className="rounded-xl border border-border bg-surface overflow-hidden">
-      {(danger || construction) && (
+      {danger && (
         <div
           aria-hidden
           className="h-2"
