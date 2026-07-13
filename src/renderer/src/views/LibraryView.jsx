@@ -420,7 +420,7 @@ export default function LibraryView({ onNavigate, navContext }) {
         label: 'Status',
         type: 'list',
         value: statusFilter,
-        default: FILTER_DEFAULTS.statusFilter,
+        // Omit `default` so Status never highlights or counts toward Reset (like sort).
         onChange: setStatusFilter,
         listCollapsible: false,
         items: [
