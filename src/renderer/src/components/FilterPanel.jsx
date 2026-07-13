@@ -91,8 +91,15 @@ export default function FilterPanel({
         className={`flex-1 min-w-0 min-h-0 bg-surface border-r border-border flex flex-col ${disabled ? 'opacity-40 pointer-events-none select-none' : ''}`}
       >
         <div className="flex-1 min-h-0 overflow-y-auto">
-          {/* Search */}
-          <div className="p-3 pb-2">
+          {/* Search — no section title; bar hugs the edit box only (inset by padding). */}
+          <div className="relative px-3 pt-3 pb-2">
+            {!!search && (
+              <span
+                className="absolute left-0 top-3 bottom-2 w-[3px] rounded-r-full bg-accent-blue"
+                title="This filter is set to a non-default value"
+                aria-hidden="true"
+              />
+            )}
             {smartSearch ? (
               <SmartSearchBar
                 value={search}
