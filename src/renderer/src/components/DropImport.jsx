@@ -348,7 +348,7 @@ export default function DropImport() {
                       <div className="mt-3">
                         <div className="flex justify-between text-xs text-text-secondary">
                           <span>
-                            Adding {Math.min(Math.floor(progress?.current ?? 0) + 1, count)} / {count}…
+                            Copying {Math.min(Math.floor(progress?.current ?? 0) + 1, count)} / {count}…
                           </span>
                           <span>{pct}%</span>
                         </div>
@@ -382,7 +382,7 @@ export default function DropImport() {
                 >
                   {importing ? (
                     <>
-                      <Loader2 size={14} className="animate-spin" /> Adding…
+                      <Loader2 size={14} className="animate-spin" /> Copying…
                     </>
                   ) : (
                     'Add to Library'
