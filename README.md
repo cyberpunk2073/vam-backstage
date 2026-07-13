@@ -14,9 +14,9 @@ Explore and organize your collection in a fast desktop interface, with powerful 
 
 **Install from the Hub without stopping what you are doing.** Search the Hub and open complete resource pages inside Backstage. Installing a resource queues its missing dependencies and downloads everything in parallel in the background, so you can keep browsing, organizing, and starting other installs. Save resources to a wishlist for later and check installed packages for updates.
 
-**Find and organize anything.** Search packages or individual content with ordinary words, then narrow the results by author, type, tags, status, or your own labels. Apply labels, hide content, and mark favorites across whole packages or individual items, including in bulk. When you need more control, advanced searches can combine terms and exclusions such as `@MacGruber hair -male`.
+**Find and organize anything.** Search across packages and individual content, then narrow the results by author, type, tags, status, or your own labels. Apply labels, hide content, and mark favorites across whole packages or individual items, including in bulk. When you need more control, advanced searches can combine terms and exclusions such as `@MacGruber hair -male`.
 
-**Extract the presets that look packages leave out.** Many looks ship only as demonstration scenes, leaving you to create reusable presets yourself. Backstage extracts appearance and clothing presets from a scene in one action, and can convert legacy looks as well.
+**Extract and convert presets.** Extract appearance and clothing presets from scenes in one action, or convert legacy looks to appearance presets. This is especially useful for look packages that ship only as demonstration scenes and otherwise require you to create reusable presets manually.
 
 **Disable packages intelligently.** Temporarily take packages out of VaM without uninstalling them. Backstage follows the dependency graph: disabling a package also disables dependencies that no enabled package still needs, and enabling it restores its required dependencies. Work with one package or many at once.
 
