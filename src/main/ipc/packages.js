@@ -389,6 +389,35 @@ export function registerPackageHandlers() {
     return getPackageDetail(filename)
   })
 
+  ipcMain.handle('packages:graph', () => {
+    const packageIndex = getPackageIndex()
+    const forwardDeps = getForwardDeps()
+    const nodes = []
+    // Only enabled (actively installed) packages — disabled/offloaded ones aren't
+    // live in VaM, so they'd only add noise to the force field.
+    const enabled = new Set()
+    for (const [filename, pkg] of packageIndex) {
+      if (!isPackageActive(pkg.storage_state)) continue
+      enabled.add(filename)
+      nodes.push({
+        id: filename,
+        creator: pkg.creator,
+        packageName: pkg.package_name,
+        isDirect: !!pkg.is_direct,
+        type: effectivePackageType(pkg),
+      })
+    }
+    const links = []
+    for (const [filename, deps] of forwardDeps) {
+      if (!enabled.has(filename)) continue
+      for (const d of deps) {
+        if (!d.resolved || !enabled.has(d.resolved)) continue
+        links.push({ source: filename, target: d.resolved })
+      }
+    }
+    return { nodes, links }
+  })
+
   ipcMain.handle('packages:stats', () => {
     return getStats()
   })

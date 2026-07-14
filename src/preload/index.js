@@ -27,6 +27,7 @@ const api = {
   packages: {
     list: (filters) => invoke('packages:list', filters),
     detail: (filename) => invoke('packages:detail', filename),
+    graph: () => invoke('packages:graph'),
     stats: () => invoke('packages:stats'),
     statusCounts: () => invoke('packages:status-counts'),
     typeCounts: () => invoke('packages:type-counts'),
@@ -84,6 +85,7 @@ const api = {
   },
   thumbnails: {
     get: (keys) => invoke('thumbnails:get', keys),
+    getGraph: (keys) => invoke('thumbnails:getGraph', keys),
   },
   avatars: {
     get: (usernames) => invoke('avatars:get', usernames),

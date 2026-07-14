@@ -1,6 +1,6 @@
 import { ipcMain, app } from 'electron'
 import { getAvatarBuffers } from '../avatar-cache.js'
-import { getThumbnails } from '../thumbnails.js'
+import { getThumbnails, getGraphThumbnails } from '../thumbnails.js'
 import { getSetting, setSetting, getDatabasePath } from '../db.js'
 import { registerPackageHandlers } from './packages.js'
 import { registerContentHandlers } from './contents.js'
@@ -23,6 +23,7 @@ function registerMiscHandlers() {
   ipcMain.handle('avatars:get', async (_, userIds) => getAvatarBuffers(userIds || []))
 
   ipcMain.handle('thumbnails:get', async (_, keys) => getThumbnails(keys || []))
+  ipcMain.handle('thumbnails:getGraph', async (_, keys) => getGraphThumbnails(keys || []))
 
   ipcMain.handle('settings:getDatabasePath', () => getDatabasePath())
   ipcMain.handle('settings:get', (_, key) => getSetting(key))

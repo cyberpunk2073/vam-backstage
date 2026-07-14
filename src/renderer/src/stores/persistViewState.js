@@ -48,6 +48,13 @@ export const asCardWidth = (v) => {
   return Number.isNaN(n) ? undefined : Math.min(500, Math.max(100, n))
 }
 
+/** Validator: keep a finite number clamped to `[min, max]`. */
+export const asClamped = (min, max) => (v) => {
+  const n = typeof v === 'number' ? v : parseFloat(v)
+  if (!Number.isFinite(n)) return undefined
+  return Math.min(max, Math.max(min, n))
+}
+
 /**
  * Build the options object for `persist` from a store `name` and a field
  * `schema`. The schema keys are the persisted allowlist; the values validate

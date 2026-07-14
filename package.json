@@ -32,6 +32,7 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "@cosmos.gl/graph": "^3.3.0",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@fontsource-variable/geist": "^5.2.8",

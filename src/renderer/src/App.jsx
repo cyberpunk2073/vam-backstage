@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, Activity } from 'react'
-import { Compass, Library, LayoutGrid, Download, Settings, Pause, Loader2, AlertTriangle } from 'lucide-react'
+import { Compass, Library, LayoutGrid, Download, Settings, Pause, Loader2, AlertTriangle, Network } from 'lucide-react'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,6 +25,7 @@ import { dismissTransientOverlays } from '@/lib/dismissOverlays'
 import HubView from '@/views/HubView'
 import LibraryView from '@/views/LibraryView'
 import ContentView from '@/views/ContentView'
+import DependencyGraphView from '@/views/DependencyGraphView'
 import SettingsView from '@/views/SettingsView'
 
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -40,6 +41,7 @@ const NAV_ITEMS = [
   { id: 'hub', icon: Compass, label: 'Hub' },
   { id: 'library', icon: Library, label: 'Library' },
   { id: 'content', icon: LayoutGrid, label: 'Content' },
+  { id: 'graph', icon: Network, label: 'Graph' },
 ]
 export default function App() {
   const view = useViewStore((s) => s.view)
@@ -271,6 +273,11 @@ export default function App() {
               {seenViews.current.has('content') && (
                 <Activity mode={view === 'content' ? 'visible' : 'hidden'}>
                   <ContentView onNavigate={navigateTo} navContext={navContextRef} />
+                </Activity>
+              )}
+              {seenViews.current.has('graph') && (
+                <Activity mode={view === 'graph' ? 'visible' : 'hidden'}>
+                  <DependencyGraphView />
                 </Activity>
               )}
               {view === 'settings' && <SettingsView />}

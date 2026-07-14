@@ -1,10 +1,10 @@
 import { join, dirname } from 'path'
-import { readFile, access, writeFile, mkdir } from 'fs/promises'
+import { readFile, access, writeFile, mkdir, unlink } from 'fs/promises'
 import { constants } from 'fs'
 import { createHash } from 'crypto'
 import { isLocalPackage } from '@shared/local-package.js'
 import { hubResourceIconUrl } from '@shared/hub-http.js'
-import { app, net } from 'electron'
+import { app, net, nativeImage } from 'electron'
 import { getSetting, getContentThumbnailPath } from './db.js'
 import { extractFile, extractFiles } from './scanner/var-reader.js'
 import { getPackageIndex } from './store.js'
@@ -17,6 +17,14 @@ const MAX_ENTRIES = 3000
 // headroom without queue padding; sequential awaits on a 50-card cold batch
 // otherwise gate the renderer on whichever single archive is slowest under AV.
 const THUMB_CONCURRENCY = 8
+/** Side length of dependency-graph point tiles (matches renderer atlas). */
+const GRAPH_THUMB_PX = 64
+/** nativeImage.resize is sync — one at a time, then yield so IPC can pump. */
+const GRAPH_RESIZE_YIELD_EVERY = 8
+/** Full-res → tile in chunks so getThumbnails never holds the whole library at once. */
+const GRAPH_RESIZE_CHUNK = 200
+/** Parallel reads of already-resized graph tiles from disk. */
+const GRAPH_TILE_READ_CONCURRENCY = 32
 const cache = new Map()
 
 function touchLru(key) {
@@ -123,15 +131,98 @@ async function persistCtThumb(thumbCacheDir, packageFilename, internalPath, buf)
   } catch {}
 }
 
+/** On-disk path for a 64×64 graph tile derived from a full thumbnail key. */
+function graphTilePath(thumbCacheDir, key) {
+  const hash = createHash('sha1').update(key).digest('hex').slice(0, 16)
+  return join(thumbCacheDir, 'graph64', `${hash}.jpg`)
+}
+
 /**
  * Drop specific keys from the in-memory thumbnail buffer cache so the next
  * `getThumbnails` call re-reads from disk (or re-extracts). Used by
  * thumb-resolver after it writes a fresh Hub thumbnail to `thumb-cache/`, so
  * the previously cached fallback (internal .var thumb or null) isn't served.
+ * Also drops derived graph64 tiles so the next graph open rebuilds from the
+ * fresh full-size image.
  */
 export function invalidateThumbnailCache(keys) {
   if (!keys?.length) return
-  for (const key of keys) cache.delete(key)
+  const thumbCacheDir = getThumbCacheDir()
+  for (const key of keys) {
+    cache.delete(key)
+    void unlink(graphTilePath(thumbCacheDir, key)).catch(() => {})
+  }
+}
+
+/**
+ * Resize a full JPEG/PNG buffer to a square graph tile via Electron's
+ * nativeImage (no extra native deps). Sync work — callers must yield between
+ * batches so the message pump stays responsive.
+ */
+function resizeToGraphTile(buf) {
+  const img = nativeImage.createFromBuffer(buf)
+  if (img.isEmpty()) return null
+  return img.resize({ width: GRAPH_THUMB_PX, height: GRAPH_THUMB_PX, quality: 'better' }).toJPEG(75)
+}
+
+const yieldToEventLoop = () => new Promise((r) => setImmediate(r))
+
+/**
+ * Bulk thumbnails for the dependency graph: 64×64 JPEGs from `thumb-cache/graph64/`,
+ * built on demand from the normal full-size thumbnail pipeline. Warm hits are
+ * tiny IPC payloads; cold misses resize in chunks, yielding so main stays free.
+ *
+ * @param {string[]} keys Same keys as `getThumbnails` (`pkg:…`, etc.)
+ * @returns {Promise<Record<string, Buffer|null>>}
+ */
+export async function getGraphThumbnails(keys) {
+  if (!keys?.length) return {}
+  const thumbCacheDir = getThumbCacheDir()
+  const graphDir = join(thumbCacheDir, 'graph64')
+  await ensureThumbCacheDir(thumbCacheDir)
+  try {
+    await mkdir(graphDir, { recursive: true })
+  } catch {}
+
+  const results = {}
+  const misses = []
+  const readLimit = pLimit(GRAPH_TILE_READ_CONCURRENCY)
+  await Promise.all(
+    keys.map((key) =>
+      readLimit(async () => {
+        const buf = await tryReadFile(graphTilePath(thumbCacheDir, key))
+        if (buf) results[key] = buf
+        else misses.push(key)
+      }),
+    ),
+  )
+  if (misses.length === 0) return results
+
+  for (let i = 0; i < misses.length; i += GRAPH_RESIZE_CHUNK) {
+    const chunk = misses.slice(i, i + GRAPH_RESIZE_CHUNK)
+    const full = await getThumbnails(chunk)
+    let sinceYield = 0
+    for (const key of chunk) {
+      const src = full[key]
+      if (!src?.length) {
+        results[key] = null
+        continue
+      }
+      try {
+        const tile = resizeToGraphTile(src)
+        results[key] = tile
+        if (tile) void writeFile(graphTilePath(thumbCacheDir, key), tile).catch(() => {})
+      } catch {
+        results[key] = null
+      }
+      sinceYield++
+      if (sinceYield >= GRAPH_RESIZE_YIELD_EVERY) {
+        sinceYield = 0
+        await yieldToEventLoop()
+      }
+    }
+  }
+  return results
 }
 
 export async function getThumbnails(keys) {
