@@ -55,12 +55,17 @@ const BORDER_DEP = 'rgb(150, 157, 170)' // grey — pulled in as a dependency
 // Keep the renderer values named so the debug panel reports the exact inputs
 // currently sent to cosmos rather than approximating them from the result.
 const LINK_DEFAULT_WIDTH = 1
+const LINK_HOVER_WIDTH = 1.35
 const LINK_WIDTH_SCALE = 1
 const LINK_OPACITY = 1
 const LINK_VISIBILITY_DISTANCE_RANGE = [50, 150]
 const LINK_VISIBILITY_MIN_TRANSPARENCY = 0.12
 const SCALE_LINKS_ON_ZOOM = false
 const LINK_ZOOM_ANCHOR = 0.525954
+/** Default link color (#3a3d4d) as RGBA 0..1. */
+const LINK_COLOR = [58 / 255, 61 / 255, 77 / 255, 1]
+/** Mildly brightened link color on node hover — intensity only, no grey-out of others. */
+const LINK_HOVER_COLOR = [0.4, 0.43, 0.52, 1]
 
 // RGBA in 0..1 — cosmos wants raw floats per point.
 const COLOR_DIRECT = [0.29, 0.57, 0.95, 1] // blue — installed on purpose
@@ -279,6 +284,11 @@ function buildGraphArrays(raw) {
 
   const adjacency = Array.from({ length: n }, () => [])
   const neighbors = Array.from({ length: n }, () => [])
+  // Per-node incident link indices (incoming dependents + outgoing deps).
+  // Used on hover to brighten those links without greying out the rest.
+  const incidentLinks = Array.from({ length: n }, () => [])
+  const outDegree = new Int32Array(n)
+  const inDegree = new Int32Array(n)
   const linkPairs = []
   for (const l of raw.links) {
     const s = indexById.get(l.source)
@@ -287,6 +297,11 @@ function buildGraphArrays(raw) {
     adjacency[s].push(t)
     neighbors[s].push(t)
     neighbors[t].push(s)
+    const linkIndex = linkPairs.length / 2
+    incidentLinks[s].push(linkIndex)
+    incidentLinks[t].push(linkIndex)
+    outDegree[s]++
+    inDegree[t]++
     linkPairs.push(s, t)
   }
 
@@ -425,6 +440,8 @@ function buildGraphArrays(raw) {
 
     const node = nodes[i]
     node.reach = reach[i]
+    node.dependencies = outDegree[i]
+    node.dependents = inDegree[i]
     const c = colorFor(node)
     colors[i * 4] = c[0]
     colors[i * 4 + 1] = c[1]
@@ -447,6 +464,7 @@ function buildGraphArrays(raw) {
     linkStrengths,
     clusters,
     clusterStrengths,
+    incidentLinks,
     linkCount: linkPairs.length / 2,
   }
 }
@@ -504,9 +522,16 @@ export default function DependencyGraphView() {
   const containerRef = useRef(null)
   const graphRef = useRef(null)
   const nodesRef = useRef([])
+  const incidentLinksRef = useRef([])
+  // Mutable RGBA/width buffers for hover intensity (cosmos keeps the reference).
+  const linkColorsRef = useRef(null)
+  const linkWidthsRef = useRef(null)
   // Tooltip is positioned imperatively (transform) so it can follow the node
   // every frame without re-rendering React while the sim runs.
   const tooltipRef = useRef(null)
+  // Cosmos hover ring is hardcoded at 1.3× point size; we draw our own so it
+  // sits on the thumbnail circle instead of outside it.
+  const hoverRingRef = useRef(null)
   const hoverIndexRef = useRef(null)
   const rafRef = useRef(0)
   const [loading, setLoading] = useState(true)
@@ -566,6 +591,50 @@ export default function DependencyGraphView() {
       const p = paramsRef.current
       const built = buildGraphArrays(raw)
       nodesRef.current = built.nodes
+      incidentLinksRef.current = built.incidentLinks
+      const linkColors = new Float32Array(built.linkCount * 4)
+      const linkWidths = new Float32Array(built.linkCount)
+      for (let i = 0; i < built.linkCount; i++) {
+        linkColors[i * 4] = LINK_COLOR[0]
+        linkColors[i * 4 + 1] = LINK_COLOR[1]
+        linkColors[i * 4 + 2] = LINK_COLOR[2]
+        linkColors[i * 4 + 3] = LINK_COLOR[3]
+        linkWidths[i] = LINK_DEFAULT_WIDTH
+      }
+      linkColorsRef.current = linkColors
+      linkWidthsRef.current = linkWidths
+      let emphasizedLinks = null
+
+      const paintIncidentLinks = (incident) => {
+        const g = graphRef.current
+        const colors = linkColorsRef.current
+        const widths = linkWidthsRef.current
+        if (!g || !colors || !widths) return
+        if (emphasizedLinks) {
+          for (const li of emphasizedLinks) {
+            colors[li * 4] = LINK_COLOR[0]
+            colors[li * 4 + 1] = LINK_COLOR[1]
+            colors[li * 4 + 2] = LINK_COLOR[2]
+            colors[li * 4 + 3] = LINK_COLOR[3]
+            widths[li] = LINK_DEFAULT_WIDTH
+          }
+        }
+        emphasizedLinks = incident?.length ? incident : null
+        if (emphasizedLinks) {
+          for (const li of emphasizedLinks) {
+            colors[li * 4] = LINK_HOVER_COLOR[0]
+            colors[li * 4 + 1] = LINK_HOVER_COLOR[1]
+            colors[li * 4 + 2] = LINK_HOVER_COLOR[2]
+            colors[li * 4 + 3] = LINK_HOVER_COLOR[3]
+            widths[li] = LINK_HOVER_WIDTH
+          }
+        }
+        g.setLinkColors(colors)
+        g.setLinkWidths(widths)
+        // Snap — default 800ms color transition would lag behind the cursor.
+        g.render(undefined, 0)
+      }
+
       userTouchedZoomRef.current = false
       frictionWarmupRef.current = true
       const syncLinkStyleForZoom = () => {
@@ -580,18 +649,36 @@ export default function DependencyGraphView() {
         })
       }
 
-      // Keep the tooltip glued to the hovered node: track its live position and
-      // reproject it to screen space each frame (covers sim motion, pan & zoom).
-      const positionTooltip = () => {
-        rafRef.current = requestAnimationFrame(positionTooltip)
+      // Keep the tooltip and hover ring glued to the hovered node: track its live
+      // position and reproject to screen space each frame (sim motion, pan & zoom).
+      const positionHoverChrome = () => {
+        rafRef.current = requestAnimationFrame(positionHoverChrome)
         const g = graphRef.current
-        const el = tooltipRef.current
+        const tip = tooltipRef.current
+        const ring = hoverRingRef.current
         const idx = hoverIndexRef.current
-        if (!g || !el || idx == null) return
+        if (!g || idx == null) {
+          if (ring) ring.style.opacity = '0'
+          return
+        }
         const pos = g.getTrackedPointPositionsMap().get(idx)
         if (!pos) return
         const [sx, sy] = g.spaceToScreenPosition([pos[0], pos[1]])
-        el.style.transform = `translate(${sx}px, ${sy}px)`
+        if (tip) tip.style.transform = `translate(${sx}px, ${sy}px)`
+        if (ring) {
+          // getPointRadiusByIndex returns cosmos "size" (diameter in space units);
+          // pass half so spaceToScreenRadius's maxPointSize clamp stays correct.
+          const spaceSize = g.getPointRadiusByIndex(idx)
+          if (!(spaceSize > 0)) {
+            ring.style.opacity = '0'
+            return
+          }
+          const screenDiameter = g.spaceToScreenRadius(spaceSize / 2) * 2
+          ring.style.width = `${screenDiameter}px`
+          ring.style.height = `${screenDiameter}px`
+          ring.style.transform = `translate(${sx - screenDiameter / 2}px, ${sy - screenDiameter / 2}px)`
+          ring.style.opacity = '1'
+        }
       }
 
       graph = new Graph(containerRef.current, {
@@ -599,8 +686,9 @@ export default function DependencyGraphView() {
         spaceSize: SPACE_SIZE,
         pointDefaultSize: 4,
         scalePointsOnZoom: true,
-        renderHoveredPointRing: true,
-        hoveredPointRingColor: '#ffffff',
+        // Built-in hover ring is fixed at 1.3× point size; we draw a matching
+        // ring ourselves (see hoverRingRef) so it aligns with the thumbnail.
+        renderHoveredPointRing: false,
         hoveredPointCursor: 'pointer',
         linkDefaultColor: '#3a3d4d',
         linkDefaultWidth: LINK_DEFAULT_WIDTH,
@@ -609,6 +697,8 @@ export default function DependencyGraphView() {
         scaleLinksOnZoom: SCALE_LINKS_ON_ZOOM,
         linkVisibilityDistanceRange: LINK_VISIBILITY_DISTANCE_RANGE,
         linkVisibilityMinTransparency: LINK_VISIBILITY_MIN_TRANSPARENCY,
+        // Hover brightens link colors/widths; keep those updates instant.
+        transitionDuration: 0,
         curvedLinks: false,
         // With the ALPHA_FLOOR reheat the sim never truly freezes; decay now
         // only sets how gently extra heat (slider changes) drains back to the
@@ -647,12 +737,14 @@ export default function DependencyGraphView() {
           if (cancelled) return
           hoverIndexRef.current = index
           graphRef.current?.trackPointPositionsByIndices([index])
+          paintIncidentLinks(incidentLinksRef.current[index])
           setHover(nodesRef.current[index] ?? null)
         },
         onPointMouseOut: () => {
           if (cancelled) return
           hoverIndexRef.current = null
           graphRef.current?.trackPointPositionsByIndices([])
+          paintIncidentLinks(null)
           setHover(null)
         },
         onSimulationTick: (alpha) => {
@@ -671,6 +763,8 @@ export default function DependencyGraphView() {
       graph.setPointSizes(built.sizes)
       graph.setLinks(built.links)
       graph.setLinkStrength(built.linkStrengths)
+      graph.setLinkColors(linkColors)
+      graph.setLinkWidths(linkWidths)
       graph.setPointClusters(built.clusters)
       graph.setPointClusterStrength(built.clusterStrengths)
       // Cold start at the alpha floor: seeding is near-final so no annealing
@@ -679,7 +773,7 @@ export default function DependencyGraphView() {
       // would catapult stretched links across the map).
       graph.render(ALPHA_FLOOR)
       syncLinkStyleForZoom()
-      rafRef.current = requestAnimationFrame(positionTooltip)
+      rafRef.current = requestAnimationFrame(positionHoverChrome)
       // After warmup: restore slider friction, and refit unless the user already
       // panned/zoomed, fitted, or zoomed to a node.
       refitTimer = setTimeout(() => {
@@ -920,22 +1014,33 @@ export default function DependencyGraphView() {
       </div>
 
       <div
+        ref={hoverRingRef}
+        className="pointer-events-none absolute left-0 top-0 z-10 box-border rounded-full border-2 border-white"
+        style={{
+          opacity: 0,
+          transform: 'translate(-9999px, -9999px)',
+          willChange: 'transform, width, height, opacity',
+        }}
+      />
+
+      <div
         ref={tooltipRef}
         className="pointer-events-none absolute left-0 top-0 z-20"
         style={{ transform: 'translate(-9999px, -9999px)', willChange: 'transform' }}
       >
         {hover && (
           <div
-            className="max-w-xs rounded-md bg-elevated/95 px-2.5 py-1.5 text-center text-xs shadow-md ring-1 ring-white/10"
+            className="max-w-xs rounded-md bg-elevated/50 px-2.5 py-1.5 text-center text-xs shadow-md ring-1 ring-white/10 backdrop-blur-sm"
             style={{ transform: 'translate(-50%, calc(-100% - 12px))' }}
           >
-            <div className="truncate text-text-primary">
-              {hover.creator}.{hover.packageName}
-            </div>
-            <div className="truncate text-text-tertiary">
-              {hover.isDirect ? 'direct' : 'dep'}
-              {hover.reach ? ` · ${hover.reach} dependents` : ''}
-            </div>
+            <div className="truncate text-text-primary">{hover.packageName}</div>
+            {(hover.dependencies > 0 || hover.dependents > 0) && (
+              <div className="truncate text-text-tertiary">
+                {hover.dependencies} {hover.dependencies === 1 ? 'dependency' : 'dependencies'}
+                {' · '}
+                {hover.dependents} {hover.dependents === 1 ? 'dependent' : 'dependents'}
+              </div>
+            )}
           </div>
         )}
       </div>
