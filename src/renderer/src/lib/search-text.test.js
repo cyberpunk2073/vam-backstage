@@ -21,6 +21,12 @@ describe('packageSearchExtras', () => {
     expect(packageSearchExtras({ isCorrupted: true })).toEqual(['corrupted'])
   })
 
+  it('includes favorite when the package has favorited content', () => {
+    expect(packageSearchExtras({ favoriteContentCount: 1 })).toEqual(['favorite'])
+    expect(packageSearchExtras({ favoriteContentCount: 3 })).toEqual(['favorite'])
+    expect(packageSearchExtras({ favoriteContentCount: 0 })).toEqual([])
+  })
+
   it('returns nothing for an ordinary package', () => {
     expect(packageSearchExtras({})).toEqual([])
   })

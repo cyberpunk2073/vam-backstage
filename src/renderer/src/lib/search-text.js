@@ -14,12 +14,13 @@ export function haystacksMatchAllTerms(haystacks, termsLower) {
   return termsLower.every((term) => lowered.some((h) => h.includes(term)))
 }
 
-/** Library chip phrases with no dedicated filter (`no preset` / `extracted` / `corrupted`). */
+/** Library chip phrases with no dedicated filter (`no preset` / `extracted` / `corrupted` / `favorite`). */
 export function packageSearchExtras(p) {
   const extras = []
   if (p.noLookPresetTag && !p.hasExtractedAppearancePreset) extras.push('no preset')
   if (p.hasExtractedAppearancePreset) extras.push('extracted')
   if (p.isCorrupted) extras.push('corrupted')
+  if (p.favoriteContentCount > 0) extras.push('favorite')
   return extras
 }
 
