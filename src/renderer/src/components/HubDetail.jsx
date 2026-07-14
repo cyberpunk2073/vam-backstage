@@ -248,6 +248,7 @@ function BookmarkStat({ loggedIn, bookmarked, busy, onBookmark }) {
 export default function HubDetail({
   resource,
   onBack,
+  onClose,
   onNavigate,
   onInstall,
   onFilterAuthor,
@@ -256,6 +257,7 @@ export default function HubDetail({
   canPrev,
   canNext,
   position,
+  backLabel,
 }) {
   const { detailData, detailLoading } = useHubStore()
   const detail = detailData
@@ -272,6 +274,8 @@ export default function HubDetail({
 
   const resourceId = detail?.resource_id || resource.resource_id
   const threadId = detail?.discussion_thread_id
+  // Full close (X / author filter) — falls back to onBack when not split.
+  const handleClose = onClose || onBack
 
   // The webview key is pinned to the resource the panel was opened with. Following
   // in-browser navigation swaps `resourceId` (above) to drive the left panel, but
@@ -621,7 +625,7 @@ export default function HubDetail({
       return {
         ref: f.filename || group,
         downloadRef: concreteDownloadRef(f),
-        resourceId: f.resource_id,
+        resourceId: f.resource_id != null && f.resource_id !== '' ? String(f.resource_id) : null,
         resolved: f._resolved || (f._installed ? f.filename : null),
         sizeBytes: parseInt(f.file_size || '0', 10),
         resolution,
@@ -679,6 +683,17 @@ export default function HubDetail({
     [resourceId, dlInstallDep],
   )
 
+  const handleNavigateDep = useCallback(
+    (targetId) => {
+      const rid = String(targetId)
+      if (!rid || rid === String(resourceId)) return
+      const store = useHubStore.getState()
+      const known = store.resources?.find((r) => String(r.resource_id) === rid)
+      store.openDetail(known || { resource_id: rid }, { pushHistory: true })
+    },
+    [resourceId],
+  )
+
   const hubUrl = `https://hub.virtamate.com/resources/${resourceId}`
   const externalOpenUrl = pkg.download_url || pkg.external_url || hubUrl
   // Address-bar copy / open-in-browser: map known *-panel URLs to full pages.
@@ -708,9 +723,16 @@ export default function HubDetail({
       {/* Back bar */}
       <div className="relative h-10 flex items-center justify-between px-4 border-b border-border shrink-0">
         {/* Back + pager, flat on the bar line (the bar is the container) */}
-        <div className="flex items-center gap-1 shrink-0">
-          <Button variant="ghost" size="sm" onClick={onBack} className="text-text-secondary hover:text-text-primary">
-            <ArrowLeft size={14} /> Back
+        <div className="flex items-center gap-1 shrink-0 min-w-0">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onBack}
+            title={backLabel ? `Back to ${backLabel}` : 'Back to gallery'}
+            className="text-text-secondary hover:text-text-primary min-w-0 max-w-[min(280px,40vw)]"
+          >
+            <ArrowLeft size={14} className="shrink-0" />
+            <span className="truncate">{backLabel || 'Back'}</span>
           </Button>
           {position && (
             <div className="flex items-center gap-0.5 ml-1 pl-1.5 border-l border-border/60">
@@ -752,7 +774,7 @@ export default function HubDetail({
           type="button"
           variant="ghost"
           size="icon-xs"
-          onClick={onBack}
+          onClick={handleClose}
           aria-label="Close detail"
           className="shrink-0 text-text-tertiary/70 hover:text-text-tertiary hover:bg-muted/35"
         >
@@ -794,7 +816,7 @@ export default function HubDetail({
                 type="button"
                 onClick={() => {
                   onFilterAuthor?.(username)
-                  onBack()
+                  handleClose()
                 }}
                 className="w-full flex items-center gap-2.5 mt-2.5 p-2 rounded-lg bg-elevated/50 text-left transition-colors hover:bg-elevated"
               >
@@ -1025,7 +1047,7 @@ export default function HubDetail({
                   </div>
                 ) : deps.length > 0 ? (
                   <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
-                    <DepTree deps={deps} onInstall={handleInstallDep} />
+                    <DepTree deps={deps} onInstall={handleInstallDep} onNavigate={handleNavigateDep} />
                   </div>
                 ) : null}
               </div>
@@ -1163,7 +1185,7 @@ export default function HubDetail({
 
 // --- Expandable dep list for hub detail ---
 
-function DepTree({ deps, onInstall }) {
+function DepTree({ deps, onInstall, onNavigate }) {
   const flat = useMemo(() => {
     const rows = []
     for (const root of deps) {
@@ -1178,7 +1200,14 @@ function DepTree({ deps, onInstall }) {
   return (
     <>
       {flat.map(({ dep, depth }, i) => (
-        <DepRow key={dep.ref || i} dep={dep} depth={depth} renderChildren={false} onInstall={onInstall} />
+        <DepRow
+          key={dep.ref || i}
+          dep={dep}
+          depth={depth}
+          renderChildren={false}
+          onInstall={onInstall}
+          onNavigate={onNavigate}
+        />
       ))}
     </>
   )

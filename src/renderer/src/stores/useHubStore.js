@@ -110,6 +110,10 @@ export const useHubStore = create(
       // NOT changed by followDetail, which must keep the webview mounted while the user
       // browses inside the guest page.
       detailNonce: 0,
+      // Stack of prior packages when drilling via Hub-available deps. Each entry is
+      // `{ resource, title }` — Back pops this instead of closing to the gallery.
+      // Cleared on gallery/pager opens and on closeDetail.
+      detailHistory: [],
       // Resource id whose detail followDetail is fetching in the background; dedupes
       // concurrent follows and lets stale responses be discarded after a newer
       // follow/open supersedes them.
@@ -208,16 +212,38 @@ export const useHubStore = create(
         set({ page: page + 1, loading: true })
       },
 
-      openDetail: async (resource) => {
+      /**
+       * Open a package detail overlay.
+       * @param opts.pushHistory  Push the current package onto `detailHistory` (dep drill).
+       * @param opts.history      Replace the stack (used by popDetailHistory). Cleared when neither is set.
+       */
+      openDetail: async (resource, opts) => {
         const rid = String(resource.resource_id)
         const cached = detailCache.get(rid)
-        set((s) => ({
-          detailResource: resource,
-          detailData: cached || null,
-          detailLoading: !cached,
-          followingDetailId: null,
-          detailNonce: s.detailNonce + 1,
-        }))
+        set((s) => {
+          let detailHistory = []
+          if (opts?.history) {
+            detailHistory = opts.history
+          } else if (opts?.pushHistory) {
+            const cur = s.detailResource
+            if (cur?.resource_id != null && String(cur.resource_id) !== rid) {
+              detailHistory = [
+                ...s.detailHistory,
+                { resource: cur, title: s.detailData?.title || cur.title || 'Package' },
+              ]
+            } else {
+              detailHistory = s.detailHistory
+            }
+          }
+          return {
+            detailResource: resource,
+            detailData: cached || null,
+            detailLoading: !cached,
+            followingDetailId: null,
+            detailNonce: s.detailNonce + 1,
+            detailHistory,
+          }
+        })
         if (cached) syncInstalledFromDetail(cached)
         try {
           const detail = await window.api.hub.detail(resource.resource_id)
@@ -240,6 +266,17 @@ export const useHubStore = create(
           toast(`Failed to load hub detail: ${err.message}`)
           set({ detailLoading: false })
         }
+      },
+
+      /** Pop the dep-drill stack and reopen the previous package, or close if empty. */
+      popDetailHistory: () => {
+        const { detailHistory } = get()
+        if (!detailHistory.length) {
+          get().closeDetail()
+          return
+        }
+        const prev = detailHistory[detailHistory.length - 1]
+        return get().openDetail(prev.resource, { history: detailHistory.slice(0, -1) })
       },
 
       /** Warm the detail cache for a resource without touching visible state. */
@@ -285,7 +322,7 @@ export const useHubStore = create(
         }
       },
 
-      closeDetail: () => set({ detailResource: null, detailData: null, followingDetailId: null }),
+      closeDetail: () => set({ detailResource: null, detailData: null, followingDetailId: null, detailHistory: [] }),
 
       refreshDetail: async () => {
         const { detailResource } = get()

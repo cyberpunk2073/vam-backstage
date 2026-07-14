@@ -1248,13 +1248,16 @@ export function DepRow({ dep, depth = 0, renderChildren = true, onNavigate, onIn
   const pendingDep = useDownloadStore((s) => s.pendingDepInstalls.has(lookupKey))
   const dlStatus = dl?.startsWith('active') ? 'active' : dl || (pendingDep ? 'queued' : null)
   const dlProgress = dl?.startsWith('active') ? Number(dl.split('|')[1]) || 0 : 0
-  const canNavigate = !!dep.filename && !!onNavigate
+  // Library rows navigate by `filename`; Hub rows by `resourceId` (Hub-available deps).
+  // Roots carry the parent package's resourceId — never treat those as links.
+  const hubNavId = !dep.isRoot && dep.resourceId != null && dep.resourceId !== '' ? String(dep.resourceId) : null
+  const navTarget = dep.filename || hubNavId
+  const canNavigate = !!onNavigate && !!navTarget
 
   return (
     <>
       <div
-        onClick={canNavigate ? () => onNavigate(dep.filename) : undefined}
-        className={`flex items-center gap-2 py-1.5 transition-colors ${canNavigate ? 'cursor-pointer' : ''} ${dep.isRoot ? 'bg-elevated/30' : 'hover:bg-elevated/50'}`}
+        className={`flex items-center gap-2 py-1.5 transition-colors ${dep.isRoot ? 'bg-elevated/30' : 'hover:bg-elevated/50'}`}
         style={{ paddingLeft: `${10 + depth * 16}px`, paddingRight: 10 }}
       >
         {dep.filename &&
@@ -1265,7 +1268,10 @@ export function DepRow({ dep, depth = 0, renderChildren = true, onNavigate, onIn
           ) : null)}
         <TruncateWithTooltip
           text={dep.ref}
-          className={`flex-1 min-w-0 truncate ${canNavigate ? '' : 'select-text cursor-text'} ${dep.isRoot ? 'text-[11px] font-medium text-text-primary' : `text-[11px] ${dep.resolution === 'exact' || dep.resolution === 'latest' ? 'text-text-primary' : 'text-text-secondary'}`}`}
+          onClick={canNavigate ? () => onNavigate(navTarget) : undefined}
+          className={`flex-1 min-w-0 truncate ${
+            canNavigate ? 'cursor-pointer hover:brightness-150 transition-[filter]' : 'select-text cursor-text'
+          } ${dep.isRoot ? 'text-[11px] font-medium text-text-primary' : `text-[11px] ${dep.resolution === 'exact' || dep.resolution === 'latest' ? 'text-text-primary' : 'text-text-secondary'}`}`}
         />
         {dep.sizeBytes != null && (
           <span className="text-[10px] text-text-tertiary font-mono shrink-0">{formatBytes(dep.sizeBytes)}</span>

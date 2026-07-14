@@ -143,6 +143,7 @@ export default function HubView({ onNavigate }) {
     detailResource,
     detailData,
     detailNonce,
+    detailHistory,
     cardMode,
     cardWidth,
     galleryMode,
@@ -171,9 +172,11 @@ export default function HubView({ onNavigate }) {
     fetchNextPage,
     openDetail,
     closeDetail,
+    popDetailHistory,
   } = useHubStore()
 
   const wishlistMode = galleryMode === 'wishlist'
+  const detailBackLabel = detailHistory.length > 0 ? detailHistory[detailHistory.length - 1].title : null
 
   const [searchDraft, setSearchDraft] = useState(search)
   const searchDraftRef = useRef(search)
@@ -440,11 +443,11 @@ export default function HubView({ onNavigate }) {
   const canNextDetail = wishlistMode
     ? detailIdx >= 0 && detailIdx < detailList.length - 1
     : detailIdx >= 0 && (detailIdx < resources.length - 1 || (page < totalPages && !loading))
-  // null → pager hidden (neighbor unknown)
+  // null → pager hidden (neighbor unknown, or dep-drill history is active)
   const detailPosition =
-    detailIdx >= 0
-      ? { n: detailIdx + 1, total: wishlistMode ? detailList.length : totalFound || resources.length }
-      : null
+    detailBackLabel || detailIdx < 0
+      ? null
+      : { n: detailIdx + 1, total: wishlistMode ? detailList.length : totalFound || resources.length }
 
   const handleDetailPrev = useCallback(() => {
     const { galleryMode, resources, detailResource, detailData } = useHubStore.getState()
@@ -951,7 +954,8 @@ export default function HubView({ onNavigate }) {
         <HubDetail
           key={detailNonce}
           resource={detailResource}
-          onBack={closeDetail}
+          onBack={popDetailHistory}
+          onClose={closeDetail}
           onNavigate={onNavigate}
           onInstall={handleInstall}
           onFilterAuthor={handleFilterAuthor}
@@ -960,6 +964,7 @@ export default function HubView({ onNavigate }) {
           canPrev={canPrevDetail}
           canNext={canNextDetail}
           position={detailPosition}
+          backLabel={detailBackLabel}
         />
       )}
     </div>

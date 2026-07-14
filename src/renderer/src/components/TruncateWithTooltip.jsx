@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 
 /** Ellipsis via CSS; native tooltip only when text overflows (no :overflow in CSS). */
-export function TruncateWithTooltip({ text, className, children }) {
+export function TruncateWithTooltip({ text, className, children, onClick }) {
   const ref = useRef(null)
   const [clipped, setClipped] = useState(false)
 
@@ -16,7 +16,7 @@ export function TruncateWithTooltip({ text, className, children }) {
   }, [text, children])
 
   return (
-    <span ref={ref} className={className} title={clipped ? text : undefined}>
+    <span ref={ref} className={className} title={clipped ? text : undefined} onClick={onClick}>
       {children ?? text}
     </span>
   )

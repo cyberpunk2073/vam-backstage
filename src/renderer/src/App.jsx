@@ -176,14 +176,19 @@ export default function App() {
       // while its effects are still connected, or its portal would be orphaned at the top-left.
       dismissTransientOverlays()
       if (targetView === 'hub') {
+        const hub = useHubStore.getState()
         if (context?.openResource) {
           // Arriving from another view to a specific hub resource is a hub-search
           // action — snap to hub mode so the gallery behind the detail (and
           // prev/next stepping) is the hub, not the wishlist the user last viewed.
-          useHubStore.getState().setGalleryMode('hub')
-          useHubStore.getState().openDetail(context.openResource)
+          hub.setGalleryMode('hub')
+          hub.openDetail(context.openResource)
+        } else if (useViewStore.getState().view === 'hub' && hub.detailResource) {
+          // Re-clicking Hub while details are open is an escape hatch back to the gallery
+          // (especially useful after drilling into dependency packages).
+          hub.closeDetail()
         }
-        // Else leave any open detail intact — returning to Hub restores it.
+        // Else leave any open detail intact — returning to Hub from another view restores it.
         navContextRef.current = null
       } else {
         navContextRef.current = context || null
