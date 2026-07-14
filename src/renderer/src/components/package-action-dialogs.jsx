@@ -7,6 +7,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { activeBreakingDependents } from '@/lib/package-disable-confirm'
 import { formatBytes } from '@/lib/utils'
 
 const CONFIRM_LIST_MAX = 5
@@ -98,7 +99,7 @@ export function UninstallDialogContent({ pkg, name, hasDependents, dependentName
 }
 
 export function DisablePackageDialogContent({ pkg, name, onConfirm }) {
-  const dependents = pkg.dependents || []
+  const dependents = activeBreakingDependents(pkg)
   const cascadeDeps = pkg.cascadeDisableDeps || []
 
   return (

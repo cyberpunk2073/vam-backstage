@@ -528,6 +528,39 @@ describe('buildFromDb — counts / filters', () => {
     expect(getStats().brokenCount).toBe(1)
   })
 
+  it('getPackageDetail.dependents include storageState for disable-break filtering', async () => {
+    const db = getDb()
+    seedPackage(db, {
+      filename: 'Shared.Dep.1.var',
+      package_name: 'Shared.Dep',
+      version: '1',
+      is_direct: 0,
+      storage_state: 'enabled',
+      dep_refs: '[]',
+    })
+    seedPackage(db, {
+      filename: 'Active.User.1.var',
+      package_name: 'Active.User',
+      version: '1',
+      is_direct: 1,
+      storage_state: 'enabled',
+      dep_refs: JSON.stringify(['Shared.Dep.1']),
+    })
+    seedPackage(db, {
+      filename: 'Disabled.User.1.var',
+      package_name: 'Disabled.User',
+      version: '1',
+      is_direct: 1,
+      storage_state: 'disabled',
+      dep_refs: JSON.stringify(['Shared.Dep.1']),
+    })
+    buildFromDb()
+    const detail = getPackageDetail('Shared.Dep.1.var')
+    const byFn = new Map(detail.dependents.map((d) => [d.filename, d]))
+    expect(byFn.get('Active.User.1.var').storageState).toBe('enabled')
+    expect(byFn.get('Disabled.User.1.var').storageState).toBe('disabled')
+  })
+
   it('getStatusCounts.missingUnique groups missing dep refs by packageName', async () => {
     const db = getDb()
     seedPackage(db, {

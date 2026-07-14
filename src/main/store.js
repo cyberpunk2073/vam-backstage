@@ -844,8 +844,14 @@ export function getPackageDetail(filename) {
   const dependents = [...dependentFilenames].map((fn) => {
     const dp = packageIndex.get(fn)
     return dp
-      ? { filename: fn, creator: dp.creator, packageName: dp.package_name, version: dp.version }
-      : { filename: fn }
+      ? {
+          filename: fn,
+          creator: dp.creator,
+          packageName: dp.package_name,
+          version: dp.version,
+          storageState: dp.storage_state ?? 'enabled',
+        }
+      : { filename: fn, storageState: 'enabled' }
   })
 
   const mapContentRow = (c, extra = {}) => ({
