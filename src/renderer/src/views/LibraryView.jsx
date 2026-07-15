@@ -2292,7 +2292,11 @@ function depBadnessRank(dep, byPackageRef) {
   if (d && d.status !== 'completed' && d.status !== 'cancelled') {
     dl = d.status === 'active' ? 'active' : d.status
   }
-  if (dep.resolution === 'exact' || dep.resolution === 'latest') return 0
+  // Missing (95) bubbles first; disabled/offloaded (85) second among problem deps.
+  if (dep.resolution === 'exact' || dep.resolution === 'latest') {
+    if (dep.storageState === 'disabled' || dep.storageState === 'offloaded') return 85
+    return 0
+  }
   if (dep.resolution === 'fallback') return 72
   if (dl === 'active') return 45
   if (dl === 'queued') return 58
