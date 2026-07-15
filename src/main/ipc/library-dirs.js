@@ -10,6 +10,11 @@
  * layer too); also resets the `disable_behavior` setting if it pointed at the
  * removed dir.
  * `library-dirs:browse` opens the OS folder picker.
+ * `library-dirs:set-browser-assist` toggles JayJayWon BrowserAssist sidecar mode on
+ * an offload dir. It only affects *future* offloads/restores into that dir — the
+ * flag is never retroactively applied, so toggling it never writes or deletes any
+ * `.var.json` on disk (a no-op the user expects). Users can regenerate sidecars for
+ * existing packages by enabling the mode and re-cycling enable/offload on them.
  */
 
 import { ipcMain, dialog } from 'electron'
@@ -22,6 +27,7 @@ import {
   getLibraryDirByPath,
   getLibraryDir,
   countPackagesInLibraryDir,
+  setLibraryDirBrowserAssist,
   getSetting,
   setSetting,
 } from '../db.js'
@@ -82,8 +88,11 @@ async function probeSameFs(mainPath, auxPath) {
 
 /**
  * Validate → stat → dedupe → same-FS probe → insert a new offload dir row.
- * Returns `{ id, path }`. Does NOT scan or restart the watcher — callers decide
- * (Settings rescans immediately; the first-run wizard defers to its single scan).
+ * Returns `{ id, path, browserAssist }`. Does NOT scan or restart the watcher —
+ * callers decide (Settings rescans immediately; the first-run wizard defers to its
+ * single scan). BrowserAssist's default offload folder is auto-detected and gets
+ * sidecar mode enabled so future offloads into it write sidecars and existing BA
+ * sidecars are honored on restore.
  */
 async function registerAuxDir(path) {
   refreshLibraryDirs()
@@ -107,8 +116,10 @@ async function registerAuxDir(path) {
   if (probeError) throw new Error(probeError)
 
   const id = insertLibraryDir(path)
+  const browserAssist = matchOffloadToolId(path, getSetting('vam_dir')) === 'browser-assist'
+  if (browserAssist) setLibraryDirBrowserAssist(id, true)
   refreshLibraryDirs()
-  return { id, path }
+  return { id, path, browserAssist }
 }
 
 export function registerLibraryDirHandlers() {
@@ -117,9 +128,32 @@ export function registerLibraryDirHandlers() {
     const main = getMainLibraryDirPath()
     const aux = getAuxLibraryDirs().map((d) => {
       const { n: packageCount, bytes } = countPackagesInLibraryDir(d.id)
-      return { id: d.id, path: d.path, created_at: d.created_at, packageCount, sizeBytes: Number(bytes) || 0 }
+      return {
+        id: d.id,
+        path: d.path,
+        created_at: d.created_at,
+        packageCount,
+        sizeBytes: Number(bytes) || 0,
+        browserAssist: !!d.browser_assist,
+      }
     })
     return { main, aux }
+  })
+
+  // Toggle JayJayWon BrowserAssist sidecar mode on an offload dir. This only flips
+  // the flag: it governs whether *future* offloads into this dir write a sidecar and
+  // whether restores from it read one. Existing on-disk files are intentionally left
+  // untouched — enabling doesn't back-fill sidecars (avoids littering the dir with
+  // now-stale JSON) and disabling doesn't delete any (avoids destroying the only
+  // record of a restore folder for packages BrowserAssist itself flattened to root).
+  // The `.var` bytes never move, so no rescan is needed.
+  ipcMain.handle('library-dirs:set-browser-assist', async (_, id, enabled) => {
+    const row = getLibraryDir(id)
+    if (!row) throw new Error('Library directory not found')
+    const on = !!enabled
+    setLibraryDirBrowserAssist(id, on)
+    refreshLibraryDirs()
+    return { ok: true, browserAssist: on }
   })
 
   ipcMain.handle('library-dirs:browse', async () => {

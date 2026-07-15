@@ -153,6 +153,7 @@ const api = {
     register: (path) => invoke('library-dirs:register', path),
     suggest: () => invoke('library-dirs:suggest'),
     remove: (id, opts) => invoke('library-dirs:remove', id, opts),
+    setBrowserAssist: (id, enabled) => invoke('library-dirs:set-browser-assist', id, enabled),
   },
   dev: {
     isDev: () => invoke('dev:is-dev'),
@@ -212,6 +213,7 @@ const api = {
   onScanProgress: (cb) => transport.on('scan:progress', (data) => cb(data)),
   onIntegrityProgress: (cb) => transport.on('integrity:progress', (data) => cb(data)),
   onScanUnreadable: (cb) => transport.on('scan:unreadable', (data) => cb(data)),
+  onToast: (cb) => transport.on('toast', (data) => cb(data)),
   onHubScanProgress: (cb) => transport.on('hub-scan:progress', (data) => cb(data)),
   onHubAuthChanged: (cb) => transport.on('hub:auth-changed', (data) => cb(data)),
   onApplyAutoHideProgress: (cb) => transport.on('auto-hide:progress', (data) => cb(data)),

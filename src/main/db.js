@@ -4,7 +4,7 @@ import { app } from 'electron'
 import { join } from 'path'
 import { LOCAL_PACKAGE_FILENAME, LOCAL_PACKAGE_DISPLAY_NAME } from '@shared/local-package.js'
 
-export const SCHEMA_VERSION = 25
+export const SCHEMA_VERSION = 26
 
 /**
  * Normalize a value to a non-negative integer string, or null. Hub resource/user
@@ -144,6 +144,7 @@ export const MIGRATIONS = [
   [23, applyV23],
   [24, applyV24],
   [25, applyV25],
+  [26, applyV26],
 ]
 
 function migrate() {
@@ -417,6 +418,19 @@ function applyV25() {
 }
 
 /**
+ * v26 — per-offload-dir BrowserAssist mode. When enabled on an aux dir, offloading
+ * a package into it also drops a `<pkg>.var.json` sidecar recording the package's
+ * `OriginalFolder` (its home relative to `AddonPackages`), matching JayJayWon's
+ * BrowserAssist convention so BA can restore packages we offloaded — and so we can
+ * restore packages BA offloaded (which flattens content to the aux root and relies
+ * on the sidecar for the restore location). Off (0) by default: existing aux dirs
+ * keep the plain suffix-less mirror layout with no sidecars.
+ */
+function applyV26() {
+  db.exec(`ALTER TABLE library_dirs ADD COLUMN browser_assist INTEGER NOT NULL DEFAULT 0`)
+}
+
+/**
  * Ensure the synthetic "local content" package row exists. Loose files under
  * `vamDir/Saves` and `vamDir/Custom` are stored as `contents` rows that point
  * at this sentinel so the foreign key holds without nullable columns. The
@@ -440,7 +454,8 @@ function createSchema() {
     CREATE TABLE IF NOT EXISTS library_dirs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       path TEXT UNIQUE NOT NULL,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      browser_assist INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS packages (
@@ -689,20 +704,25 @@ export function getDonorVersionsByPackageName(packageName, filename) {
 // Library directories (aux only — main is implicit via vam_dir setting + NULL pointer)
 
 export function listLibraryDirs() {
-  return stmt('SELECT id, path, created_at FROM library_dirs ORDER BY created_at ASC').all()
+  return stmt('SELECT id, path, created_at, browser_assist FROM library_dirs ORDER BY created_at ASC').all()
 }
 
 export function getLibraryDir(id) {
-  return stmt('SELECT id, path, created_at FROM library_dirs WHERE id = ?').get(id)
+  return stmt('SELECT id, path, created_at, browser_assist FROM library_dirs WHERE id = ?').get(id)
 }
 
 export function getLibraryDirByPath(path) {
-  return stmt('SELECT id, path, created_at FROM library_dirs WHERE path = ?').get(path)
+  return stmt('SELECT id, path, created_at, browser_assist FROM library_dirs WHERE path = ?').get(path)
 }
 
 export function insertLibraryDir(path) {
   const info = stmt('INSERT INTO library_dirs (path) VALUES (?)').run(path)
   return info.lastInsertRowid
+}
+
+/** Toggle the BrowserAssist sidecar mode flag on an aux dir (see applyV26 / storage-state.js). */
+export function setLibraryDirBrowserAssist(id, enabled) {
+  stmt('UPDATE library_dirs SET browser_assist = ? WHERE id = ?').run(enabled ? 1 : 0, id)
 }
 
 export function deleteLibraryDir(id) {

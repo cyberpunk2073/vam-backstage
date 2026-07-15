@@ -109,76 +109,8 @@ describe('fresh database', () => {
 
 // ── v23 migration: hub-id scrub + cache-table CHECK ────────────────────────────
 //
-// Builds a realistic pre-v23 (schema_version=22) DB by hand with the bogus
-// string ids that affinity used to allow, runs the real migrate() via
-// openDatabase, and asserts the cleanup + the new guardrail.
-
-/** Hand-build the subset of the v22 schema that applyV23 + ensureLocalPackage touch. */
-function buildV22Database(dbPath) {
-  const raw = new Database(dbPath)
-  raw.exec(`
-    CREATE TABLE packages (
-      filename TEXT PRIMARY KEY,
-      creator TEXT NOT NULL,
-      package_name TEXT NOT NULL,
-      version TEXT NOT NULL,
-      type TEXT, title TEXT, description TEXT, license TEXT,
-      size_bytes INTEGER NOT NULL,
-      file_mtime REAL NOT NULL,
-      is_direct INTEGER NOT NULL DEFAULT 0,
-      storage_state TEXT NOT NULL DEFAULT 'enabled',
-      library_dir_id INTEGER,
-      hub_resource_id TEXT,
-      dep_refs TEXT NOT NULL DEFAULT '[]',
-      first_seen_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      scanned_at INTEGER, image_url TEXT,
-      thumb_checked INTEGER NOT NULL DEFAULT 0,
-      hub_user_id TEXT, hub_display_name TEXT, hub_tags TEXT, promotional_link TEXT,
-      type_override TEXT, is_corrupted INTEGER NOT NULL DEFAULT 0,
-      hub_detail_applied_at INTEGER, hub_name_checked_at INTEGER
-    );
-    CREATE TABLE downloads (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      package_ref TEXT NOT NULL UNIQUE,
-      hub_resource_id TEXT, download_url TEXT, file_size INTEGER,
-      priority TEXT NOT NULL DEFAULT 'dependency', parent_ref TEXT,
-      status TEXT NOT NULL DEFAULT 'queued', temp_path TEXT, error TEXT,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch()), completed_at INTEGER,
-      display_name TEXT, auto_queue_deps INTEGER NOT NULL DEFAULT 1
-    );
-    CREATE TABLE hub_resources (
-      resource_id TEXT PRIMARY KEY, hub_json TEXT, search_json TEXT, find_json TEXT,
-      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-    CREATE TABLE hub_users (
-      user_id TEXT PRIMARY KEY, username TEXT, hub_json TEXT,
-      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-    CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
-    CREATE TABLE schema_version (version INTEGER NOT NULL);
-    INSERT INTO schema_version (version) VALUES (22);
-  `)
-
-  const pkg = raw.prepare(
-    `INSERT INTO packages (filename, creator, package_name, version, size_bytes, file_mtime, hub_resource_id, hub_user_id)
-     VALUES (?, 'C', 'C.P', '1', 1, 0, ?, ?)`,
-  )
-  pkg.run('Good.Pkg.1.var', '123', '45')
-  pkg.run('Bad.Pkg.1.var', 'null', 'null')
-  pkg.run('Empty.Pkg.1.var', '', null)
-
-  const dl = raw.prepare(`INSERT INTO downloads (package_ref, hub_resource_id) VALUES (?, ?)`)
-  dl.run('Good.Ref', '77')
-  dl.run('Bad.Ref', 'null')
-
-  const hr = raw.prepare(`INSERT INTO hub_resources (resource_id) VALUES (?)`)
-  for (const id of ['100', '200', 'null', '', '12a']) hr.run(id)
-
-  const hu = raw.prepare(`INSERT INTO hub_users (user_id) VALUES (?)`)
-  for (const id of ['5', 'null']) hu.run(id)
-
-  raw.close()
-}
+// Seeds a complete v22 DB with the bogus string ids that affinity used to allow,
+// runs the real migrate() via openDatabase, and asserts the cleanup + guardrail.
 
 describe('migrate v23 (hub-id cleanup)', () => {
   beforeEach(async () => {
@@ -271,21 +203,188 @@ describe('migrate v24 (package subpath)', () => {
   })
 })
 
-// ── schema parity: createSchema() ↔ sum of MIGRATIONS ──────────────────────────
+// ── frozen v22 baseline + schema parity ────────────────────────────────────────
 //
 // createSchema() (fresh install) and the incremental MIGRATIONS are two
 // hand-maintained descriptions of the same schema; they silently drift when a
-// migration is added but not mirrored into createSchema (or vice versa). This
-// replays every migration on top of a frozen v22 baseline and asserts the result
-// is schema-identical to a fresh install.
+// migration is added but not mirrored into createSchema (or vice versa).
 //
-// The comparison is order-independent on purpose: `ALTER TABLE ADD COLUMN`
-// appends to the CREATE text stored in sqlite_master, so a migrated table lists
-// its columns in a different order than a freshly-created one. A raw SQL string
-// diff would flag that as drift. `schemaFingerprint` instead reduces each table
-// to the *set* of its top-level definitions (columns + table constraints),
-// whitespace-normalized, so only content matters — not column order or the
-// `IF NOT EXISTS` / rename cosmetics migrations leave behind.
+// V22_SCHEMA_SQL is the complete createSchema() from commit 24c8447^ (last v22
+// build, before the v23 bump) — *history*, copied verbatim from git. Do NOT edit
+// it when createSchema() changes. New schema changes ship as new migrations;
+// the parity test replays every migration from this baseline to head and asserts
+// the result is schema-identical to a fresh install. Only re-baseline (to a
+// newer verbatim git snapshot) when old migrations are pruned.
+//
+// Behavioral migration tests (v22/v23/v24/…) also start from this complete
+// schema — never a hand-trimmed subset — so a future ALTER TABLE on any v22
+// table cannot blow up with "no such table". Seed rows are additive only.
+//
+// Fingerprint comparison is order-independent: `ALTER TABLE ADD COLUMN` appends
+// to the CREATE text in sqlite_master, so migrated column order can differ from
+// createSchema(). We compare the *set* of top-level definitions per table.
+
+/**
+ * Complete v22 schema SQL from 24c8447^. History — do not edit for new migrations.
+ * Post-v22 deltas live only in MIGRATIONS (CHECK @ v23, subpath @ v24, wishlist @
+ * v25, library_dirs.browser_assist @ v26, …).
+ */
+const V22_SCHEMA_SQL = `
+  CREATE TABLE library_dirs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    path TEXT UNIQUE NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  );
+
+  CREATE TABLE packages (
+    filename TEXT PRIMARY KEY,
+    creator TEXT NOT NULL,
+    package_name TEXT NOT NULL,
+    version TEXT NOT NULL,
+    type TEXT,
+    title TEXT,
+    description TEXT,
+    license TEXT,
+    size_bytes INTEGER NOT NULL,
+    file_mtime REAL NOT NULL,
+    is_direct INTEGER NOT NULL DEFAULT 0,
+    storage_state TEXT NOT NULL DEFAULT 'enabled',
+    library_dir_id INTEGER NULL REFERENCES library_dirs(id) ON DELETE RESTRICT,
+    hub_resource_id TEXT,
+    dep_refs TEXT NOT NULL DEFAULT '[]',
+    first_seen_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    scanned_at INTEGER,
+    image_url TEXT,
+    thumb_checked INTEGER NOT NULL DEFAULT 0,
+    hub_user_id TEXT,
+    hub_display_name TEXT,
+    hub_tags TEXT,
+    promotional_link TEXT,
+    type_override TEXT,
+    is_corrupted INTEGER NOT NULL DEFAULT 0,
+    hub_detail_applied_at INTEGER,
+    hub_name_checked_at INTEGER
+  );
+  CREATE INDEX idx_packages_package_name ON packages(package_name);
+  CREATE INDEX idx_packages_creator ON packages(creator);
+
+  CREATE TABLE contents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    package_filename TEXT NOT NULL REFERENCES packages(filename) ON DELETE CASCADE,
+    internal_path TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    type TEXT NOT NULL,
+    thumbnail_path TEXT,
+    person_atom_ids TEXT,
+    file_mtime REAL NOT NULL DEFAULT 0,
+    size_bytes INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(package_filename, internal_path)
+  );
+  CREATE INDEX idx_contents_package ON contents(package_filename);
+  CREATE INDEX idx_contents_type ON contents(type);
+
+  CREATE TABLE downloads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    package_ref TEXT NOT NULL UNIQUE,
+    hub_resource_id TEXT,
+    download_url TEXT,
+    file_size INTEGER,
+    priority TEXT NOT NULL DEFAULT 'dependency',
+    parent_ref TEXT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    temp_path TEXT,
+    error TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    completed_at INTEGER,
+    display_name TEXT,
+    auto_queue_deps INTEGER NOT NULL DEFAULT 1
+  );
+
+  CREATE TABLE hub_resources (
+    resource_id TEXT PRIMARY KEY,
+    hub_json TEXT,
+    search_json TEXT,
+    find_json TEXT,
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+  );
+
+  CREATE TABLE hub_users (
+    user_id TEXT PRIMARY KEY,
+    username TEXT,
+    hub_json TEXT,
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+  );
+  CREATE INDEX idx_hub_users_username ON hub_users(username);
+
+  CREATE TABLE settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );
+
+  CREATE TABLE labels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    color INTEGER,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  );
+
+  CREATE TABLE label_packages (
+    label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+    package_filename TEXT NOT NULL REFERENCES packages(filename) ON DELETE CASCADE,
+    PRIMARY KEY (label_id, package_filename)
+  );
+  CREATE INDEX idx_label_packages_pkg ON label_packages(package_filename);
+
+  CREATE TABLE label_contents (
+    label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+    package_filename TEXT NOT NULL REFERENCES packages(filename) ON DELETE CASCADE,
+    internal_path TEXT NOT NULL,
+    PRIMARY KEY (label_id, package_filename, internal_path)
+  );
+  CREATE INDEX idx_label_contents_pkgpath ON label_contents(package_filename, internal_path);
+`
+
+/** Complete v22 DB stamped via PRAGMA user_version (modern path). Used by parity. */
+function buildV22Schema(dbPath) {
+  const raw = new Database(dbPath)
+  raw.exec(V22_SCHEMA_SQL)
+  raw.pragma('user_version = 22')
+  raw.close()
+}
+
+/**
+ * Complete v22 DB via the legacy `schema_version` table (user_version left at 0)
+ * plus seed rows for migration behavior tests. Same schema as buildV22Schema —
+ * only versioning + data differ.
+ */
+function buildV22Database(dbPath) {
+  const raw = new Database(dbPath)
+  raw.exec(V22_SCHEMA_SQL)
+  raw.exec(`
+    CREATE TABLE schema_version (version INTEGER NOT NULL);
+    INSERT INTO schema_version (version) VALUES (22);
+  `)
+
+  const pkg = raw.prepare(
+    `INSERT INTO packages (filename, creator, package_name, version, size_bytes, file_mtime, hub_resource_id, hub_user_id)
+     VALUES (?, 'C', 'C.P', '1', 1, 0, ?, ?)`,
+  )
+  pkg.run('Good.Pkg.1.var', '123', '45')
+  pkg.run('Bad.Pkg.1.var', 'null', 'null')
+  pkg.run('Empty.Pkg.1.var', '', null)
+
+  const dl = raw.prepare(`INSERT INTO downloads (package_ref, hub_resource_id) VALUES (?, ?)`)
+  dl.run('Good.Ref', '77')
+  dl.run('Bad.Ref', 'null')
+
+  const hr = raw.prepare(`INSERT INTO hub_resources (resource_id) VALUES (?)`)
+  for (const id of ['100', '200', 'null', '', '12a']) hr.run(id)
+
+  const hu = raw.prepare(`INSERT INTO hub_users (user_id) VALUES (?)`)
+  for (const id of ['5', 'null']) hu.run(id)
+
+  raw.close()
+}
 
 /** Split a CREATE-TABLE body on top-level commas (respecting nested parens + quotes). */
 function splitTopLevelCommas(body) {
@@ -345,141 +444,12 @@ function schemaFingerprint(db) {
   return { tables, indexes }
 }
 
-/**
- * Frozen, complete v22 schema — this is *history*, copied verbatim from the
- * createSchema() at commit 24c8447^ (the last v22 build, before the v23 bump).
- * Do NOT edit it when createSchema() changes: new schema changes ship as new
- * migrations, which the parity test replays on top of this baseline. Only
- * re-baseline (to a newer verbatim snapshot) when old migrations are pruned.
- * The v22→head deltas: hub-id CHECK (v23), packages.subpath (v24), hub_wishlist
- * (v25). idx_hub_users_username already existed at v22 (v23 only re-ensures it).
- */
-function buildV22Schema(dbPath) {
-  const raw = new Database(dbPath)
-  raw.exec(`
-    CREATE TABLE library_dirs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      path TEXT UNIQUE NOT NULL,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE TABLE packages (
-      filename TEXT PRIMARY KEY,
-      creator TEXT NOT NULL,
-      package_name TEXT NOT NULL,
-      version TEXT NOT NULL,
-      type TEXT,
-      title TEXT,
-      description TEXT,
-      license TEXT,
-      size_bytes INTEGER NOT NULL,
-      file_mtime REAL NOT NULL,
-      is_direct INTEGER NOT NULL DEFAULT 0,
-      storage_state TEXT NOT NULL DEFAULT 'enabled',
-      library_dir_id INTEGER NULL REFERENCES library_dirs(id) ON DELETE RESTRICT,
-      hub_resource_id TEXT,
-      dep_refs TEXT NOT NULL DEFAULT '[]',
-      first_seen_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      scanned_at INTEGER,
-      image_url TEXT,
-      thumb_checked INTEGER NOT NULL DEFAULT 0,
-      hub_user_id TEXT,
-      hub_display_name TEXT,
-      hub_tags TEXT,
-      promotional_link TEXT,
-      type_override TEXT,
-      is_corrupted INTEGER NOT NULL DEFAULT 0,
-      hub_detail_applied_at INTEGER,
-      hub_name_checked_at INTEGER
-    );
-    CREATE INDEX idx_packages_package_name ON packages(package_name);
-    CREATE INDEX idx_packages_creator ON packages(creator);
-
-    CREATE TABLE contents (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      package_filename TEXT NOT NULL REFERENCES packages(filename) ON DELETE CASCADE,
-      internal_path TEXT NOT NULL,
-      display_name TEXT NOT NULL,
-      type TEXT NOT NULL,
-      thumbnail_path TEXT,
-      person_atom_ids TEXT,
-      file_mtime REAL NOT NULL DEFAULT 0,
-      size_bytes INTEGER NOT NULL DEFAULT 0,
-      UNIQUE(package_filename, internal_path)
-    );
-    CREATE INDEX idx_contents_package ON contents(package_filename);
-    CREATE INDEX idx_contents_type ON contents(type);
-
-    CREATE TABLE downloads (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      package_ref TEXT NOT NULL UNIQUE,
-      hub_resource_id TEXT,
-      download_url TEXT,
-      file_size INTEGER,
-      priority TEXT NOT NULL DEFAULT 'dependency',
-      parent_ref TEXT,
-      status TEXT NOT NULL DEFAULT 'queued',
-      temp_path TEXT,
-      error TEXT,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      completed_at INTEGER,
-      display_name TEXT,
-      auto_queue_deps INTEGER NOT NULL DEFAULT 1
-    );
-
-    CREATE TABLE hub_resources (
-      resource_id TEXT PRIMARY KEY,
-      hub_json TEXT,
-      search_json TEXT,
-      find_json TEXT,
-      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE TABLE hub_users (
-      user_id TEXT PRIMARY KEY,
-      username TEXT,
-      hub_json TEXT,
-      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-    CREATE INDEX idx_hub_users_username ON hub_users(username);
-
-    CREATE TABLE settings (
-      key TEXT PRIMARY KEY,
-      value TEXT
-    );
-
-    CREATE TABLE labels (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-      color INTEGER,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE TABLE label_packages (
-      label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
-      package_filename TEXT NOT NULL REFERENCES packages(filename) ON DELETE CASCADE,
-      PRIMARY KEY (label_id, package_filename)
-    );
-    CREATE INDEX idx_label_packages_pkg ON label_packages(package_filename);
-
-    CREATE TABLE label_contents (
-      label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
-      package_filename TEXT NOT NULL REFERENCES packages(filename) ON DELETE CASCADE,
-      internal_path TEXT NOT NULL,
-      PRIMARY KEY (label_id, package_filename, internal_path)
-    );
-    CREATE INDEX idx_label_contents_pkgpath ON label_contents(package_filename, internal_path);
-  `)
-  raw.pragma('user_version = 22')
-  raw.close()
-}
-
 describe('schema parity (createSchema ↔ migrations)', () => {
   it('MIGRATIONS ends exactly at SCHEMA_VERSION', () => {
     expect(MIGRATIONS.at(-1)[0]).toBe(SCHEMA_VERSION)
   })
 
-  it('a v22 DB migrated to head is schema-identical to a fresh install', async () => {
+  it('a complete v22 DB migrated to head is schema-identical to a fresh install', async () => {
     tmp = await mkTempVamDir()
     await openTestDatabase(tmp.dbPath)
     const fresh = schemaFingerprint(getDb())
@@ -489,6 +459,7 @@ describe('schema parity (createSchema ↔ migrations)', () => {
     try {
       buildV22Schema(migratedTmp.dbPath)
       await openTestDatabase(migratedTmp.dbPath)
+      expect(getDb().pragma('user_version', { simple: true })).toBe(SCHEMA_VERSION)
       expect(schemaFingerprint(getDb())).toEqual(fresh)
     } finally {
       closeDatabase()

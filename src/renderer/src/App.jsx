@@ -105,6 +105,9 @@ export default function App() {
     const cleanupUnreadable = window.api.onScanUnreadable(({ filename }) => {
       toast(`Corrupted package skipped: ${filename}`)
     })
+    const cleanupToast = window.api.onToast(({ message, type }) => {
+      toast(message, type)
+    })
     window.api.startup.consumeUnreadable().then((filenames) => {
       if (!filenames?.length) return
       const head = filenames.slice(0, 3)
@@ -118,6 +121,7 @@ export default function App() {
       cleanupPackagesUpdated()
       cleanupContentsUpdated()
       cleanupUnreadable()
+      cleanupToast()
     }
   }, [])
 

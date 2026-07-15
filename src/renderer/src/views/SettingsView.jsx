@@ -154,10 +154,15 @@ export default function SettingsView() {
       if (libDirsLoading) return
       setLibDirsLoading(true)
       try {
-        await window.api.libraryDirs.add(suggestion.path)
+        const res = await window.api.libraryDirs.add(suggestion.path)
         await refreshLibDirs()
         fetchStats()
-        toast(`${suggestion.label} offload directory added`, 'success')
+        toast(
+          res?.browserAssist
+            ? `${suggestion.label} offload directory added — BrowserAssist mode enabled`
+            : `${suggestion.label} offload directory added`,
+          'success',
+        )
       } catch (err) {
         toast(`Failed to add directory: ${err.message}`, 'error')
       } finally {
@@ -202,6 +207,22 @@ export default function SettingsView() {
       }
     },
     [libDirsLoading, refreshLibDirs, fetchStats, dismissOffloadSuggestion],
+  )
+
+  const handleToggleBrowserAssist = useCallback(
+    async (id, enabled) => {
+      if (libDirsLoading) return
+      setLibDirsLoading(true)
+      try {
+        await window.api.libraryDirs.setBrowserAssist(id, enabled)
+        await refreshLibDirs()
+      } catch (err) {
+        toast(`Failed to update BrowserAssist mode: ${err.message}`, 'error')
+      } finally {
+        setLibDirsLoading(false)
+      }
+    },
+    [libDirsLoading, refreshLibDirs],
   )
 
   const handleDisableBehaviorChange = useCallback(async (value) => {
@@ -623,7 +644,15 @@ export default function SettingsView() {
             {libDirs.aux.length > 0 && (
               <ul className="rounded-lg border border-border divide-y divide-border bg-surface/50">
                 {libDirs.aux.map((d) => (
-                  <AuxDirRow key={d.id} d={d} vamDir={vamDir} disabled={libDirsLoading} onRemove={handleRemoveAuxDir} />
+                  <AuxDirRow
+                    key={d.id}
+                    d={d}
+                    vamDir={vamDir}
+                    disabled={libDirsLoading}
+                    showBrowserAssist={baDirPresent}
+                    onRemove={handleRemoveAuxDir}
+                    onToggleBrowserAssist={handleToggleBrowserAssist}
+                  />
                 ))}
               </ul>
             )}
@@ -1334,86 +1363,110 @@ function ResultBanner({ result }) {
  * removes it directly. When it still holds packages, the trash button opens a
  * warning dialog that spells out what "un-registering" forgets before removing.
  */
-function AuxDirRow({ d, vamDir, disabled, onRemove }) {
+function AuxDirRow({ d, vamDir, disabled, showBrowserAssist, onRemove, onToggleBrowserAssist }) {
   const hasPackages = d.packageCount > 0
+  // Only surface the BrowserAssist toggle to users who actually run BrowserAssist
+  // (its data dir was detected). Still show it when the dir already has the mode on,
+  // so a stray enabled flag can always be turned back off even if detection fails.
+  const canBrowserAssist = showBrowserAssist || !!d.browserAssist
   return (
-    <li className="flex items-center gap-3 px-3 py-2">
-      <TruncateWithTooltip
-        text={d.path}
-        className="flex-1 min-w-0 text-xs font-mono truncate select-text cursor-text text-text-secondary"
-      >
-        {shortenLibraryPath(d.path, vamDir)}
-      </TruncateWithTooltip>
-      <div className="text-[11px] text-text-tertiary tabular-nums whitespace-nowrap shrink-0">
-        {d.packageCount} pkg · {formatBytes(d.sizeBytes)}
-      </div>
-      {hasPackages ? (
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              disabled={disabled}
-              title="Remove (stops tracking these packages)"
-              className="shrink-0 text-text-tertiary hover:text-error"
-            >
-              <Trash2 size={14} />
-            </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle className="select-text cursor-text">
-                Stop tracking this offload directory?
-              </AlertDialogTitle>
-              <AlertDialogDescription asChild>
-                <div className="text-[13px] leading-relaxed text-text-secondary space-y-2.5">
-                  <p>
-                    <span className="font-mono text-text-primary select-text cursor-text">
-                      {shortenLibraryPath(d.path, vamDir)}
-                    </span>{' '}
-                    currently holds{' '}
-                    <span className="font-medium text-text-primary">
-                      {d.packageCount.toLocaleString()} package{d.packageCount === 1 ? '' : 's'}
-                    </span>
-                    . Removing it un-registers the folder and makes Backstage forget those packages.
-                  </p>
-                  <p>
-                    <span className="font-medium text-success">No files are deleted</span> — every{' '}
-                    <span className="font-mono">.var</span> stays where it is on disk, and VaM&apos;s own state for
-                    those packages (including the <span className="font-medium">favorite</span> and{' '}
-                    <span className="font-medium">hidden</span> status of their content) is untouched. You can re-add
-                    the folder and rescan later to index them again.
-                  </p>
-                  <p>
-                    <span className="font-medium text-warning">Backstage data is irreversibly forgotten</span> — things
-                    like the labels and category overrides you set for these packages.
-                  </p>
-                </div>
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction variant="destructive" onClick={() => onRemove(d.id, { force: true })}>
-                Remove and forget
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      ) : (
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={() => onRemove(d.id)}
-          disabled={disabled}
-          title="Remove"
-          className="shrink-0 text-text-tertiary hover:text-error"
+    <li className="px-3 py-2 space-y-2">
+      <div className="flex items-center gap-3">
+        <TruncateWithTooltip
+          text={d.path}
+          className="flex-1 min-w-0 text-xs font-mono truncate select-text cursor-text text-text-secondary"
         >
-          <Trash2 size={14} />
-        </Button>
+          {shortenLibraryPath(d.path, vamDir)}
+        </TruncateWithTooltip>
+        <div className="text-[11px] text-text-tertiary tabular-nums whitespace-nowrap shrink-0">
+          {d.packageCount} pkg · {formatBytes(d.sizeBytes)}
+        </div>
+        {hasPackages ? (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                disabled={disabled}
+                title="Remove (stops tracking these packages)"
+                className="shrink-0 text-text-tertiary hover:text-error"
+              >
+                <Trash2 size={14} />
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle className="select-text cursor-text">
+                  Stop tracking this offload directory?
+                </AlertDialogTitle>
+                <AlertDialogDescription asChild>
+                  <div className="text-[13px] leading-relaxed text-text-secondary space-y-2.5">
+                    <p>
+                      <span className="font-mono text-text-primary select-text cursor-text">
+                        {shortenLibraryPath(d.path, vamDir)}
+                      </span>{' '}
+                      currently holds{' '}
+                      <span className="font-medium text-text-primary">
+                        {d.packageCount.toLocaleString()} package{d.packageCount === 1 ? '' : 's'}
+                      </span>
+                      . Removing it un-registers the folder and makes Backstage forget those packages.
+                    </p>
+                    <p>
+                      <span className="font-medium text-success">No files are deleted</span> — every{' '}
+                      <span className="font-mono">.var</span> stays where it is on disk, and VaM&apos;s own state for
+                      those packages (including the <span className="font-medium">favorite</span> and{' '}
+                      <span className="font-medium">hidden</span> status of their content) is untouched. You can re-add
+                      the folder and rescan later to index them again.
+                    </p>
+                    <p>
+                      <span className="font-medium text-warning">Backstage data is irreversibly forgotten</span> —
+                      things like the labels and category overrides you set for these packages.
+                    </p>
+                  </div>
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction variant="destructive" onClick={() => onRemove(d.id, { force: true })}>
+                  Remove and forget
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        ) : (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => onRemove(d.id)}
+            disabled={disabled}
+            title="Remove"
+            className="shrink-0 text-text-tertiary hover:text-error"
+          >
+            <Trash2 size={14} />
+          </Button>
+        )}
+      </div>
+      {canBrowserAssist && (
+        <label className="flex items-center gap-2 cursor-pointer w-fit" title={BROWSER_ASSIST_MODE_HINT}>
+          <Switch
+            size="sm"
+            checked={!!d.browserAssist}
+            onCheckedChange={(v) => onToggleBrowserAssist(d.id, v)}
+            disabled={disabled}
+          />
+          <span className="text-[11px] text-text-tertiary">
+            BrowserAssist mode <span className="text-text-tertiary/70">· write .var.json sidecars</span>
+          </span>
+        </label>
       )}
     </li>
   )
 }
+
+const BROWSER_ASSIST_MODE_HINT =
+  'When offloading a package into this folder, also write a JayJayWon BrowserAssist ' +
+  '.var.json sidecar recording its original AddonPackages folder — so BrowserAssist can ' +
+  'restore packages you offloaded, and Backstage can restore packages BrowserAssist offloaded.'
 
 /**
  * Show an offload path that lives inside the VaM dir as `<VaM base dir name>/<relative>`

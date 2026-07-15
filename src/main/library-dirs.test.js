@@ -2,13 +2,14 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { join } from 'path'
 import { mkdir, writeFile } from 'fs/promises'
 import { mkTempVamDir, openTestDatabase } from '../../test/fixtures/index.js'
-import { closeDatabase, setSetting, insertLibraryDir } from './db.js'
+import { closeDatabase, setSetting, insertLibraryDir, setLibraryDirBrowserAssist, getLibraryDir } from './db.js'
 import {
   validateNewAuxDirPath,
   refreshLibraryDirs,
   pkgVarPath,
   resolveContentPath,
   libraryRelSubpath,
+  isBrowserAssistLibraryDir,
 } from './library-dirs.js'
 import { ADDON_PACKAGES_FILE_PREFS } from '@shared/paths.js'
 
@@ -146,6 +147,23 @@ describe('pkgVarPath — nominal subpath resolution', () => {
   it('still works for a root-level package (empty subpath)', () => {
     const pkg = { filename: 'Author.Pkg.1.var', storage_state: 'enabled', library_dir_id: null, subpath: '' }
     expect(pkgVarPath(pkg)).toBe(join(tmp.addonPackages, 'Author.Pkg.1.var'))
+  })
+})
+
+describe('isBrowserAssistLibraryDir', () => {
+  it('returns false for main (null) and for aux dirs with the flag off', () => {
+    expect(isBrowserAssistLibraryDir(null)).toBe(false)
+    const auxId = insertLibraryDir(join(tmp.vamDir, 'Offload'))
+    refreshLibraryDirs()
+    expect(isBrowserAssistLibraryDir(auxId)).toBe(false)
+  })
+
+  it('returns true after BrowserAssist mode is enabled on an aux dir', () => {
+    const auxId = insertLibraryDir(join(tmp.vamDir, 'Offload'))
+    setLibraryDirBrowserAssist(auxId, true)
+    refreshLibraryDirs()
+    expect(isBrowserAssistLibraryDir(auxId)).toBe(true)
+    expect(!!getLibraryDir(auxId).browser_assist).toBe(true)
   })
 })
 

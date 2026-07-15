@@ -27,7 +27,9 @@ import { join, dirname } from 'path'
 import { getPackageIndex, patchStorageState } from './store.js'
 import { setStorageState } from './db.js'
 import { recordOwnedPath } from './watcher.js'
-import { getLibraryDirPath, classifyMainVarOnDisk } from './library-dirs.js'
+import { notifyToast } from './notify.js'
+import { getLibraryDirPath, classifyMainVarOnDisk, isBrowserAssistLibraryDir } from './library-dirs.js'
+import { writeSidecar, readSidecarSubpath, removeSidecar } from './browser-assist-sidecar.js'
 import { isLocalPackage } from '@shared/local-package.js'
 import { STORAGE_STATES } from '@shared/storage-state-predicates.js'
 
@@ -157,21 +159,41 @@ export async function applyStorageState(filename, target) {
   const targetDir = getLibraryDirPath(target.libraryDirId)
   if (!targetDir) throw new Error(`Library directory not configured for libraryDirId=${target.libraryDirId}`)
 
-  // Preserve the package's subfolder across the move: a `.var` organized under
-  // `<lib>/<subpath>/` stays there when enabled/disabled in place, and keeps the
-  // same relative subpath when offloaded to (or restored from) another library
-  // dir — so toggles never silently flatten a curated folder layout, and an
-  // offload→enable round-trip is lossless.
-  const subpath = pkg.subpath || ''
-  const withSub = (dir) => (subpath ? join(dir, subpath) : dir)
-  const mainBare = join(withSub(mainDir), filename)
-  const mainMarker = mainBare + '.disabled'
+  // BrowserAssist sidecar mode on the source/target aux dir. A BA-mode dir keeps a
+  // `<pkg>.var.json` sidecar recording the package's home in `AddonPackages` (its
+  // "original folder"), so restore doesn't depend on the physical layout — BA
+  // flattens to the aux root, we keep the mirrored subfolder, either works.
+  const sourceIsBrowserAssist =
+    pkg.storage_state === 'offloaded' && isBrowserAssistLibraryDir(pkg.library_dir_id ?? null)
+  const targetIsBrowserAssist =
+    target.storageState === 'offloaded' && isBrowserAssistLibraryDir(target.libraryDirId ?? null)
 
-  const fromPath = await resolveCurrentContentPath(pkg, mainBare)
+  // Where the file physically sits now (used to read the bytes) — its tracked
+  // subpath within its current library dir.
+  const sourceSubpath = pkg.subpath || ''
+  const mainBareAtSource = join(sourceSubpath ? join(mainDir, sourceSubpath) : mainDir, filename)
+  const fromPath = await resolveCurrentContentPath(pkg, mainBareAtSource)
+
+  // The package's home folder relative to `AddonPackages` ("original folder"):
+  // normally the tracked subpath, but when leaving a BrowserAssist dir the sidecar
+  // beside the file is authoritative (BA may have flattened the bytes to the aux
+  // root while recording a nested restore folder in the sidecar).
+  let originalFolder = sourceSubpath
+  if (sourceIsBrowserAssist) {
+    const restoreSubpath = await readSidecarSubpath(fromPath)
+    if (restoreSubpath != null) originalFolder = restoreSubpath
+  }
+
+  // Preserve the subfolder across the move: a `.var` organized under
+  // `<lib>/<subpath>/` stays there when enabled/disabled in place, and is mirrored
+  // into (or restored from) another library dir at the same relative folder — so
+  // toggles never silently flatten a curated layout and a round-trip is lossless.
+  const withOrig = (dir) => (originalFolder ? join(dir, originalFolder) : dir)
+  const mainMarker = join(withOrig(mainDir), filename) + '.disabled'
   // Content always lands at the bare name in the target dir — we never rename to
   // the suffix. Disabling instead drops an empty marker beside the bare file, so
   // an app-driven disable is always the VaM-native marker layout.
-  const toPath = join(withSub(targetDir), filename)
+  const toPath = join(withOrig(targetDir), filename)
 
   // 1. Move the bytes to the target's bare name if they aren't already there.
   let moved = false
@@ -190,14 +212,35 @@ export async function applyStorageState(filename, target) {
     markerChanged = await removeDisabledMarker(mainMarker, toPath)
   }
 
+  // 3. Reconcile BrowserAssist sidecars: drop the one beside the old aux copy when
+  // leaving a BA dir, write a fresh one beside the new aux copy when entering one
+  // (root-level packages need none). Do the remove before the write so a BA→BA
+  // move can't delete a sidecar we just created for the same file.
+  let sidecarChanged = false
+  if (sourceIsBrowserAssist) sidecarChanged = (await removeSidecar(fromPath)) || sidecarChanged
+  if (targetIsBrowserAssist) {
+    try {
+      sidecarChanged = (await writeSidecar(toPath, originalFolder)) || sidecarChanged
+    } catch (err) {
+      // Best-effort: the bytes already landed, so a failed sidecar must not abort
+      // an otherwise-complete transition. BA tolerates a missing sidecar for a
+      // non-root package (it restores to the root), so we log + toast and carry on
+      // rather than roll back a good move.
+      console.warn(`BrowserAssist sidecar write failed for ${toPath}:`, err.message)
+      notifyToast(`Couldn't write BrowserAssist sidecar for ${filename}: ${err.message}`)
+    }
+  }
+
   // Every app-driven transition lands content in the bare name, so there is no
   // on-disk-name to record — the physical path is re-derived from disk on demand.
-  setStorageState(filename, target.storageState, target.libraryDirId ?? null, subpath)
+  // `originalFolder` is the file's folder within its new library dir (main or aux):
+  // mirrored on offload, and the sidecar-recovered home on a BA restore.
+  setStorageState(filename, target.storageState, target.libraryDirId ?? null, originalFolder)
   // Patch in-memory `packageIndex` row so the next `packages:list` reads the new
   // state without a full rebuild. Content rows reference the package via
   // `c.package` on the renderer and pick up the patched value on relink.
   patchStorageState([filename], target.storageState, target.libraryDirId ?? null)
-  return { ok: true, fromPath, toPath, changed: moved || markerChanged }
+  return { ok: true, fromPath, toPath, changed: moved || markerChanged || sidecarChanged }
 }
 
 /**

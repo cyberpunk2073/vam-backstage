@@ -19,6 +19,16 @@ export function notify(channel, data) {
 }
 
 /**
+ * Push a user-facing toast to the renderer (and any remote clients) over the
+ * generic `toast` channel, so a main-process site can surface a message without
+ * inventing a bespoke IPC event for it. `type` matches the renderer toast API
+ * ('error' | 'success' | 'info'); `message` is shown verbatim.
+ */
+export function notifyToast(message, type = 'error') {
+  notify('toast', { message, type })
+}
+
+/**
  * Like `notify()`, but skips the caller that already applied the mutation.
  * Local IPC: `sourceEvent.sender` is the invoking webContents.
  * Remote RPC: `sourceEvent.remoteWs` is the invoking WebSocket (see server.js).

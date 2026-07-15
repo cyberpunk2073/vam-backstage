@@ -80,6 +80,16 @@ export function getAuxLibraryDirs() {
 }
 
 /**
+ * True when the given aux dir has JayJayWon BrowserAssist sidecar mode enabled.
+ * Main (`null`) is never a BrowserAssist dir. Reflects the in-memory registry, so
+ * callers must have `refreshLibraryDirs()`'d after a mode flip (the IPC handler does).
+ */
+export function isBrowserAssistLibraryDir(libraryDirId) {
+  if (libraryDirId == null) return false
+  return !!auxDirsById.get(libraryDirId)?.browser_assist
+}
+
+/**
  * Resolve the *nominal* absolute path for a package row — its library dir joined
  * with `subpath` and the canonical bare `filename`. Returns null if the library
  * dir is unknown (e.g. aux dir was removed from registry).

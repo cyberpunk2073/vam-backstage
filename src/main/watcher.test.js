@@ -10,7 +10,14 @@ import {
   openTestDatabase,
 } from '../../test/fixtures/index.js'
 import { runScan } from './scanner/index.js'
-import { closeDatabase, getAllPackages, insertLibraryDir, setSetting, setStorageState } from './db.js'
+import {
+  closeDatabase,
+  getAllPackages,
+  insertLibraryDir,
+  setLibraryDirBrowserAssist,
+  setSetting,
+  setStorageState,
+} from './db.js'
 import {
   __processBatchForTests,
   __setProcessBatchStateForTests,
@@ -266,6 +273,113 @@ describe('applyStorageState — nested .var preserves its subfolder', () => {
     expect(row.library_dir_id).toBeNull()
     expect(row.subpath).toBe('Creator/Bundle')
     expect(await readdir(sub)).toContain('Sub.Pkg.1.var') // back in the original main subfolder
+  })
+})
+
+describe('applyStorageState — BrowserAssist sidecar mode on an aux dir', () => {
+  async function seedNestedMain() {
+    const sub = join(tmp.addonPackages, 'Creator', 'Bundle')
+    await mkdir(sub, { recursive: true })
+    const buf = await buildVar({
+      meta: { packageName: 'Sub.Pkg', creator: 'Sub' },
+      files: { 'Saves/scene/s.json': '{"atoms":[]}' },
+    })
+    await placeVar(sub, 'Sub.Pkg.1.var', buf)
+    await runScan(tmp.vamDir)
+    buildFromDb()
+    return sub
+  }
+
+  async function mkBrowserAssistAux() {
+    const aux = await mkAuxDir(tmp.vamDir)
+    const auxId = insertLibraryDir(aux)
+    setLibraryDirBrowserAssist(auxId, 1)
+    refreshLibraryDirs()
+    return { aux, auxId }
+  }
+
+  it('offloading a nested package writes a .var.json sidecar recording its OriginalFolder', async () => {
+    await seedNestedMain()
+    const { aux, auxId } = await mkBrowserAssistAux()
+
+    await applyStorageState('Sub.Pkg.1.var', { storageState: 'offloaded', libraryDirId: auxId })
+
+    const row = getAllPackages().find((r) => r.filename === 'Sub.Pkg.1.var')
+    expect(row.storage_state).toBe('offloaded')
+    expect(row.library_dir_id).toBe(auxId)
+    expect(row.subpath).toBe('Creator/Bundle')
+
+    // Bytes mirrored into the subfolder; sidecar sits beside them.
+    const destDir = join(aux, 'Creator', 'Bundle')
+    const files = await readdir(destDir)
+    expect(files).toContain('Sub.Pkg.1.var')
+    expect(files).toContain('Sub.Pkg.1.var.json')
+    const sidecar = JSON.parse(await readFile(join(destDir, 'Sub.Pkg.1.var.json'), 'utf8'))
+    expect(sidecar.OriginalFolder).toBe('AddonPackages\\Creator\\Bundle')
+  })
+
+  it('restoring from a BrowserAssist dir removes the sidecar and lands in the original folder', async () => {
+    const sub = await seedNestedMain()
+    const { aux, auxId } = await mkBrowserAssistAux()
+
+    await applyStorageState('Sub.Pkg.1.var', { storageState: 'offloaded', libraryDirId: auxId })
+    await applyStorageState('Sub.Pkg.1.var', { storageState: 'enabled', libraryDirId: null })
+
+    const row = getAllPackages().find((r) => r.filename === 'Sub.Pkg.1.var')
+    expect(row.storage_state).toBe('enabled')
+    expect(row.library_dir_id).toBeNull()
+    expect(row.subpath).toBe('Creator/Bundle')
+    expect(await readdir(sub)).toContain('Sub.Pkg.1.var')
+    // The sidecar left the aux dir with the file.
+    expect(await readdir(join(aux, 'Creator', 'Bundle'))).not.toContain('Sub.Pkg.1.var.json')
+  })
+
+  it('root-level packages get no sidecar (BrowserAssist restores the root by default)', async () => {
+    const buf = await buildVar({
+      meta: { packageName: 'Root.Pkg', creator: 'Root' },
+      files: { 'Saves/scene/r.json': '{"atoms":[]}' },
+    })
+    await placeVar(tmp.addonPackages, 'Root.Pkg.1.var', buf)
+    await runScan(tmp.vamDir)
+    buildFromDb()
+    const { aux, auxId } = await mkBrowserAssistAux()
+
+    await applyStorageState('Root.Pkg.1.var', { storageState: 'offloaded', libraryDirId: auxId })
+
+    const files = await readdir(aux)
+    expect(files).toContain('Root.Pkg.1.var')
+    expect(files).not.toContain('Root.Pkg.1.var.json')
+  })
+
+  it('restores a package BrowserAssist offloaded flat, honoring the sidecar OriginalFolder', async () => {
+    // BrowserAssist flattens every offloaded .var to the aux root and records the
+    // real restore folder in the sidecar. We must restore to that folder, not the
+    // flat physical location.
+    const { aux } = await mkBrowserAssistAux()
+    const buf = await buildVar({
+      meta: { packageName: 'Flat.Pkg', creator: 'Flat' },
+      files: { 'Saves/scene/f.json': '{"atoms":[]}' },
+    })
+    await placeVar(aux, 'Flat.Pkg.1.var', buf) // flat at aux root
+    await writeFile(
+      join(aux, 'Flat.Pkg.1.var.json'),
+      JSON.stringify({ OriginalFolder: 'AddonPackages\\Sorted\\Scenes' }),
+    )
+    await runScan(tmp.vamDir)
+    buildFromDb()
+
+    const offloaded = getAllPackages().find((r) => r.filename === 'Flat.Pkg.1.var')
+    expect(offloaded.storage_state).toBe('offloaded')
+    expect(offloaded.subpath).toBe('') // physically flat at the aux root
+
+    await applyStorageState('Flat.Pkg.1.var', { storageState: 'enabled', libraryDirId: null })
+
+    const row = getAllPackages().find((r) => r.filename === 'Flat.Pkg.1.var')
+    expect(row.storage_state).toBe('enabled')
+    expect(row.subpath).toBe('Sorted/Scenes')
+    expect(await readdir(join(tmp.addonPackages, 'Sorted', 'Scenes'))).toContain('Flat.Pkg.1.var')
+    expect(await readdir(aux)).not.toContain('Flat.Pkg.1.var') // moved out
+    expect(await readdir(aux)).not.toContain('Flat.Pkg.1.var.json') // sidecar removed
   })
 })
 
