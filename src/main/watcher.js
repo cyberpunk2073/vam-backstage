@@ -3,7 +3,7 @@ import { join, extname, basename, relative, sep, dirname } from 'path'
 import { stat, mkdir, rename, unlink, readdir } from 'fs/promises'
 import { ADDON_PACKAGES_FILE_PREFS } from '@shared/paths.js'
 import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_DIRS } from '@shared/local-package.js'
-import { isVarFilename, canonicalVarFilename } from './scanner/var-reader.js'
+import { isVarFilename, canonicalVarFilename, qvaroDisabledName } from './scanner/var-reader.js'
 import { scanAndUpsert } from './scanner/ingest.js'
 import { computeAutoHidePathsForNewPackage } from './scanner/index.js'
 import { inheritFromOlderVersion } from './scanner/inherit.js'
@@ -355,10 +355,12 @@ function scheduleBatch() {
 }
 
 /**
- * Normalize a stray `.var.disabled` in an aux dir to bare `.var`. Aux dirs only ever
- * hold suffix-less files in our model (offloaded == active) — anything `.disabled`
- * there came from external tooling (a renamed content file or a VaM-native empty
- * marker). Records both source and dest paths via `recordOwnedPath`; effective when
+ * Normalize a stray `.var.disabled` or Qvaro `.DISABLED` in an aux dir to bare
+ * `.var`. Aux dirs only ever hold suffix-less files in our model (offloaded ==
+ * active) — anything `.disabled`/`.DISABLED` there came from external tooling (a
+ * renamed content file or a VaM-native empty marker). The canonical bare name is
+ * derived by `canonicalVarFilename` (which understands both rename forms). Records
+ * both source and dest paths via `recordOwnedPath`; effective when
  * called from inside a bulk window (i.e. `processBatch`, which always wraps), no-op
  * from the standalone scanner pass (during which the watcher isn't yet running).
  *
@@ -764,9 +766,10 @@ export async function __localPrefsEventSyncForTests(fullPath) {
  *
  * Dir precedence follows `dirs` order (main first), and within the tree a
  * shallower / earlier match wins. Aux dirs accept only the suffix-less name (we
- * normalize away `.disabled` in aux); main classifies bare + `.disabled` sizes
- * (`classifyMainVar`) to distinguish enabled / marker-disabled / suffix-disabled,
- * and treats a lone empty marker as "not found".
+ * normalize away the disabled spelling in aux); main classifies bare + disabled-
+ * sibling sizes (`classifyMainVar`) to distinguish enabled / marker-disabled /
+ * suffix-disabled (the sibling may be a VaM `.var.disabled` or a Qvaro `.DISABLED`
+ * rename), and treats a lone empty marker as "not found".
  *
  * @returns {Promise<Map<string, { libraryDirId: number|null, storageState: string, subpath: string }>>}
  */
@@ -808,8 +811,10 @@ async function locateWalk(root, dir, libraryDirId, remaining, out) {
       continue
     }
     // Gate on the dirent set first so we only stat canonicals actually present
-    // in this folder, then classify their bare/`.disabled` footprint on disk.
-    if (!files.has(canonical) && !files.has(canonical + '.disabled')) continue
+    // in this folder, then classify their bare/`.var.disabled`/Qvaro `.DISABLED`
+    // footprint on disk.
+    if (!files.has(canonical) && !files.has(canonical + '.disabled') && !files.has(qvaroDisabledName(canonical)))
+      continue
     const cls = await classifyMainVarOnDisk(join(dir, canonical))
     if (!cls.present) continue // e.g. only an empty marker — no content here
     out.set(canonical, {

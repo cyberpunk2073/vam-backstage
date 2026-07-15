@@ -143,31 +143,49 @@ export async function extractFiles(varPath, internalPaths) {
   })
 }
 
+// Bare `.var` plus VaM's marker/legacy `.var.disabled` sibling.
 const VAR_EXT_RE = /\.var(\.disabled)?$/i
 
 /**
- * Return the canonical .var filename (strip .disabled suffix if present).
- * "Foo.Bar.1.var.disabled" → "Foo.Bar.1.var"
+ * Return the canonical bare `.var` filename for any on-disk disable encoding:
+ *  - VaM marker / legacy suffix: "Foo.Bar.1.var.disabled" → "Foo.Bar.1.var"
+ *  - Qvaro rename:               "Foo.Bar.1.DISABLED"     → "Foo.Bar.1.var"
+ * Both end in a trailing `.disabled` (case-insensitive); the Qvaro rename simply
+ * drops the `.var` before it. Anything else is returned unchanged.
  */
 export function canonicalVarFilename(name) {
-  return name.replace(/\.disabled$/i, '')
+  return name.replace(/(?:\.var)?\.disabled$/i, '.var')
 }
 
 /**
- * True for filenames ending in .var or .var.disabled.
+ * On-disk Qvaro name for a canonical `.var`: "Foo.Bar.1.var" → "Foo.Bar.1.DISABLED".
+ * Only the trailing `.var` is swapped, so this is safe to apply to a full path.
+ */
+export function qvaroDisabledName(canonical) {
+  return canonical.replace(/\.var$/i, '.DISABLED')
+}
+
+/**
+ * True for filenames ending in `.var`, `.var.disabled`, or a Qvaro `.DISABLED`
+ * rename. The `.var`/`.var.disabled` forms stay a loose extension gate (the real
+ * validator is `parseVarFilename`); a bare `.DISABLED` is only accepted when it
+ * parses as a real var, so unrelated `*.DISABLED` files aren't treated as packages.
  */
 export function isVarFilename(name) {
-  return VAR_EXT_RE.test(name)
+  if (VAR_EXT_RE.test(name)) return true
+  if (/\.disabled$/i.test(name)) return parseVarFilename(name) != null
+  return false
 }
 
 /**
- * Parse a .var (or .var.disabled) filename into { creator, packageName, version } or null.
- * On-disk versions are always purely numeric — dep-ref conventions like `.latest` and
- * `.minN` are intentionally rejected here so they can never become package rows.
- * Input: "AcidBubbles.Timeline.249.var" / "AcidBubbles.Timeline.249.var.disabled"
+ * Parse a .var (or `.var.disabled` / Qvaro `.DISABLED`) filename into
+ * { creator, packageName, version } or null. On-disk versions are always purely
+ * numeric — dep-ref conventions like `.latest` and `.minN` are intentionally
+ * rejected here so they can never become package rows.
+ * Input: "AcidBubbles.Timeline.249.var" / ".var.disabled" / "AcidBubbles.Timeline.249.DISABLED"
  */
 export function parseVarFilename(filename) {
-  const stem = filename.replace(VAR_EXT_RE, '')
+  const stem = canonicalVarFilename(filename).replace(/\.var$/i, '')
   const parts = stem.split('.')
   if (parts.length < 3) return null
   const version = parts[parts.length - 1]

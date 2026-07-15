@@ -104,15 +104,22 @@ export function buildVar({ meta, files = {}, metaRaw } = {}) {
  *   no bare sibling.
  * - `marker: true`: VaM-native layout — bare `name` (holding the content) plus
  *   an empty `name.disabled` marker beside it.
+ * - `qvaro: true`: Qvaro rename layout — content lands in `name` with its `.var`
+ *   extension swapped for `.DISABLED`, no bare sibling.
  *
  * Returns the path to the file holding the content bytes.
  */
-export async function placeVar(dirPath, name, varBuffer, { disabled = false, marker = false } = {}) {
+export async function placeVar(dirPath, name, varBuffer, { disabled = false, marker = false, qvaro = false } = {}) {
   if (marker) {
     const barePath = join(dirPath, name)
     await writeFile(barePath, varBuffer)
     await writeFile(join(dirPath, name + '.disabled'), '')
     return barePath
+  }
+  if (qvaro) {
+    const fullPath = join(dirPath, name.replace(/\.var$/i, '.DISABLED'))
+    await writeFile(fullPath, varBuffer)
+    return fullPath
   }
   const finalName = disabled ? name + '.disabled' : name
   const fullPath = join(dirPath, finalName)

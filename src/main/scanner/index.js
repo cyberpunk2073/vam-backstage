@@ -238,8 +238,9 @@ const VAR_STAT_CONCURRENCY = 8
  *  - Unreadable subdirectories are silently skipped without flipping `ok`.
  *
  * `filename` is always the canonical `.var` form. Within one directory the bare
- * `.var` and its `.var.disabled` sibling are classified together (`classifyMainVar`):
- * a marker present ⇒ disabled, content read from whichever file holds the bytes.
+ * `.var` and its disabled sibling (VaM `.var.disabled` or a Qvaro `.DISABLED`
+ * rename) are classified together (`classifyMainVar`): a disabled sibling present
+ * ⇒ disabled, content read from whichever file holds the bytes.
  *
  * Aux dirs (`libraryDirId != null`) are always suffix-less in our model. Stray
  * `.var.disabled` files from external tooling are normalized via `normalizeAuxDisabled`
@@ -263,9 +264,10 @@ async function walkForVars(dir, libraryDirId) {
       limit(async () => {
         const { canonical, barePath, disabledPath } = c
 
-        // Aux dirs are always suffix-less in our model (offloaded == active).
-        // A `.var.disabled` there is external tooling residue: normalize it to
-        // bare (or drop an empty/duplicate marker) and index the bare content.
+        // Aux dirs are always suffix-less in our model (offloaded == active). A
+        // `.var.disabled` (or Qvaro `.DISABLED`) there is external tooling residue:
+        // normalize it to bare (or drop an empty/duplicate marker) and index the
+        // bare content.
         if (libraryDirId != null) {
           let contentPath = barePath
           if (disabledPath) {
@@ -288,10 +290,11 @@ async function walkForVars(dir, libraryDirId) {
 
         // Main dir: classify the canonical's bare + `.disabled` footprint. Marker
         // presence ⇒ disabled; content is read from the bare file when it holds
-        // bytes, else from the `.disabled` file (legacy rename). Empty-marker-only
-        // ⇒ skip. The dirent walk already proved whether a `.disabled` sibling
-        // exists, so the common no-sibling case skips its stat — one syscall per
-        // package on the full-scan hot path.
+        // bytes, else from the disabled sibling (legacy `.var.disabled` or Qvaro
+        // `.DISABLED` rename — resolved by spelling in `classifyMainVarOnDisk`).
+        // Empty-marker-only ⇒ skip. The dirent walk already proved whether a
+        // disabled sibling exists, so the common no-sibling case skips its stat —
+        // one syscall per package on the full-scan hot path.
         const cls = await classifyMainVarOnDisk(barePath ?? join(dirname(disabledPath), canonical), {
           disabledKnownAbsent: !disabledPath,
         })
@@ -318,9 +321,10 @@ async function walkForVars(dir, libraryDirId) {
 /**
  * Recursive dirent walk that pushes one `{canonical, barePath, disabledPath}`
  * candidate per canonical into `out` (either path is null when that variant is
- * absent in the folder). Keeping *both* siblings — rather than collapsing to one
- * — lets `walkForVars` classify the marker vs suffix disable layout from their
- * sizes. Returns false only when the **root** `dir` is unreachable so the caller
+ * absent in the folder). The disabled sibling covers both VaM's `.var.disabled`
+ * and a Qvaro `.DISABLED` rename. Keeping *both* siblings — rather than collapsing
+ * to one — lets `walkForVars` classify the marker vs suffix disable layout from
+ * their sizes. Returns false only when the **root** `dir` is unreachable so the caller
  * can distinguish "nothing here" from "couldn't read here"; sub-directory read
  * failures are silently skipped (matches today's silent-skip semantics).
  */
@@ -342,6 +346,9 @@ export async function collectVarCandidates(dir, out, isRoot) {
     } else if (entry.isDirectory()) {
       await collectVarCandidates(fullPath, out, false)
     } else if (entry.isFile() && isVarFilename(entry.name)) {
+      // Any disabled spelling — VaM's `.var.disabled` or a Qvaro `.DISABLED`
+      // rename — is the "disabled sibling"; `canonicalVarFilename` maps either
+      // back to the bare `X.var` it stands in for.
       const isDisabled = /\.disabled$/i.test(entry.name)
       const canonical = isDisabled ? canonicalVarFilename(entry.name) : entry.name
       let group = localFiles.get(canonical)

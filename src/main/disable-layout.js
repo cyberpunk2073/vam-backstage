@@ -1,38 +1,44 @@
 /**
  * On-disk encoding of a *disabled* `.var` package in the main library dir.
  *
- * VaM disables a package by keeping the real `X.var` in place and dropping an
- * empty sibling `X.var.disabled` marker; the marker's mere presence signals
- * "disabled". Some external tools (and older versions of this app) instead
- * *renamed* `X.var` → `X.var.disabled`, so the content lives in the suffixed
- * file with no bare sibling. We support both.
+ * Three layouts express "disabled", differing only in *where the content bytes
+ * live* relative to the canonical `X.var`:
+ *  - **marker** (VaM-native): the real `X.var` stays in place beside an empty
+ *    `X.var.disabled` marker; the marker's mere presence signals "disabled".
+ *  - **legacy suffix**: older versions of this app (and some external tools)
+ *    *renamed* `X.var` → `X.var.disabled`, so the content lives in the suffixed
+ *    file with no bare sibling.
+ *  - **Qvaro**: the Qvaro tool renames `X.var` → `X.DISABLED` (uppercase, matched
+ *    case-insensitively — the whole `.var` extension is replaced), so the content
+ *    lives in the `.DISABLED` file with no bare sibling and no `.var.disabled`.
  *
- * The single degree of freedom is *where the content bytes live*: in the bare
- * `X.var` (marker layout) or in `X.var.disabled` (suffix layout). We do NOT
- * persist this in the DB. The `packages` row stores only the canonical bare
- * `filename` (never suffixed), the `storage_state`, and the `subpath` directory;
- * the physical byte location is resolved from disk on demand (see
- * `resolveContentPath` in `library-dirs.js`). Reads that need the bytes are rare
- * and already touch the disk, so re-deriving the layout with a couple of `stat`s
- * is free and keeps the disk as the single source of truth — no cached column to
- * go stale, and no migration needed to support a future third scheme (e.g. Qvaro,
- * which renames `X.var` → `X.DISABLED`): the classifier just grows another case.
+ * We support *reading* all three; app-initiated disables always write the
+ * marker layout (see `storage-state.js`). We do NOT persist which layout a row
+ * uses. The `packages` row stores only the canonical bare `filename` (never
+ * suffixed/renamed), the `storage_state`, and the `subpath` directory; the
+ * physical byte location is resolved from disk on demand (see `resolveContentPath`
+ * in `library-dirs.js`). Reads that need the bytes are rare and already touch the
+ * disk, so re-deriving the layout with a couple of `stat`s is free and keeps the
+ * disk as the single source of truth — no cached column to go stale.
  *
- * `classifyMainVar` is the pure decision function over the two current siblings;
- * the main process wraps it in `classifyMainVarOnDisk` (see `library-dirs.js`) to
- * stat them and derive `storageState` + `contentPath`. Callers read those
- * directly, so there is no separate layout enum.
+ * The legacy-suffix and Qvaro layouts are the *same case* to this classifier:
+ * "content lives in the disabled sibling, no bare `.var`". Only the sibling's
+ * on-disk spelling differs (`X.var.disabled` vs `X.DISABLED`), which is resolved
+ * in `classifyMainVarOnDisk` (see `library-dirs.js`) — so `classifyMainVar`
+ * itself is name-agnostic and works purely on the bare + disabled-sibling sizes.
+ * The main process wraps it in `classifyMainVarOnDisk` to stat the siblings and
+ * derive `storageState` + `contentPath`; callers read those directly.
  */
 
 /**
  * Classify the on-disk footprint of one canonical `.var` in a MAIN library dir
- * from the sizes of its bare and `.disabled` files (`null` when the file is
+ * from the sizes of its bare and disabled-sibling files (`null` when the file is
  * absent). Aux dirs never carry a disabled encoding — callers handle the
  * offloaded case separately.
  *
- * Detection rule (matches VaM): a canonical is disabled iff a `.var.disabled`
+ * Detection rule (matches VaM): a canonical is disabled iff a disabled sibling
  * file exists. Content is read from the bare `.var` when it holds bytes,
- * otherwise from the `.var.disabled` file (legacy rename).
+ * otherwise from the disabled sibling (legacy suffix or Qvaro rename).
  *
  * Returns one of:
  *  - `{ present: false }` — no usable content (nothing on disk, or only an
@@ -41,7 +47,7 @@
  *    rather than being silently invisible.
  *  - `{ present: true, storageState: 'enabled',  contentInDisabled: false }`
  *  - `{ present: true, storageState: 'disabled', contentInDisabled: false }` (marker)
- *  - `{ present: true, storageState: 'disabled', contentInDisabled: true  }` (suffix)
+ *  - `{ present: true, storageState: 'disabled', contentInDisabled: true  }` (suffix/Qvaro)
  *
  * @param {{ bareSize: number|null, disabledSize: number|null }} sizes
  */

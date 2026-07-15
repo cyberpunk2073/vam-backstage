@@ -1,7 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { join } from 'path'
 import { writeFile, readdir } from 'fs/promises'
-import { readVar, extractFile, extractFiles, parseVarFilename, canonicalVarFilename } from './var-reader.js'
+import {
+  readVar,
+  extractFile,
+  extractFiles,
+  parseVarFilename,
+  canonicalVarFilename,
+  qvaroDisabledName,
+  isVarFilename,
+} from './var-reader.js'
 import { buildVar, mkTempVamDir } from '../../../test/fixtures/index.js'
 
 // ── filename helpers (no FS) ──────────────────────────────────────────────────
@@ -71,6 +79,25 @@ describe('parseVarFilename', () => {
     expect(parseVarFilename('Author.Pkg.-1.var')).toBeNull()
     expect(parseVarFilename('Author.Pkg.1a.var')).toBeNull()
   })
+
+  it('parses a Qvaro rename (.DISABLED replaces the .var extension)', () => {
+    expect(parseVarFilename('Author.Pkg.5.DISABLED')).toEqual({
+      creator: 'Author',
+      packageName: 'Author.Pkg',
+      version: '5',
+    })
+    // case-insensitive, multi-dot package names
+    expect(parseVarFilename('A.B.C.42.disabled')).toEqual({
+      creator: 'A',
+      packageName: 'A.B.C',
+      version: '42',
+    })
+  })
+
+  it('rejects a Qvaro-style name that is not a real var (no version segment)', () => {
+    expect(parseVarFilename('notes.DISABLED')).toBeNull()
+    expect(parseVarFilename('Author.Pkg.latest.DISABLED')).toBeNull()
+  })
 })
 
 describe('canonicalVarFilename', () => {
@@ -85,6 +112,39 @@ describe('canonicalVarFilename', () => {
 
   it('returns the input unchanged when already canonical', () => {
     expect(canonicalVarFilename('Foo.Bar.1.var')).toBe('Foo.Bar.1.var')
+  })
+
+  it('swaps a Qvaro .DISABLED rename back to the canonical .var (any case)', () => {
+    expect(canonicalVarFilename('Foo.Bar.1.DISABLED')).toBe('Foo.Bar.1.var')
+    expect(canonicalVarFilename('Foo.Bar.1.disabled')).toBe('Foo.Bar.1.var')
+    expect(canonicalVarFilename('Foo.Bar.1.Disabled')).toBe('Foo.Bar.1.var')
+  })
+})
+
+describe('qvaroDisabledName', () => {
+  it('swaps a canonical .var for the Qvaro .DISABLED on-disk name', () => {
+    expect(qvaroDisabledName('Foo.Bar.1.var')).toBe('Foo.Bar.1.DISABLED')
+  })
+})
+
+describe('isVarFilename', () => {
+  it('accepts bare .var and .var.disabled forms', () => {
+    expect(isVarFilename('Foo.Bar.1.var')).toBe(true)
+    expect(isVarFilename('Foo.Bar.1.var.disabled')).toBe(true)
+    expect(isVarFilename('Foo.Bar.1.var.DISABLED')).toBe(true)
+  })
+
+  it('accepts a Qvaro .DISABLED only when it parses as a real var', () => {
+    expect(isVarFilename('Foo.Bar.1.DISABLED')).toBe(true)
+    expect(isVarFilename('A.B.C.42.disabled')).toBe(true)
+    // unrelated *.DISABLED files are not packages
+    expect(isVarFilename('notes.DISABLED')).toBe(false)
+    expect(isVarFilename('Author.Pkg.latest.DISABLED')).toBe(false)
+  })
+
+  it('rejects non-var extensions', () => {
+    expect(isVarFilename('Foo.Bar.1.zip')).toBe(false)
+    expect(isVarFilename('readme.txt')).toBe(false)
   })
 })
 

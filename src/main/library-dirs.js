@@ -13,8 +13,9 @@
  *    right target for writers/deleters and for the companion `.jpg` dirname.
  *  - `resolveContentPath(pkg)` (async) returns where the bytes *physically* are,
  *    probing disk for disabled rows. It only differs from the nominal path for a
- *    legacy rename-disabled package whose content sits in `X.var.disabled` with
- *    no bare sibling. Readers that open the archive route through it.
+ *    legacy rename-disabled package whose content sits in `X.var.disabled`, or a
+ *    Qvaro-disabled one whose content sits in `X.DISABLED`, with no bare sibling.
+ *    Readers that open the archive route through it.
  *
  * We deliberately do NOT cache the physical basename in the DB: reads that need
  * the bytes are rare, one-off, and already hit the disk, so a couple of extra
@@ -34,6 +35,7 @@ import { realpath, stat } from 'fs/promises'
 import { ADDON_PACKAGES, ADDON_PACKAGES_FILE_PREFS } from '@shared/paths.js'
 import { LOCAL_CONTENT_DIRS } from '@shared/local-package.js'
 import { classifyMainVar } from './disable-layout.js'
+import { qvaroDisabledName } from './scanner/var-reader.js'
 import { getSetting, listLibraryDirs as dbListLibraryDirs } from './db.js'
 
 let auxDirsById = new Map() // id -> { id, path, created_at }
@@ -114,8 +116,9 @@ export async function resolveContentPath(pkg) {
   if (!nominal) return null
 
   if (pkg.storage_state === 'disabled') {
-    // Main disabled: bytes may sit in the bare `.var` (VaM marker layout) or in a
-    // `.var.disabled` sibling (legacy rename). Re-derive from the two siblings.
+    // Main disabled: bytes may sit in the bare `.var` (VaM marker layout), a
+    // `.var.disabled` sibling (legacy rename), or a Qvaro `.DISABLED` rename.
+    // Re-derive from the siblings on disk.
     const cls = await classifyMainVarOnDisk(nominal)
     return cls.present ? cls.contentPath : nominal
   }
@@ -134,31 +137,43 @@ export async function resolveContentPath(pkg) {
 }
 
 /**
- * Inspect a canonical `.var`'s two possible sibling files at an absolute bare
+ * Inspect a canonical `.var`'s bare + disabled-sibling files at an absolute bare
  * path in a MAIN library dir and report the on-disk truth. This is the single
  * fs-level classifier shared by the scanner, watcher, and `applyStorageState`,
- * so "look at both siblings and decide enabled / marker-disabled / suffix-
- * disabled" lives in exactly one place. `barePath` is `<dir>/<canonical>`; the
- * marker/legacy sibling is `barePath + '.disabled'`.
+ * so "look at the siblings and decide enabled / marker-disabled / suffix-disabled"
+ * lives in exactly one place. `barePath` is `<dir>/<canonical>`.
+ *
+ * The disabled sibling has two possible spellings, tried in order: VaM's
+ * `barePath + '.disabled'` (marker or legacy suffix) and the Qvaro rename that
+ * swaps the trailing `.var` for `.DISABLED`. Only the spelling differs — the
+ * size-based verdict is identical — so `classifyMainVar` stays name-agnostic.
  *
  * Returns the `classifyMainVar` verdict plus the resolved paths and the `stat`
  * of the file actually holding the content bytes (both null when not present):
  *   `{ present, storageState?, contentPath, contentStat }`
- * `contentPath` is the `.disabled`-suffixed sibling for a legacy suffix layout,
- * else the bare `.var`. (Aux dirs never carry a disabled encoding — callers
- * handle offloaded bare files directly, not through here.)
+ * `contentPath` is the disabled sibling for a suffix/Qvaro layout, else the bare
+ * `.var`. (Aux dirs never carry a disabled encoding — callers handle offloaded
+ * bare files directly, not through here.)
  *
  * `disabledKnownAbsent`: callers that already enumerated the folder's dirents
- * (the scanner's walk) can assert the `.disabled` sibling doesn't exist, which
- * skips its stat — keeping the full-scan hot path at one syscall per package
- * while the classification verdict still comes from `classifyMainVar`.
+ * (the scanner's walk) can assert no disabled sibling exists (neither spelling),
+ * which skips both sibling stats — keeping the full-scan hot path at one syscall
+ * per package while the verdict still comes from `classifyMainVar`.
  */
 export async function classifyMainVarOnDisk(barePath, { disabledKnownAbsent = false } = {}) {
-  const disabledPath = barePath + '.disabled'
-  const [bareStat, disabledStat] = await Promise.all([
+  const markerPath = barePath + '.disabled'
+  const qvaroPath = qvaroDisabledName(barePath)
+  const [bareStat, markerStat, qvaroStat] = await Promise.all([
     stat(barePath).catch(() => null),
-    disabledKnownAbsent ? null : stat(disabledPath).catch(() => null),
+    disabledKnownAbsent ? null : stat(markerPath).catch(() => null),
+    disabledKnownAbsent ? null : stat(qvaroPath).catch(() => null),
   ])
+  // Prefer VaM's `.var.disabled` spelling (whose *presence* — even empty — is the
+  // marker). Fall back to a Qvaro `.DISABLED` rename only when it actually holds
+  // content: Qvaro moves the package's bytes into that file rather than dropping
+  // an empty sidecar, so an empty `.DISABLED` is not a disable signal.
+  const useQvaro = !markerStat && qvaroStat && qvaroStat.size > 0
+  const [disabledPath, disabledStat] = useQvaro ? [qvaroPath, qvaroStat] : [markerPath, markerStat]
   const cls = classifyMainVar({
     bareSize: bareStat ? bareStat.size : null,
     disabledSize: disabledStat ? disabledStat.size : null,

@@ -66,6 +66,44 @@ describe('runScan — main library only', () => {
     expect(onDisk).toContain('Author.Pkg.1.var.disabled')
   })
 
+  it('indexes a Qvaro rename (Author.Pkg.1.DISABLED) as disabled, content read from the .DISABLED file', async () => {
+    const buf = await buildVar({
+      meta: { packageName: 'Qvaro.Pkg', creator: 'Qvaro' },
+      files: { 'Saves/scene/Demo.json': '{"atoms":[]}' },
+    })
+    await placeVar(tmp.addonPackages, 'Qvaro.Pkg.1.var', buf, { qvaro: true })
+
+    const result = await runScan(tmp.vamDir)
+    expect(result.added).toBe(1)
+
+    const row = getAllPackages().find((r) => r.filename === 'Qvaro.Pkg.1.var')
+    expect(row).toBeDefined()
+    expect(row.storage_state).toBe('disabled')
+    expect(row.library_dir_id).toBeNull()
+    // Content lives in the Qvaro-renamed file — resolved from disk on demand.
+    expect(await resolveContentPath(row)).toBe(join(tmp.addonPackages, 'Qvaro.Pkg.1.DISABLED'))
+
+    // We only support *reading* the Qvaro layout — the rename is left untouched on disk.
+    const onDisk = await readdir(tmp.addonPackages)
+    expect(onDisk).toContain('Qvaro.Pkg.1.DISABLED')
+    expect(onDisk).not.toContain('Qvaro.Pkg.1.var')
+  })
+
+  it('treats an empty .DISABLED beside a real bare .var as enabled (Qvaro renames content, never drops an empty sidecar)', async () => {
+    const buf = await buildVar({
+      meta: { packageName: 'Stray.Pkg', creator: 'Stray' },
+      files: { 'Saves/scene/Demo.json': '{"atoms":[]}' },
+    })
+    await placeVar(tmp.addonPackages, 'Stray.Pkg.1.var', buf) // real bare .var
+    await writeFile(join(tmp.addonPackages, 'Stray.Pkg.1.DISABLED'), '') // meaningless empty stray
+
+    await runScan(tmp.vamDir)
+    const row = getAllPackages().find((r) => r.filename === 'Stray.Pkg.1.var')
+    expect(row.storage_state).toBe('enabled')
+    // Content stays in the bare .var — the empty .DISABLED is not a disable signal.
+    expect(await resolveContentPath(row)).toBe(join(tmp.addonPackages, 'Stray.Pkg.1.var'))
+  })
+
   it('indexes a VaM-native marker (bare .var + empty .var.disabled) as disabled, content in bare', async () => {
     const buf = await buildVar({
       meta: { packageName: 'Marker.Pkg', creator: 'Marker' },

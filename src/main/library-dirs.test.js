@@ -178,6 +178,14 @@ describe('resolveContentPath — physical byte location from disk', () => {
     expect(await resolveContentPath(pkg)).toBe(join(dir, 'Author.Pkg.1.var.disabled'))
   })
 
+  it('returns the .DISABLED path for a Qvaro-disabled package (bytes in the rename)', async () => {
+    const dir = join(tmp.addonPackages, 'Author')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'Author.Pkg.1.DISABLED'), 'content') // Qvaro rename, no bare sibling
+    const pkg = { filename: 'Author.Pkg.1.var', storage_state: 'disabled', library_dir_id: null, subpath: 'Author' }
+    expect(await resolveContentPath(pkg)).toBe(join(dir, 'Author.Pkg.1.DISABLED'))
+  })
+
   it('returns the nominal aux path for an offloaded package without probing disk', async () => {
     const auxPath = join(tmp.vamDir, '..', 'auxlib')
     const auxId = insertLibraryDir(auxPath)
