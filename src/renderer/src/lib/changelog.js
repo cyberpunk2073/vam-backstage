@@ -6,6 +6,42 @@
  */
 export const CHANGELOG = [
   {
+    version: '0.4.0',
+    date: '2026-07-15',
+    notes: [
+      {
+        kind: 'new',
+        title: 'Interactive dependency graph',
+        body: 'See your entire enabled library as one living picture and discover the shared dependencies that tie it together.',
+      },
+      {
+        kind: 'new',
+        title: 'Drag and drop packages to add them',
+        body: 'Drop .var files or whole folders onto the window to copy them into your library, even when connected to a remote library over the network.',
+      },
+      {
+        kind: 'new',
+        title: 'Import your Hub wishlist',
+        body: 'Bring your Hub favorites and bookmarks into your Wishlist from Settings.',
+      },
+      {
+        kind: 'improved',
+        title: 'Spot and fix broken dependencies',
+        body: 'Packages with disabled or offloaded dependencies are now highlighted, with a one-click "Enable disabled dependencies" to fix them.',
+      },
+      {
+        kind: 'improved',
+        title: 'Many small improvements',
+        body: '"favorite" as a search term, clickable dependencies in the Hub panel, and a second launch that just focuses the existing window.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Many small fixes',
+        body: 'Spurious disable warnings and table layouts.',
+      },
+    ],
+  },
+  {
     version: '0.3.1',
     date: '2026-07-11',
     notes: [
