@@ -381,6 +381,35 @@ describe('applyStorageState — BrowserAssist sidecar mode on an aux dir', () =>
     expect(await readdir(aux)).not.toContain('Flat.Pkg.1.var') // moved out
     expect(await readdir(aux)).not.toContain('Flat.Pkg.1.var.json') // sidecar removed
   })
+
+  it('re-offloads after a BA flat restore using the in-memory subpath (no rebuild)', async () => {
+    // Regression: enable from a BA-flattened package updates DB subpath via the
+    // sidecar, but used to leave packageIndex.subpath as '' — the next offload
+    // then looked for the .var under AddonPackages root and threw "Source file missing".
+    const { aux, auxId } = await mkBrowserAssistAux()
+    const buf = await buildVar({
+      meta: { packageName: 'Round.Pkg', creator: 'Round' },
+      files: { 'Saves/scene/r.json': '{"atoms":[]}' },
+    })
+    await placeVar(aux, 'Round.Pkg.1.var', buf)
+    await writeFile(
+      join(aux, 'Round.Pkg.1.var.json'),
+      JSON.stringify({ OriginalFolder: 'AddonPackages\\Sorted\\Scenes' }),
+    )
+    await runScan(tmp.vamDir)
+    buildFromDb()
+
+    await applyStorageState('Round.Pkg.1.var', { storageState: 'enabled', libraryDirId: null })
+    // In-memory index must carry the restore subpath — no buildFromDb in between.
+    expect(getPackageIndex().get('Round.Pkg.1.var')?.subpath).toBe('Sorted/Scenes')
+
+    await applyStorageState('Round.Pkg.1.var', { storageState: 'offloaded', libraryDirId: auxId })
+    const row = getPackageIndex().get('Round.Pkg.1.var')
+    expect(row.storage_state).toBe('offloaded')
+    expect(row.subpath).toBe('Sorted/Scenes')
+    expect(await readdir(join(aux, 'Sorted', 'Scenes'))).toContain('Round.Pkg.1.var')
+    expect(await readdir(join(tmp.addonPackages, 'Sorted', 'Scenes'))).not.toContain('Round.Pkg.1.var')
+  })
 })
 
 describe('applyStorageState — destination collision size guard', () => {

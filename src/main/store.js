@@ -1166,9 +1166,15 @@ export function patchTypeOverride(filename, typeOverride) {
 }
 
 /**
- * Fast-path patch of `storage_state` (+ optionally `library_dir_id`) on
+ * Fast-path patch of `storage_state` (+ optionally `library_dir_id` / `subpath`) on
  * `packageIndex` rows so a toggle/move doesn't pay for a full `buildFromDb()`
  * rebuild. Used by `applyStorageState`.
+ *
+ * `subpath` must be patched whenever the file's folder within its library dir
+ * changed — e.g. restoring a BrowserAssist-flattened package into the nested
+ * folder recorded in its sidecar. Omitting it leaves the in-memory subpath
+ * stale while the DB is already correct, and the next relocate then looks for
+ * the bytes under the AddonPackages root.
  *
  * Content rows on the renderer no longer carry `storageState` — they read it
  * via `c.package.storageState` after relink — so there is nothing to patch on
@@ -1193,12 +1199,13 @@ export function patchTypeOverride(filename, typeOverride) {
  * fall back to `buildFromDb()` — otherwise a toggle will leave it stale until the
  * next rescan.
  */
-export function patchStorageState(filenames, storageState, libraryDirId) {
+export function patchStorageState(filenames, storageState, libraryDirId, subpath) {
   for (const fn of filenames) {
     const pkg = packageIndex.get(fn)
     if (pkg) {
       pkg.storage_state = storageState
       if (libraryDirId !== undefined) pkg.library_dir_id = libraryDirId == null ? null : libraryDirId
+      if (subpath !== undefined) pkg.subpath = subpath || ''
     }
   }
 }

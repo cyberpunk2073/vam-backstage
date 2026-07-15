@@ -236,10 +236,13 @@ export async function applyStorageState(filename, target) {
   // `originalFolder` is the file's folder within its new library dir (main or aux):
   // mirrored on offload, and the sidecar-recovered home on a BA restore.
   setStorageState(filename, target.storageState, target.libraryDirId ?? null, originalFolder)
-  // Patch in-memory `packageIndex` row so the next `packages:list` reads the new
-  // state without a full rebuild. Content rows reference the package via
-  // `c.package` on the renderer and pick up the patched value on relink.
-  patchStorageState([filename], target.storageState, target.libraryDirId ?? null)
+  // Patch in-memory `packageIndex` row so the next `packages:list` (and the next
+  // applyStorageState) reads the new state without a full rebuild. Must include
+  // `originalFolder`: a BA restore can change subpath (flat aux → nested main)
+  // and a stale '' would make the next offload look under AddonPackages root.
+  // Content rows reference the package via `c.package` on the renderer and pick
+  // up the patched value on relink.
+  patchStorageState([filename], target.storageState, target.libraryDirId ?? null, originalFolder)
   return { ok: true, fromPath, toPath, changed: moved || markerChanged || sidecarChanged }
 }
 
