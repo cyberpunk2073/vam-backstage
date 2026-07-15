@@ -6,7 +6,7 @@ import {
   insertLibraryDir,
   countPackagesInLibraryDir,
   deleteLibraryDir,
-  deleteLibraryDirWithPackages,
+  removeLibraryDirTombstoningPackages,
   getLibraryDir,
 } from './db.js'
 
@@ -38,8 +38,8 @@ function seedPackage(filename, dirId) {
   db.prepare(`INSERT INTO label_packages (label_id, package_filename) VALUES (?, ?)`).run(labelId, filename)
 }
 
-describe('deleteLibraryDirWithPackages — force un-register', () => {
-  it('deletes package rows (cascading contents + label links) and the dir, keeping other dirs intact', () => {
+describe('removeLibraryDirTombstoningPackages — force un-register', () => {
+  it('tombstones + detaches package rows (preserving contents + labels) and deletes the dir, keeping other dirs intact', () => {
     const dirId = insertLibraryDir('/some/offload')
     const otherId = insertLibraryDir('/other/offload')
     seedPackage('Creator.Pkg.1.var', dirId)
@@ -48,22 +48,31 @@ describe('deleteLibraryDirWithPackages — force un-register', () => {
 
     expect(countPackagesInLibraryDir(dirId).n).toBe(2)
 
-    const forgotten = deleteLibraryDirWithPackages(dirId)
+    const forgotten = removeLibraryDirTombstoningPackages(dirId)
 
     expect(forgotten).toBe(2)
     expect(getLibraryDir(dirId)).toBeUndefined()
+    // Detached from the removed dir so the FK lifted — but the rows survive as tombstones.
     expect(db.prepare('SELECT COUNT(*) AS n FROM packages WHERE library_dir_id = ?').get(dirId).n).toBe(0)
-    // Cascades fired.
-    expect(db.prepare('SELECT COUNT(*) AS n FROM contents').get().n).toBe(1) // only the other dir's content
-    expect(db.prepare('SELECT COUNT(*) AS n FROM label_packages').get().n).toBe(1)
-    // Untouched dir + its package survive.
+    const tombstoned = db
+      .prepare(`SELECT filename, library_dir_id, missing_since FROM packages WHERE filename LIKE 'Creator.Pkg.%'`)
+      .all()
+    expect(tombstoned).toHaveLength(2)
+    for (const r of tombstoned) {
+      expect(r.library_dir_id).toBeNull()
+      expect(r.missing_since).toBeGreaterThan(0)
+    }
+    // No cascade: identity-keyed data is preserved for restoration on re-add.
+    expect(db.prepare('SELECT COUNT(*) AS n FROM contents').get().n).toBe(3)
+    expect(db.prepare('SELECT COUNT(*) AS n FROM label_packages').get().n).toBe(3)
+    // Untouched dir + its package survive, still present (not tombstoned).
     expect(getLibraryDir(otherId)).toBeTruthy()
     expect(countPackagesInLibraryDir(otherId).n).toBe(1)
   })
 
   it('returns 0 and just removes an empty dir', () => {
     const dirId = insertLibraryDir('/empty/offload')
-    expect(deleteLibraryDirWithPackages(dirId)).toBe(0)
+    expect(removeLibraryDirTombstoningPackages(dirId)).toBe(0)
     expect(getLibraryDir(dirId)).toBeUndefined()
   })
 

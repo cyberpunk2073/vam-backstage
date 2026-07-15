@@ -9,7 +9,7 @@ import { computeAutoHidePathsForNewPackage } from './scanner/index.js'
 import { inheritFromOlderVersion } from './scanner/inherit.js'
 import { refreshExtractedPresetsForUpdates } from './scenes/extract-refresh.js'
 import { runLocalScan } from './scanner/local.js'
-import { deletePackage, getPackageCacheInfo, setStorageState } from './db.js'
+import { markPackageMissing, getPackageReconcileInfo, setStorageState } from './db.js'
 import { buildFromDb, getPrefsMap, setPrefsMap } from './store.js'
 import { notify } from './notify.js'
 import { enrichNewPackages } from './hub/scanner.js'
@@ -535,9 +535,18 @@ async function processBatch() {
             setStorageState(canonical, altLocation.storageState, altLocation.libraryDirId, altLocation.subpath)
             packagesChanged = true
           } else {
-            deletePackage(canonical)
-            packagesChanged = true
-            contentsChanged = true
+            // Soft-delete rather than DELETE: the file is gone from disk *right now*,
+            // but this is often transient — BrowserAssist's disable/offload renames the
+            // `.var` away and back within the same debounce window, and users relocate or
+            // unplug packages. Tombstoning hides the row from the gallery immediately
+            // while preserving its identity (hub link, labels, type override, content
+            // visibility) so a reappearance (see scanSingleVar's cache-hit branch)
+            // restores everything. A genuine delete just leaves a permanent tombstone,
+            // cleared only by the dev "Forget deleted packages" button.
+            if (markPackageMissing(canonical)) {
+              packagesChanged = true
+              contentsChanged = true
+            }
           }
         }
 
@@ -844,15 +853,21 @@ async function scanSingleVar(fullPath, storageState, libraryDirId) {
   const mtime = s.mtimeMs / 1000
   const size = s.size
 
-  const cached = getPackageCacheInfo(filename)
+  const cached = getPackageReconcileInfo(filename)
   if (cached && cached.file_mtime === mtime && cached.size_bytes === size) {
     // Content bytes unchanged. Reconcile location/state cheaply (no archive read).
     // This is the path a marker add/remove takes: the bare `.var` is untouched,
     // so we cache-hit here and only flip storage_state.
+    //
+    // A set `missing_since` means this file was tombstoned (an earlier unlink in
+    // this or a prior batch) and has now reappeared byte-identical — the classic
+    // BrowserAssist rename-away-and-back. setStorageState clears the tombstone, so
+    // we must force the reconcile path even when state/location already match.
     if (
       cached.storage_state !== storageState ||
       (cached.library_dir_id ?? null) !== (libraryDirId ?? null) ||
-      (cached.subpath ?? '') !== subpath
+      (cached.subpath ?? '') !== subpath ||
+      cached.missing_since != null
     ) {
       setStorageState(filename, storageState, libraryDirId, subpath)
       return { reconciledOnly: true }

@@ -346,12 +346,20 @@ CREATE TABLE packages (
   dep_refs         TEXT NOT NULL DEFAULT '[]',  -- JSON array of raw dep ref strings
   hub_detail_applied_at INTEGER,      -- mirrors hub_resources.updated_at; dirty-check for scanHubDetails
   hub_name_checked_at   INTEGER,      -- negative cache for name-based Hub lookup (paid/off-Hub packages)
+  missing_since    INTEGER,           -- soft-delete tombstone: unixepoch when .var left disk; NULL = present
   first_seen_at    INTEGER NOT NULL DEFAULT (unixepoch()),
   scanned_at       INTEGER
 );
 CREATE INDEX idx_packages_package_name ON packages(package_name);
 CREATE INDEX idx_packages_creator ON packages(creator);
+CREATE INDEX idx_packages_missing_since ON packages(missing_since);
 ```
+
+`missing_since` implements **soft-delete tombstones**. When a `.var` disappears from disk, neither the watcher's unlink path nor the full-scan reconciler `DELETE`s the row (which would cascade through `contents` and the label junction tables, destroying the user's identity-keyed settings). Instead they stamp `missing_since` (`markPackageMissing` / `markPackagesMissing`), which hides the row from every enumerating getter. The single filtering chokepoint is `getAllPackages()` (`… WHERE missing_since IS NULL`), which feeds `buildFromDb`/`buildGraphOnly` and therefore the in-memory `packageIndex` and everything downstream; `getAllContents` joins through it, and the remaining direct enumerators (hub scan work-lists, counts, `getAllDbFilenamesWithDir`, thumbnail work-list, donor lookup) carry the same clause. Getters that select a single row by primary key stay unfiltered — the caller already knows the identity it wants.
+
+The payoff is **transparent restoration**: if the file reappears anywhere under a library root — a package the user moved to an unregistered folder and moved back, a restored backup, or a remounted removable drive — the row (and its hub link, labels, type override, content visibility) is still there. Any reappearance clears the stamp: `setStorageState` (relocation walk / cache-hit reconcile) and `upsertPackage` (fresh scan) both set `missing_since = NULL`. This also fixes the BrowserAssist disable/offload glitch, where BA renames the `.var` to a scratch name and back within moments — the watcher sees unlink-then-add across two debounce batches, tombstoning on the unlink and clearing it byte-for-byte on the re-add via `scanSingleVar`'s cache-hit branch, so the package never loses its identity.
+
+Tombstones are otherwise permanent (settings tied to identity should not expire on a timer). They cost little — the DB is tiny relative to the `.var` archive it describes — but a dev-settings "Forget deleted data" button (`forgetDeletedData`, gated like "Nuke database") is the single cleanup escape hatch for anyone who wants the space back. It (1) hard-deletes every tombstone (cascading their preserved `contents`/labels) and (2) prunes **orphaned content labels**: `label_contents` rows key on `packages(filename)` rather than `contents.id`, so replacing a still-present package in place with a version that drops some items leaves the labels of those removed internal paths dangling (a rescan deletes+reinserts `contents`, which does not cascade to `label_contents`). Those orphans are likewise retained by default — consistent with the identity-keyed-memory model, so re-adding the item restores its label — and reclaimed only by this button.
 
 `storage_state` replaces the legacy `is_enabled` boolean (v21). It encodes three physical placements:
 
@@ -379,7 +387,7 @@ CREATE TABLE library_dirs (
 );
 ```
 
-The scanner walks every registered library dir recursively; the watcher monitors all of them; a package moved between dirs (or into a different subfolder) by an external tool is reconciled as a move (single update of `storage_state` + `library_dir_id` + `subpath`) rather than uninstall + reinstall — so labels and other FK-bound settings survive. Removing an aux dir is allowed only when no packages still point at it (`ON DELETE RESTRICT`).
+The scanner walks every registered library dir recursively; the watcher monitors all of them; a package moved between dirs (or into a different subfolder) by an external tool is reconciled as a move (single update of `storage_state` + `library_dir_id` + `subpath`) rather than uninstall + reinstall — so labels and other FK-bound settings survive. Removing an aux dir with no packages is a plain delete (`ON DELETE RESTRICT` guards the FK); force-removing one that still holds packages (`removeLibraryDirTombstoningPackages`) does not delete those rows — it tombstones them (see `missing_since`) and detaches `library_dir_id` so the RESTRICT lifts, leaving the on-disk `.var`s in place. Re-adding the folder and rescanning resurrects each row with its labels/overrides intact, so a force-remove is recoverable, not destructive.
 
 ### `contents` — Content Item Scan Cache
 
@@ -538,6 +546,8 @@ Schema is forward-only. New installs go through `createSchema` directly at the l
 | v23     | Hub-id numeric CHECK + scrub bogus `'null'` ids                  |
 | v24     | `packages.subpath`                                               |
 | v25     | `hub_wishlist`                                                   |
+| v26     | `library_dirs.browser_assist`                                    |
+| v27     | `packages.missing_since` (soft-delete tombstones)                |
 
 ---
 

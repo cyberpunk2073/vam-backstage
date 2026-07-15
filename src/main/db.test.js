@@ -1,14 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { mkTempVamDir, openTestDatabase } from '../../test/fixtures/index.js'
+import { LOCAL_PACKAGE_FILENAME } from '@shared/local-package.js'
 import {
   MIGRATIONS,
   SCHEMA_VERSION,
   closeDatabase,
+  countMissingPackages,
+  countOrphanContentLabels,
+  forgetDeletedData,
+  getAllContents,
+  getAllPackages,
   getDb,
   getNotFoundHubResourceIds,
   getPackagesNeedingHubNameLookup,
   insertDownload,
+  markPackageMissing,
+  markPackagesMissing,
   setHubResourceId,
   setHubUserId,
   toIntString,
@@ -200,6 +208,130 @@ describe('migrate v24 (package subpath)', () => {
 
   it('sets needs_rescan so the next scan re-derives nested subpaths', () => {
     expect(getDb().prepare(`SELECT value FROM settings WHERE key = 'needs_rescan'`).get()?.value).toBe('1')
+  })
+})
+
+// ── v27 migration: packages.missing_since (soft-delete tombstones) ─────────────
+//
+// A pre-v27 DB has no `missing_since` column. After migrate() the column exists,
+// every existing row backfills to NULL (present), and the supporting index is created.
+
+describe('migrate v27 (package missing_since)', () => {
+  beforeEach(async () => {
+    tmp = await mkTempVamDir()
+    buildV22Database(tmp.dbPath)
+    await openTestDatabase(tmp.dbPath)
+  })
+
+  it('adds a missing_since column to packages', () => {
+    const cols = getDb()
+      .prepare(`PRAGMA table_info(packages)`)
+      .all()
+      .map((c) => c.name)
+    expect(cols).toContain('missing_since')
+  })
+
+  it('backfills existing rows to NULL (present)', () => {
+    const rows = getDb().prepare('SELECT missing_since FROM packages').all()
+    expect(rows.length).toBeGreaterThan(0)
+    for (const r of rows) expect(r.missing_since).toBeNull()
+  })
+
+  it('creates the missing_since index', () => {
+    const idx = getDb()
+      .prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name = 'idx_packages_missing_since'`)
+      .get()
+    expect(idx).toBeDefined()
+  })
+})
+
+// ── tombstone helpers (soft delete + forget) ───────────────────────────────────
+
+describe('tombstones (soft delete)', () => {
+  beforeEach(async () => {
+    tmp = await mkTempVamDir()
+    await openTestDatabase(tmp.dbPath)
+    // Drop the synthetic __local__ sentinel so package-count assertions below are exact.
+    getDb().prepare('DELETE FROM packages WHERE filename = ?').run(LOCAL_PACKAGE_FILENAME)
+    const pkg = getDb().prepare(
+      `INSERT INTO packages (filename, creator, package_name, version, size_bytes, file_mtime) VALUES (?, 'C', 'C.P', '1', 1, 0)`,
+    )
+    pkg.run('Keep.1.var')
+    pkg.run('Gone.1.var')
+    const content = getDb().prepare(
+      `INSERT INTO contents (package_filename, internal_path, display_name, type) VALUES (?, ?, 'x', 'scene')`,
+    )
+    content.run('Gone.1.var', 'Saves/scene/x.json')
+  })
+
+  it('markPackageMissing hides the row from getAllPackages but keeps it (and its contents)', () => {
+    expect(markPackageMissing('Gone.1.var')).toBe(1)
+    const names = getAllPackages().map((r) => r.filename)
+    expect(names).toContain('Keep.1.var')
+    expect(names).not.toContain('Gone.1.var')
+    // contents row survives (no cascade) but is excluded from getAllContents
+    expect(getAllContents().some((c) => c.package_filename === 'Gone.1.var')).toBe(false)
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM contents WHERE package_filename = ?').get('Gone.1.var').n).toBe(1)
+  })
+
+  it('markPackageMissing is idempotent (never moves the timestamp)', () => {
+    expect(markPackageMissing('Gone.1.var')).toBe(1)
+    const first = getDb()
+      .prepare('SELECT missing_since FROM packages WHERE filename = ?')
+      .get('Gone.1.var').missing_since
+    expect(markPackageMissing('Gone.1.var')).toBe(0)
+    const second = getDb()
+      .prepare('SELECT missing_since FROM packages WHERE filename = ?')
+      .get('Gone.1.var').missing_since
+    expect(second).toBe(first)
+  })
+
+  it('markPackagesMissing tombstones a batch and countMissingPackages reflects it', () => {
+    markPackagesMissing(['Keep.1.var', 'Gone.1.var'])
+    expect(countMissingPackages()).toBe(2)
+    expect(getAllPackages()).toHaveLength(0)
+  })
+
+  it('forgetDeletedData hard-deletes only tombstones (cascading their contents)', () => {
+    markPackageMissing('Gone.1.var')
+    expect(forgetDeletedData().packages).toBe(1)
+    expect(countMissingPackages()).toBe(0)
+    // Gone is truly gone now, contents cascaded; Keep untouched.
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM packages').get().n).toBe(1)
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM contents WHERE package_filename = ?').get('Gone.1.var').n).toBe(0)
+    expect(getAllPackages().map((r) => r.filename)).toEqual(['Keep.1.var'])
+  })
+
+  it('forgetDeletedData prunes orphaned content labels on still-present packages', () => {
+    const db = getDb()
+    // A label applied to two content paths of the still-present Keep package…
+    db.prepare(`INSERT INTO labels (id, name, color) VALUES (1, 'L', -1)`).run()
+    const applyLc = db.prepare(
+      `INSERT INTO label_contents (label_id, package_filename, internal_path) VALUES (1, 'Keep.1.var', ?)`,
+    )
+    applyLc.run('Saves/scene/live.json')
+    applyLc.run('Saves/scene/removed.json')
+    // …but only one path still exists in contents (simulating an in-place update
+    // that dropped the other item). The Gone package's content label stays put
+    // (its contents still exist because it isn't tombstoned).
+    db.prepare(
+      `INSERT INTO contents (package_filename, internal_path, display_name, type) VALUES ('Keep.1.var', 'Saves/scene/live.json', 'x', 'scene')`,
+    ).run()
+    db.prepare(
+      `INSERT INTO label_contents (label_id, package_filename, internal_path) VALUES (1, 'Gone.1.var', ?)`,
+    ).run('Saves/scene/x.json')
+
+    expect(countOrphanContentLabels()).toBe(1) // only Keep's 'removed.json'
+    const res = forgetDeletedData()
+    expect(res.contentLabels).toBe(1)
+    expect(countOrphanContentLabels()).toBe(0)
+    const remaining = db
+      .prepare('SELECT package_filename, internal_path FROM label_contents ORDER BY package_filename, internal_path')
+      .all()
+    expect(remaining).toEqual([
+      { package_filename: 'Gone.1.var', internal_path: 'Saves/scene/x.json' },
+      { package_filename: 'Keep.1.var', internal_path: 'Saves/scene/live.json' },
+    ])
   })
 })
 

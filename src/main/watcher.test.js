@@ -13,6 +13,7 @@ import { runScan } from './scanner/index.js'
 import {
   closeDatabase,
   getAllPackages,
+  getDb,
   insertLibraryDir,
   setLibraryDirBrowserAssist,
   setSetting,
@@ -106,7 +107,7 @@ describe('watcher.processBatch — cross-dir move (single batch)', () => {
     expect(row?.library_dir_id).toBe(auxId)
   })
 
-  it('unlink with no file anywhere → deletePackage removes the row', async () => {
+  it('unlink with no file anywhere → tombstones the row (hidden but not hard-deleted)', async () => {
     const buf = await buildVar({
       meta: { packageName: 'Vanish.V', creator: 'V' },
       files: { 'Saves/scene/v.json': '{"atoms":[]}' },
@@ -123,7 +124,15 @@ describe('watcher.processBatch — cross-dir move (single batch)', () => {
     })
     await __processBatchForTests()
 
+    // Invisible to the gallery-facing getter…
     expect(getAllPackages().filter((r) => r.filename === 'Vanish.V.1.var')).toHaveLength(0)
+    // …but the row survives with a missing_since stamp, and its contents aren't cascaded away.
+    const raw = getDb().prepare('SELECT missing_since FROM packages WHERE filename = ?').get('Vanish.V.1.var')
+    expect(raw?.missing_since).toBeGreaterThan(0)
+    const contentCount = getDb()
+      .prepare('SELECT COUNT(*) AS n FROM contents WHERE package_filename = ?')
+      .get('Vanish.V.1.var').n
+    expect(contentCount).toBeGreaterThan(0)
   })
 
   it('move from aux back to main via unlink aux + add main → enabled, library_dir_id null', async () => {
@@ -185,7 +194,7 @@ describe('watcher.processBatch — nested .var move recovery', () => {
     expect(row.subpath).toBe('B/C')
   })
 
-  it('move out of a subfolder with no copy anywhere still deletes the row', async () => {
+  it('move out of a subfolder with no copy anywhere tombstones the row', async () => {
     const dir = join(tmp.addonPackages, 'Solo')
     await mkdir(dir, { recursive: true })
     const buf = await buildVar({
@@ -204,6 +213,53 @@ describe('watcher.processBatch — nested .var move recovery', () => {
     await __processBatchForTests()
 
     expect(getAllPackages().filter((r) => r.filename === 'Nest.Gone.1.var')).toHaveLength(0)
+    const raw = getDb().prepare('SELECT missing_since FROM packages WHERE filename = ?').get('Nest.Gone.1.var')
+    expect(raw?.missing_since).toBeGreaterThan(0)
+  })
+})
+
+describe('watcher.processBatch — tombstone lifecycle', () => {
+  // BrowserAssist disable/offload renames the .var away and (often) back within a
+  // moment, which the watcher sees as unlink-then-add across two debounce batches.
+  // The tombstone from the unlink must be cleared byte-for-byte on the re-add so
+  // the package's identity/settings survive the round-trip.
+  it('reappearance in a later batch clears the tombstone and restores the row + labels', async () => {
+    const buf = await buildVar({
+      meta: { packageName: 'BA.Round', creator: 'BA' },
+      files: { 'Saves/scene/r.json': '{"atoms":[]}' },
+    })
+    const mainPath = await placeVar(tmp.addonPackages, 'BA.Round.1.var', buf)
+    await runScan(tmp.vamDir)
+
+    // Pin an identity marker (hub link) that a hard delete would have cascaded away.
+    getDb().prepare(`UPDATE packages SET hub_resource_id = '4242' WHERE filename = ?`).run('BA.Round.1.var')
+
+    // Batch 1: the file is momentarily gone (renamed to BA's scratch name) → tombstone.
+    const scratch = join(tmp.addonPackages, 'BA.Round.1.var.batmp')
+    await rename(mainPath, scratch)
+    refreshLibraryDirs()
+    __setProcessBatchStateForTests({
+      vamDir: tmp.vamDir,
+      packageEvents: [[mainPath, { type: 'unlink', libraryDirId: null }]],
+    })
+    await __processBatchForTests()
+    expect(getAllPackages().find((r) => r.filename === 'BA.Round.1.var')).toBeUndefined()
+
+    // Batch 2: BA renames it back (same bytes) → cache-hit clears the tombstone.
+    await rename(scratch, mainPath)
+    refreshLibraryDirs()
+    __setProcessBatchStateForTests({
+      vamDir: tmp.vamDir,
+      packageEvents: [[mainPath, { type: 'add', libraryDirId: null }]],
+    })
+    await __processBatchForTests()
+
+    const row = getAllPackages().find((r) => r.filename === 'BA.Round.1.var')
+    expect(row).toBeDefined()
+    expect(row.storage_state).toBe('enabled')
+    expect(row.hub_resource_id).toBe('4242') // identity preserved across the round-trip
+    const raw = getDb().prepare('SELECT missing_since FROM packages WHERE filename = ?').get('BA.Round.1.var')
+    expect(raw.missing_since).toBeNull()
   })
 })
 

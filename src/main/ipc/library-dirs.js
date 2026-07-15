@@ -23,7 +23,7 @@ import { join } from 'path'
 import {
   insertLibraryDir,
   deleteLibraryDir,
-  deleteLibraryDirWithPackages,
+  removeLibraryDirTombstoningPackages,
   getLibraryDirByPath,
   getLibraryDir,
   countPackagesInLibraryDir,
@@ -193,10 +193,11 @@ export function registerLibraryDirHandlers() {
     return await detectOffloadSuggestions(getSetting('vam_dir'))
   })
 
-  // `opts.force` un-registers a non-empty offload dir: its package rows (and the
-  // cascading contents + label links) are dropped so the FK RESTRICT lifts. The
-  // on-disk `.var` files are left untouched — re-adding + rescanning re-indexes
-  // them, but user-set metadata (labels, category overrides) is gone.
+  // `opts.force` un-registers a non-empty offload dir: its package rows are
+  // tombstoned (and detached from the dir so the FK RESTRICT lifts) rather than
+  // deleted. The on-disk `.var` files are left untouched, so re-adding + rescanning
+  // resurrects each row with its user-set metadata (labels, category overrides,
+  // content visibility) intact — the removal is recoverable.
   ipcMain.handle('library-dirs:remove', async (_, id, opts) => {
     const row = getLibraryDir(id)
     if (!row) throw new Error('Library directory not found')
@@ -210,7 +211,7 @@ export function registerLibraryDirHandlers() {
       if (!opts?.force) {
         throw new Error(`Cannot remove: ${count} package(s) are still stored in this directory. Move them first.`)
       }
-      forgotten = deleteLibraryDirWithPackages(id)
+      forgotten = removeLibraryDirTombstoningPackages(id)
     } else {
       deleteLibraryDir(id)
     }

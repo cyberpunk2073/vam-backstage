@@ -158,6 +158,8 @@ const api = {
   dev: {
     isDev: () => invoke('dev:is-dev'),
     nukeDatabase: () => invoke('dev:nuke-database'),
+    countDeletedData: () => invoke('dev:count-deleted-data'),
+    forgetDeletedData: () => invoke('dev:forget-deleted-data'),
     browserAssistDirExists: () => invoke('dev:browser-assist-dir-exists'),
     syncBrowserAssist: () => invoke('dev:sync-browser-assist'),
   },

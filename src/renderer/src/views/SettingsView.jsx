@@ -51,6 +51,7 @@ export default function SettingsView() {
   const [hubDebugRequests, setHubDebugRequests] = useState(false)
   const [isDev, setIsDev] = useState(false)
   const [developerUnlocked, setDeveloperUnlocked] = useState(false)
+  const [deletedData, setDeletedData] = useState({ packages: 0, contentLabels: 0 })
   const devUnlockRef = useRef({ count: 0, resetTimer: null })
   const [scanning, setScanning] = useState(false)
   const [scanResult, setScanResult] = useState(null)
@@ -127,6 +128,14 @@ export default function SettingsView() {
       .then((r) => setAutoConnectArmed(!!r?.url))
       .catch(() => {})
     window.api.dev.isDev().then(setIsDev)
+    window.api.dev
+      .countDeletedData()
+      .then((r) =>
+        setDeletedData(
+          r?.ok ? { packages: r.packages, contentLabels: r.contentLabels } : { packages: 0, contentLabels: 0 },
+        ),
+      )
+      .catch(() => {})
     window.api.app.getVersion().then(setAppVersion)
     window.api.updater.getChannel().then((c) => setUpdateChannel(c === 'dev' ? 'dev' : 'stable'))
     refreshLibDirs()
@@ -196,7 +205,7 @@ export default function SettingsView() {
         const forgotten = res?.forgotten || 0
         toast(
           forgotten > 0
-            ? `Offload directory removed — ${forgotten} package${forgotten === 1 ? '' : 's'} forgotten (files kept on disk)`
+            ? `Offload directory removed — ${forgotten} package${forgotten === 1 ? '' : 's'} hidden (files kept on disk; re-add to restore)`
             : 'Offload directory removed',
           'success',
         )
@@ -370,6 +379,20 @@ export default function SettingsView() {
   const handleNukeDatabase = useCallback(async () => {
     const res = await window.api.dev.nukeDatabase()
     if (!res?.ok && res?.error) toast(`Nuke database failed: ${res.error}`)
+  }, [])
+
+  const handleForgetDeleted = useCallback(async () => {
+    const res = await window.api.dev.forgetDeletedData()
+    if (!res?.ok) {
+      toast(`Forget deleted data failed: ${res?.error || 'unknown error'}`)
+      return
+    }
+    setDeletedData({ packages: 0, contentLabels: 0 })
+    const parts = []
+    if (res.packages > 0) parts.push(`${res.packages} deleted package${res.packages === 1 ? '' : 's'}`)
+    if (res.contentLabels > 0)
+      parts.push(`${res.contentLabels} orphaned content label${res.contentLabels === 1 ? '' : 's'}`)
+    toast(parts.length ? `Forgot ${parts.join(' and ')}.` : 'Nothing to forget.')
   }, [])
 
   const handleSyncBrowserAssist = useCallback(async () => {
@@ -1247,7 +1270,53 @@ export default function SettingsView() {
                 <Switch checked={hubDebugRequests} onCheckedChange={handleToggleHubDebug} />
               </label>
 
-              <div className="border-t border-border pt-4">
+              <div className="border-t border-border pt-4 space-y-3">
+                <div>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="lg"
+                        disabled={deletedData.packages === 0 && deletedData.contentLabels === 0}
+                        className="shrink-0 gap-2 text-xs"
+                      >
+                        <Trash2 size={14} className="shrink-0" />
+                        Forget deleted data{deletedData.packages > 0 ? ` (${deletedData.packages})` : ''}
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle className="select-text cursor-text">Forget deleted data?</AlertDialogTitle>
+                        <AlertDialogDescription asChild>
+                          <div className="text-[11px] text-text-tertiary space-y-2">
+                            <p>
+                              The app keeps the identity and settings (hub link, labels, type override, content
+                              visibility) of {deletedData.packages} package{deletedData.packages === 1 ? '' : 's'} whose
+                              file{deletedData.packages === 1 ? ' is' : 's are'} no longer on disk, so they are restored
+                              if the file reappears (moved back, restored from a backup, or a remounted drive)
+                              {deletedData.contentLabels > 0
+                                ? `, plus ${deletedData.contentLabels} label${deletedData.contentLabels === 1 ? '' : 's'} on content that a package update has since removed`
+                                : ''}
+                              .
+                            </p>
+                            <p>
+                              This permanently discards that remembered data to reclaim database space. Packages and
+                              content still on disk are not affected.
+                            </p>
+                            <p className="font-medium text-warning">This cannot be undone.</p>
+                          </div>
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction variant="destructive" onClick={handleForgetDeleted}>
+                          Forget
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
+
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button
@@ -1409,18 +1478,18 @@ function AuxDirRow({ d, vamDir, disabled, showBrowserAssist, onRemove, onToggleB
                       <span className="font-medium text-text-primary">
                         {d.packageCount.toLocaleString()} package{d.packageCount === 1 ? '' : 's'}
                       </span>
-                      . Removing it un-registers the folder and makes Backstage forget those packages.
+                      . Removing it un-registers the folder and hides those packages from Backstage.
                     </p>
                     <p>
                       <span className="font-medium text-success">No files are deleted</span> — every{' '}
                       <span className="font-mono">.var</span> stays where it is on disk, and VaM&apos;s own state for
                       those packages (including the <span className="font-medium">favorite</span> and{' '}
-                      <span className="font-medium">hidden</span> status of their content) is untouched. You can re-add
-                      the folder and rescan later to index them again.
+                      <span className="font-medium">hidden</span> status of their content) is untouched.
                     </p>
                     <p>
-                      <span className="font-medium text-warning">Backstage data is irreversibly forgotten</span> —
-                      things like the labels and category overrides you set for these packages.
+                      <span className="font-medium text-success">Your Backstage data is kept</span> — the labels and
+                      category overrides you set are remembered, and re-adding the folder later restores them along with
+                      the packages.
                     </p>
                   </div>
                 </AlertDialogDescription>
@@ -1428,7 +1497,7 @@ function AuxDirRow({ d, vamDir, disabled, showBrowserAssist, onRemove, onToggleB
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>
                 <AlertDialogAction variant="destructive" onClick={() => onRemove(d.id, { force: true })}>
-                  Remove and forget
+                  Remove folder
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>

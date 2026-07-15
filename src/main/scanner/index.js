@@ -6,9 +6,9 @@ import { scanAndUpsert } from './ingest.js'
 import { inheritFromOlderVersion } from './inherit.js'
 import { refreshExtractedPresetsForUpdates } from '../scenes/extract-refresh.js'
 import {
-  getPackageCacheInfo,
+  getPackageReconcileInfo,
   getAllDbFilenamesWithDir,
-  deletePackages,
+  markPackagesMissing,
   batchSetDirect,
   setStorageState,
   getSetting,
@@ -91,16 +91,22 @@ export async function runScan(vamDir, onProgress = () => {}) {
     const { filename, fullPath, mtime, size, storageState, libraryDirId, subpath } = varFiles[i]
     onProgress({ phase: 'reading', step: i + 1, total: varFiles.length, message: filename })
 
-    const cached = getPackageCacheInfo(filename)
+    const cached = getPackageReconcileInfo(filename)
     if (cached && cached.file_mtime === mtime && cached.size_bytes === size) {
       // Cache hit (unchanged content bytes) still reconciles location: storage_state,
       // the library dir, and the subfolder the file now lives in. Adding/removing an
       // empty `.var.disabled` marker doesn't touch the bare file's mtime/size, so this
       // is the path that picks up a VaM-side enable/disable done while we were running.
+      //
+      // A set `missing_since` means the row was tombstoned (e.g. a prior scan saw the
+      // dir but not this file, or the watcher unlinked it before an app restart) and
+      // the file is now back byte-identical — force the reconcile so setStorageState
+      // clears the tombstone and resurrects it, even when its location already matches.
       if (
         cached.storage_state !== storageState ||
         (cached.library_dir_id ?? null) !== (libraryDirId ?? null) ||
-        (cached.subpath ?? '') !== subpath
+        (cached.subpath ?? '') !== subpath ||
+        cached.missing_since != null
       ) {
         setStorageState(filename, storageState, libraryDirId, subpath)
       }
@@ -156,19 +162,23 @@ export async function runScan(vamDir, onProgress = () => {}) {
     }
   }
 
-  // Phase 3: Build dependency graph — remove stale packages, classify direct vs dependency
+  // Phase 3: Build dependency graph — tombstone stale packages, classify direct vs dependency
   onProgress({ phase: 'graph', step: 0, total: 1, message: 'Detecting removed packages…' })
   const diskFilenames = new Set(varFiles.map((v) => v.filename))
-  // Removed = rows whose home dir we successfully scanned AND whose canonical filename
-  // wasn't seen on disk. Offline-aux protection (skip prune for packages whose dir
-  // failed to enumerate) AND `__local__` sentinel exclusion (it's never on disk).
+  // Removed = present rows whose home dir we successfully scanned AND whose canonical
+  // filename wasn't seen on disk. `getAllDbFilenamesWithDir` already excludes existing
+  // tombstones, so this only catches newly-missing files. Offline-aux protection (skip
+  // prune for packages whose dir failed to enumerate) AND `__local__` sentinel exclusion
+  // (it's never on disk). We soft-delete (tombstone) rather than DELETE so a package the
+  // user relocated or unplugged keeps its identity/settings for when it reappears; a
+  // reappearance clears the tombstone via scanAndUpsert/setStorageState.
   const removed = getAllDbFilenamesWithDir()
     .filter(
       (r) =>
         !isLocalPackage(r.filename) && reachableDirIds.has(r.library_dir_id ?? null) && !diskFilenames.has(r.filename),
     )
     .map((r) => r.filename)
-  if (removed.length > 0) deletePackages(removed)
+  if (removed.length > 0) markPackagesMissing(removed)
 
   const needsLeafDetection = isInitialScan || newAdditions.size > 0 || removed.length > 0
   if (needsLeafDetection && varFiles.length > 0) {

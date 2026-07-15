@@ -4,7 +4,7 @@ import { app } from 'electron'
 import { join } from 'path'
 import { LOCAL_PACKAGE_FILENAME, LOCAL_PACKAGE_DISPLAY_NAME } from '@shared/local-package.js'
 
-export const SCHEMA_VERSION = 26
+export const SCHEMA_VERSION = 27
 
 /**
  * Normalize a value to a non-negative integer string, or null. Hub resource/user
@@ -145,6 +145,7 @@ export const MIGRATIONS = [
   [24, applyV24],
   [25, applyV25],
   [26, applyV26],
+  [27, applyV27],
 ]
 
 function migrate() {
@@ -431,6 +432,23 @@ function applyV26() {
 }
 
 /**
+ * v27 — soft-delete tombstones. `missing_since` (unix seconds) marks a package
+ * whose `.var` is no longer on disk. Rather than DELETE the row (which cascades
+ * through contents + label links, destroying the user's identity-keyed settings),
+ * the watcher and full-scan reconciler now stamp `missing_since`. The row is kept
+ * so that when the file reappears anywhere under a library root — moved, restored
+ * from a removed dir, or a remounted drive — its hub link, labels, type override
+ * and content visibility are transparently restored (setStorageState / upsertPackage
+ * clear the stamp). Enumerating getters filter `missing_since IS NULL` so tombstones
+ * are invisible to the gallery; the dev "Forget deleted packages" button hard-deletes
+ * them. NULL = present (the historical assumption for every existing row).
+ */
+function applyV27() {
+  db.exec(`ALTER TABLE packages ADD COLUMN missing_since INTEGER`)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_packages_missing_since ON packages(missing_since)`)
+}
+
+/**
  * Ensure the synthetic "local content" package row exists. Loose files under
  * `vamDir/Saves` and `vamDir/Custom` are stored as `contents` rows that point
  * at this sentinel so the foreign key holds without nullable columns. The
@@ -486,11 +504,13 @@ function createSchema() {
       type_override TEXT,
       is_corrupted INTEGER NOT NULL DEFAULT 0,
       hub_detail_applied_at INTEGER,
-      hub_name_checked_at INTEGER
+      hub_name_checked_at INTEGER,
+      missing_since INTEGER
     );
 
     CREATE INDEX IF NOT EXISTS idx_packages_package_name ON packages(package_name);
     CREATE INDEX IF NOT EXISTS idx_packages_creator ON packages(creator);
+    CREATE INDEX IF NOT EXISTS idx_packages_missing_since ON packages(missing_since);
 
     CREATE TABLE IF NOT EXISTS contents (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -611,12 +631,27 @@ export function upsertPackage(pkg) {
       storage_state = excluded.storage_state,
       library_dir_id = excluded.library_dir_id,
       subpath = excluded.subpath,
-      dep_refs = excluded.dep_refs, scanned_at = excluded.scanned_at
+      dep_refs = excluded.dep_refs, scanned_at = excluded.scanned_at,
+      missing_since = NULL
   `).run({ subpath: '', firstSeenAt: Math.floor(Date.now() / 1000), ...pkg })
 }
 
 export function deletePackage(filename) {
   stmt('DELETE FROM packages WHERE filename = ?').run(filename)
+}
+
+/**
+ * Soft-delete: stamp `missing_since` so the package drops out of every
+ * enumerating getter (gallery, hub scan, counts) without cascading away its
+ * contents and label links. `AND missing_since IS NULL` keeps the stamp
+ * idempotent — re-observing an already-missing file never moves the timestamp,
+ * so "first went missing" stays stable. Returns rows changed (0 if already a
+ * tombstone or the row doesn't exist).
+ */
+export function markPackageMissing(filename) {
+  return stmt('UPDATE packages SET missing_since = unixepoch() WHERE filename = ? AND missing_since IS NULL').run(
+    filename,
+  ).changes
 }
 
 export function setPackageDirect(filename, isDirect) {
@@ -658,25 +693,36 @@ export function setPackageTypeFromHub(filename, hubType) {
  * and pass the existing value explicitly).
  */
 export function setStorageState(filename, storageState, libraryDirId, subpath) {
+  // Clearing `missing_since` here is what resurrects a tombstoned package when the
+  // watcher's relocation walk finds its `.var` again (moved, restored, remounted):
+  // the file is back on disk, so the row is present again and its identity/settings
+  // survive intact.
   if (subpath === undefined) {
-    stmt('UPDATE packages SET storage_state = ?, library_dir_id = ? WHERE filename = ?').run(
+    stmt('UPDATE packages SET storage_state = ?, library_dir_id = ?, missing_since = NULL WHERE filename = ?').run(
       storageState,
       libraryDirId ?? null,
       filename,
     )
   } else {
-    stmt('UPDATE packages SET storage_state = ?, library_dir_id = ?, subpath = ? WHERE filename = ?').run(
-      storageState,
-      libraryDirId ?? null,
-      subpath,
-      filename,
-    )
+    stmt(
+      'UPDATE packages SET storage_state = ?, library_dir_id = ?, subpath = ?, missing_since = NULL WHERE filename = ?',
+    ).run(storageState, libraryDirId ?? null, subpath, filename)
   }
 }
 
-export function getPackageCacheInfo(filename) {
+/**
+ * Reconciliation snapshot of a single package row, keyed by PK. This is the one
+ * reader that DELIBERATELY sees tombstones: it does not filter `missing_since IS
+ * NULL` (that filter only belongs on the enumerating getters that feed the
+ * gallery). Both cache-hit call sites — the full scan (`runScan`) and the watcher
+ * (`scanSingleVar`) — rely on that: when the returned `missing_since` is non-null
+ * the file has reappeared byte-identical, and the caller MUST clear the tombstone
+ * (via `setStorageState`/`scanAndUpsert`) to resurrect it, even when its
+ * storage_state/dir/subpath are otherwise unchanged. `undefined` = no row at all.
+ */
+export function getPackageReconcileInfo(filename) {
   return stmt(
-    'SELECT file_mtime, size_bytes, storage_state, library_dir_id, subpath FROM packages WHERE filename = ?',
+    'SELECT file_mtime, size_bytes, storage_state, library_dir_id, subpath, missing_since FROM packages WHERE filename = ?',
   ).get(filename)
 }
 
@@ -695,7 +741,7 @@ export function getPackageCacheInfo(filename) {
 export function getDonorVersionsByPackageName(packageName, filename) {
   return stmt(
     `SELECT filename, version, type_override FROM packages
-     WHERE package_name = ? AND filename != ? AND package_name != ''
+     WHERE package_name = ? AND filename != ? AND package_name != '' AND missing_since IS NULL
        AND first_seen_at < (SELECT first_seen_at FROM packages WHERE filename = ?)
      ORDER BY CAST(version AS INTEGER) DESC`,
   ).all(packageName, filename, filename)
@@ -730,14 +776,25 @@ export function deleteLibraryDir(id) {
 }
 
 /**
- * Force-remove an offload dir that still holds packages: delete its package rows
- * (cascading to contents and label links) then the dir row itself, atomically.
- * On-disk `.var` files are untouched — this only drops tracked DB state. Returns
- * the number of package rows removed.
+ * Force-remove an offload dir that still holds packages, atomically. The on-disk
+ * `.var` files are untouched — they simply sit in a now-unregistered folder — so
+ * rather than DELETE the rows (destroying labels / type overrides / content
+ * visibility) we TOMBSTONE them: stamp `missing_since` so they drop out of the
+ * gallery, and detach `library_dir_id` (→ NULL) so the FK RESTRICT on the dir row
+ * lifts. Re-adding the folder later re-scans the files and `upsertPackage`
+ * resurrects each row with its identity intact (clearing the tombstone and
+ * restoring the correct dir id), so this is recoverable, consistent with the
+ * relocation-survival model. Returns the number of (present) packages tombstoned.
  */
-export function deleteLibraryDirWithPackages(id) {
+export function removeLibraryDirTombstoningPackages(id) {
   const tx = db.transaction((dirId) => {
-    const { changes } = stmt('DELETE FROM packages WHERE library_dir_id = ?').run(dirId)
+    const { changes } = stmt(
+      `UPDATE packages SET missing_since = unixepoch(), library_dir_id = NULL
+       WHERE library_dir_id = ? AND missing_since IS NULL`,
+    ).run(dirId)
+    // Detach any rows already tombstoned while pointing here too, so the dir delete isn't
+    // blocked by a lingering FK reference.
+    stmt('UPDATE packages SET library_dir_id = NULL WHERE library_dir_id = ?').run(dirId)
     stmt('DELETE FROM library_dirs WHERE id = ?').run(dirId)
     return changes
   })
@@ -747,21 +804,28 @@ export function deleteLibraryDirWithPackages(id) {
 export function countPackagesInLibraryDir(id) {
   if (id == null) {
     return stmt(
-      'SELECT COUNT(*) AS n, COALESCE(SUM(size_bytes), 0) AS bytes FROM packages WHERE library_dir_id IS NULL',
+      'SELECT COUNT(*) AS n, COALESCE(SUM(size_bytes), 0) AS bytes FROM packages WHERE library_dir_id IS NULL AND missing_since IS NULL',
     ).get()
   }
-  return stmt('SELECT COUNT(*) AS n, COALESCE(SUM(size_bytes), 0) AS bytes FROM packages WHERE library_dir_id = ?').get(
-    id,
-  )
+  return stmt(
+    'SELECT COUNT(*) AS n, COALESCE(SUM(size_bytes), 0) AS bytes FROM packages WHERE library_dir_id = ? AND missing_since IS NULL',
+  ).get(id)
 }
 
+/**
+ * Every present package. `missing_since IS NULL` is the single filtering
+ * chokepoint that hides tombstones (soft-deleted rows whose `.var` left disk) —
+ * this feeds `buildFromDb`/`buildGraphOnly`, so the in-memory `packageIndex` and
+ * every consumer downstream of it are ghost-free without each having to know
+ * about tombstones.
+ */
 export function getAllPackages() {
-  return stmt('SELECT * FROM packages').all()
+  return stmt('SELECT * FROM packages WHERE missing_since IS NULL').all()
 }
 
-/** All local packages for hub metadata scan (direct + dependencies). */
+/** All present local packages for hub metadata scan (direct + dependencies). */
 export function getAllPackagesForHubScan() {
-  return stmt('SELECT filename, package_name, is_direct FROM packages').all()
+  return stmt('SELECT filename, package_name, is_direct FROM packages WHERE missing_since IS NULL').all()
 }
 
 /**
@@ -775,6 +839,7 @@ export function getPackagesNeedingHubDetailApply() {
     FROM packages p
     JOIN hub_resources hr ON hr.resource_id = p.hub_resource_id
     WHERE p.hub_resource_id IS NOT NULL
+      AND p.missing_since IS NULL
       AND hr.hub_json IS NOT NULL
       AND (p.hub_detail_applied_at IS NULL OR p.hub_detail_applied_at < hr.updated_at)
   `).all()
@@ -791,7 +856,7 @@ export function getPackagesNeedingHubDetailFetch() {
     SELECT p.filename, p.hub_resource_id AS rid
     FROM packages p
     LEFT JOIN hub_resources hr ON hr.resource_id = p.hub_resource_id
-    WHERE p.hub_resource_id IS NOT NULL AND hr.hub_json IS NULL
+    WHERE p.hub_resource_id IS NOT NULL AND p.missing_since IS NULL AND hr.hub_json IS NULL
   `).all()
 }
 
@@ -810,6 +875,7 @@ export function getPackagesNeedingHubNameLookup() {
     FROM packages p
     LEFT JOIN hub_resources hr ON hr.resource_id = p.hub_resource_id
     WHERE p.filename != ?
+      AND p.missing_since IS NULL
       AND (
         (p.hub_resource_id IS NULL AND p.hub_name_checked_at IS NULL)
         OR (
@@ -922,8 +988,16 @@ export function deleteContentsForPackagePaths(packageFilename, paths) {
   tx(paths)
 }
 
+/**
+ * Every content row of a present package. Joined against `packages` so rows
+ * belonging to a tombstoned package (soft-deleted, `.var` gone from disk) are
+ * excluded — their `contents` rows survive the tombstone (no cascade) to
+ * preserve identity, but must stay out of the gallery until the file reappears.
+ */
 export function getAllContents() {
-  return stmt('SELECT * FROM contents').all()
+  return stmt(
+    'SELECT c.* FROM contents c JOIN packages p ON p.filename = c.package_filename WHERE p.missing_since IS NULL',
+  ).all()
 }
 
 // Settings
@@ -1077,7 +1151,7 @@ export function deleteDownload(id) {
 
 // Bulk operations
 export function getAllDbFilenamesWithDir() {
-  return stmt('SELECT filename, library_dir_id FROM packages').all()
+  return stmt('SELECT filename, library_dir_id FROM packages WHERE missing_since IS NULL').all()
 }
 
 // Thumbnail resolution.
@@ -1086,10 +1160,19 @@ export function getAllDbFilenamesWithDir() {
 // The thumb_checked column is kept for schema compatibility but is no longer
 // consulted for fetch decisions.
 export function getPackagesNeedingThumbnail() {
-  return stmt('SELECT filename, package_name, hub_resource_id FROM packages WHERE image_url IS NULL').all()
+  return stmt(
+    'SELECT filename, package_name, hub_resource_id FROM packages WHERE image_url IS NULL AND missing_since IS NULL',
+  ).all()
 }
 
-/** filename → hub_resource_id for every package. Used by the thumb-cache layout migration. */
+/**
+ * filename → hub_resource_id for every package. Used by the one-time thumb-cache
+ * layout migration. Deliberately NOT filtered by `missing_since`: the migration
+ * treats any cached `{filename}.jpg` with no matching row here as an orphan and
+ * deletes it, so excluding tombstones would wrongly discard the cached thumbnails
+ * of packages that are only temporarily gone — they'd have to re-fetch on
+ * reappearance. Tombstones keep their place in this map so their thumbs survive.
+ */
 export function getAllPackageHubIds() {
   return stmt('SELECT filename, hub_resource_id FROM packages').all()
 }
@@ -1123,12 +1206,62 @@ export function getContentThumbnailPath(packageFilename) {
   )
 }
 
-export function deletePackages(filenames) {
+/**
+ * Batch tombstone (see `markPackageMissing`). Used by the full-scan reconciler
+ * to soft-delete every DB row whose `.var` wasn't seen on disk this scan, in one
+ * transaction. Idempotent per row via the `missing_since IS NULL` guard.
+ */
+export function markPackagesMissing(filenames) {
   const tx = db.transaction((names) => {
-    const del = stmt('DELETE FROM packages WHERE filename = ?')
-    for (const f of names) del.run(f)
+    const upd = stmt('UPDATE packages SET missing_since = unixepoch() WHERE filename = ? AND missing_since IS NULL')
+    for (const f of names) upd.run(f)
   })
   tx(filenames)
+}
+
+/**
+ * Reclaim every scrap of identity-keyed memory the app retains for content that
+ * is no longer present, in one transaction:
+ *   1. hard-delete tombstoned packages (cascading their contents + label links),
+ *   2. prune orphaned content labels left behind by in-place package replacements
+ *      on packages that are themselves still present. Unlike package-level state,
+ *      these are NOT reachable by cascade — a rescan that replaces a package in
+ *      place with fewer items deletes+reinserts its `contents` (see ingest.js), but
+ *      `label_contents` keys on `packages(filename)`, not `contents.id`, so the
+ *      labels of dropped internal paths simply dangle.
+ *
+ * This is the single cleanup escape hatch (dev "Forget deleted packages" button)
+ * from what are otherwise permanent, deliberately-retained records. Ordered
+ * packages-first so a tombstoned package's own content labels are cascaded away
+ * (not counted as orphans). Returns `{ packages, contentLabels }` rows removed.
+ */
+export function forgetDeletedData() {
+  const tx = db.transaction(() => {
+    const packages = stmt('DELETE FROM packages WHERE missing_since IS NOT NULL').run().changes
+    const contentLabels = stmt(
+      `DELETE FROM label_contents WHERE NOT EXISTS (
+         SELECT 1 FROM contents c
+         WHERE c.package_filename = label_contents.package_filename AND c.internal_path = label_contents.internal_path
+       )`,
+    ).run().changes
+    return { packages, contentLabels }
+  })
+  return tx()
+}
+
+/** Count of tombstoned packages — drives the dev button's label/enabled state. */
+export function countMissingPackages() {
+  return stmt('SELECT COUNT(*) AS n FROM packages WHERE missing_since IS NOT NULL').get().n
+}
+
+/** Count of orphaned content labels (present package, internal_path no longer in `contents`) that `forgetDeletedData` would prune. */
+export function countOrphanContentLabels() {
+  return stmt(
+    `SELECT COUNT(*) AS n FROM label_contents WHERE NOT EXISTS (
+       SELECT 1 FROM contents c
+       WHERE c.package_filename = label_contents.package_filename AND c.internal_path = label_contents.internal_path
+     )`,
+  ).get().n
 }
 
 export function batchSetDirect(filenameMap) {
