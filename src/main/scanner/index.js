@@ -5,6 +5,7 @@ import { detectLeaves } from './graph.js'
 import { scanAndUpsert } from './ingest.js'
 import { inheritFromOlderVersion } from './inherit.js'
 import { refreshExtractedPresetsForUpdates } from '../scenes/extract-refresh.js'
+import { reconcileExtractedLifecycleAndResync } from '../scenes/extracted-reconcile.js'
 import {
   getPackageReconcileInfo,
   getAllDbFilenamesWithDir,
@@ -219,16 +220,35 @@ export async function runScan(vamDir, onProgress = () => {}) {
   const prefs = await readAllPrefs(vamDir)
   setPrefsMap(prefs)
 
-  onProgress({ phase: 'finalizing', step: 1, total: 1, message: 'Building indexes…' })
+  onProgress({ phase: 'finalizing', step: 0, total: 1, message: 'Building indexes…' })
   buildFromDb()
 
   // Auto-refresh extracted presets from newly-installed higher versions (runs
   // after the store rebuild so readScene can resolve the new .var files).
   await refreshExtractedPresetsForUpdates(extractRefreshAdditions, vamDir)
 
+  // Reconcile extracted-preset enable/disable state against current package
+  // activeness — heals drift from enable/disable/remove done by external tools
+  // (VaM, sync utilities) while the app was closed. Full sweep (no `filenames`),
+  // idempotent: it's an in-memory pass and only out-of-sync presets are renamed,
+  // so a clean library is a fast no-op (no fs/DB, then a rescan only if something
+  // moved). A full sweep is required here — startup can't know what changed while
+  // closed. Emits a phase so the status bar's 1s-delayed bar covers a slow one.
+  onProgress({ phase: 'extracted', step: 0, total: 1, message: 'Reconciling extracted presets…' })
+  try {
+    await reconcileExtractedLifecycleAndResync({ vamDir })
+  } catch (err) {
+    console.warn('Extracted-preset reconcile failed:', err.message)
+  }
+  onProgress({ phase: 'extracted', step: 1, total: 1, message: 'Extracted presets reconciled' })
+
   if (isInitialScan) {
     setSetting('initial_scan_done', '1')
   }
+
+  // Final clearing event — the status bar hides on finalizing/step===total, so
+  // this must be the last progress emit (after the reconcile above).
+  onProgress({ phase: 'finalizing', step: 1, total: 1, message: 'Done' })
 
   return { scanned, added, removed: removed.length, unreadable }
 }

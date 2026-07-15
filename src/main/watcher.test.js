@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { join } from 'path'
+import { join, dirname } from 'path'
+import { existsSync } from 'fs'
 import { mkdir, rename, readdir, writeFile, readFile, stat, unlink } from 'fs/promises'
 import {
   mkTempVamDir,
@@ -653,6 +654,75 @@ describe('watcher.processBatch — VaM-native marker events', () => {
     const row = getAllPackages().find((r) => r.filename === 'Ext.E.1.var')
     expect(row.storage_state).toBe('enabled')
     expect(await resolveContentPath(row)).toBe(join(tmp.addonPackages, 'Ext.E.1.var'))
+  })
+})
+
+// External enable/disable/remove of a package must also bring its extracted
+// presets into line (the sync the app-driven toggle already does). This is our
+// own derived-artifact bookkeeping, not a state side effect on other packages,
+// so it's exempt from the "external adds never cascade" rule above.
+describe('watcher.processBatch — extracted-preset lifecycle sync', () => {
+  const PRESET = 'Custom/Atom/Person/Appearance/extracted/Preset_Author - Demo.vap'
+
+  async function seedPackageWithPreset() {
+    const buf = await buildVar({
+      meta: { packageName: 'Author.Ext', creator: 'Author' },
+      files: { 'Saves/scene/Demo.json': '{"atoms":[{"id":"Person","type":"Person"}]}' },
+    })
+    await placeVar(tmp.addonPackages, 'Author.Ext.1.var', buf)
+    const presetAbs = join(tmp.vamDir, PRESET)
+    await mkdir(dirname(presetAbs), { recursive: true })
+    await writeFile(presetAbs, '{}')
+    await runScan(tmp.vamDir)
+    buildFromDb()
+    return presetAbs
+  }
+
+  it('external .var.disabled marker add disables the package’s extracted preset (and removal re-enables it)', async () => {
+    const presetAbs = await seedPackageWithPreset()
+    expect(existsSync(presetAbs)).toBe(true)
+
+    // External VaM-native disable: an empty `.var.disabled` marker appears.
+    const markerPath = await placeEmptyMarker(tmp.addonPackages, 'Author.Ext.1.var')
+    __setProcessBatchStateForTests({
+      vamDir: tmp.vamDir,
+      packageEvents: [[markerPath, { type: 'add', libraryDirId: null }]],
+    })
+    await __processBatchForTests()
+
+    expect(getAllPackages().find((r) => r.filename === 'Author.Ext.1.var')?.storage_state).toBe('disabled')
+    expect(existsSync(presetAbs)).toBe(false)
+    expect(existsSync(presetAbs + '.disabled')).toBe(true)
+
+    // External re-enable: the marker is removed → the preset comes back too.
+    await unlink(markerPath)
+    __setProcessBatchStateForTests({
+      vamDir: tmp.vamDir,
+      packageEvents: [[markerPath, { type: 'unlink', libraryDirId: null }]],
+    })
+    await __processBatchForTests()
+
+    expect(getAllPackages().find((r) => r.filename === 'Author.Ext.1.var')?.storage_state).toBe('enabled')
+    expect(existsSync(presetAbs)).toBe(true)
+    expect(existsSync(presetAbs + '.disabled')).toBe(false)
+  })
+
+  it('external removal (tombstone) disables the orphaned preset without deleting it', async () => {
+    const presetAbs = await seedPackageWithPreset()
+
+    // The .var vanishes from disk with no copy anywhere → tombstone.
+    await unlink(join(tmp.addonPackages, 'Author.Ext.1.var'))
+    refreshLibraryDirs()
+    __setProcessBatchStateForTests({
+      vamDir: tmp.vamDir,
+      packageEvents: [[join(tmp.addonPackages, 'Author.Ext.1.var'), { type: 'unlink', libraryDirId: null }]],
+    })
+    await __processBatchForTests()
+
+    // Row tombstoned (invisible), preset disabled but preserved on disk.
+    expect(getAllPackages().find((r) => r.filename === 'Author.Ext.1.var')).toBeUndefined()
+    expect(existsSync(presetAbs)).toBe(false)
+    expect(existsSync(presetAbs + '.disabled')).toBe(true)
   })
 })
 

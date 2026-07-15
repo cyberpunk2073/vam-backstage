@@ -8,6 +8,7 @@ import { scanAndUpsert } from './scanner/ingest.js'
 import { computeAutoHidePathsForNewPackage } from './scanner/index.js'
 import { inheritFromOlderVersion } from './scanner/inherit.js'
 import { refreshExtractedPresetsForUpdates } from './scenes/extract-refresh.js'
+import { reconcileExtractedLifecycleAndResync } from './scenes/extracted-reconcile.js'
 import { runLocalScan } from './scanner/local.js'
 import { markPackageMissing, getPackageReconcileInfo, setStorageState } from './db.js'
 import { buildFromDb, getPrefsMap, setPrefsMap } from './store.js'
@@ -657,6 +658,31 @@ async function processBatch() {
       // state side effects on other packages (see `newlyScannedEnabled` above).
       if (newlyScannedEnabled.length > 0) {
         enrichNewPackages(newlyScannedEnabled)
+      }
+
+      // Reconcile extracted-preset enable/disable state against the (externally)
+      // changed package activeness — the same bookkeeping the app-driven toggle
+      // does, now also for VaM / sync-tool / other-instance changes. Unlike
+      // cascading deps, extracted presets are our own derived artifacts, so
+      // keeping them in sync isn't a surprising side effect. Full sweep: an
+      // external removal tombstones the owning package out of the store, so a
+      // targeted-by-filename pass couldn't reach a preset whose last owner just
+      // vanished (it's disabled, not deleted — removal is reversible). Renames
+      // are app-owned, so they buffer + drop in this batch's bulk window.
+      //
+      // PERF: runs a full sweep over every extracted preset on *any* package-
+      // changing batch, even ones that can't affect presets. It's an in-memory
+      // pass (no fs/DB unless something's actually out of sync), so cheap today.
+      // If extracted-preset counts ever grow enough to matter, gate this on an
+      // actual state-flip/removal and/or pass a targeted `filenames` set (with a
+      // separate orphan pass to cover tombstoned owners).
+      if (packagesChanged && vamDirPath) {
+        try {
+          const { changed } = await reconcileExtractedLifecycleAndResync({ vamDir: vamDirPath })
+          if (changed > 0) contentsChanged = true
+        } catch (err) {
+          console.warn('Watcher: extracted-preset reconcile failed:', err.message)
+        }
       }
     }
 

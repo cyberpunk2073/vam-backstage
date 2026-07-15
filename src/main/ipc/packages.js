@@ -36,17 +36,12 @@ import {
   getFilteredContents,
   isNotDownloadable,
   resolveHubDownloadUrl,
-  getExtractedByPackage,
   effectivePackageType,
   recomputeInactiveDeps,
 } from '../store.js'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
-import {
-  extractedRenamePlan,
-  extractedDeletePaths,
-  extractedShouldDisable,
-  extractedHasSurvivor,
-} from '../scenes/extracted-lifecycle.js'
+import { extractedDeletePaths, extractedHasSurvivor } from '../scenes/extracted-lifecycle.js'
+import { reconcileExtractedLifecycleAndResync, extractedItemsFor } from '../scenes/extracted-reconcile.js'
 import { hidePackageContent, unhidePackageContent, readAllPrefs } from '../vam-prefs.js'
 import { computeAutoHidePathsForNewPackage } from '../scanner/index.js'
 import { computeRemovableDeps, computeCascadeDisable, computeCascadeEnable } from '../scanner/graph.js'
@@ -119,76 +114,6 @@ async function unlinkPackagePhysicalAndAliases(pkg, filename) {
 }
 
 /**
- * Shared worker for `packages:toggle-enabled` and `packages:set-enabled`. The
- * caller supplies `intentFn(pkg)` returning `'enable' | 'disable'`; for each
- * filename we resolve the resulting storage_state target via the
- * `nextStorageStateForIntent` matrix (which encodes "no-op when already at
- * the target end of the spectrum"), apply it via `applyStorageState`, and
- * cascade through `computeCascadeEnable / computeCascadeDisable` according
- * to the same intent. The `disable_behavior` setting decides whether disable
- * means a VaM-native `.var.disabled` marker in main or move-to-aux.
- *
- * Returns the same shape on toggle and set-enabled so the renderer doesn't
- * branch: `{ ok, filename?, storageState?, cascadeCount?, unchanged?, error? }` per
- * filename, wrapped in the standard single/array envelope.
- *
- * Root rename failures yield `{ ok: false, filename, error }` and do not abort
- * remaining filenames in the batch. Cascade renames run in parallel (bounded by
- * `RENAME_CONCURRENCY`) only after the root rename succeeds. Cascade-member
- * failures still log + continue.
- *
- * Does not emit `contents:updated`: storage-state toggles don't change content
- * prefs (`hidden`/`favorite`), and content rows reference their package via
- * `c.package` on the renderer — `useLibraryStore.fetchPackages` triggers a
- * `useContentStore.relink()` after refetch, refreshing the package fields any
- * content view reads (e.g. disabled badge dim) without a `contents:list` IPC.
- *
- * For multi-root batches a `packages:updated` notify is emitted after each root completes,
- * throttled to `TOGGLE_PROGRESS_NOTIFY_MS`. The renderer's `packagesFetchInFlight` gate
- * coalesces bursts, so the throttle is a soft floor on refetch frequency rather than a
- * hard cap. A final notify always fires on completion.
- */
-/**
- * Rename a loose file (relative to vamDir) and record both paths as app-owned so
- * the watcher doesn't treat the rename as an external change. `optional` swallows
- * ENOENT (e.g. a missing sidecar). Returns whether the rename succeeded.
- */
-async function renameLoose(vamDir, fromRel, toRel, { optional = false } = {}) {
-  const from = join(vamDir, fromRel)
-  const to = join(vamDir, toRel)
-  recordOwnedPath(from)
-  recordOwnedPath(to)
-  try {
-    await rename(from, to)
-    return true
-  } catch (err) {
-    if (!optional) console.warn(`Extracted preset rename failed (${fromRel} -> ${toRel}):`, err.message)
-    return false
-  }
-}
-
-/** Apply the disable/enable rename plan for one loose preset (see extractedRenamePlan). */
-async function setExtractedPresetDisabled(vamDir, internalPath, disable) {
-  const [main, ...sidecars] = extractedRenamePlan(internalPath, disable)
-  if (!(await renameLoose(vamDir, main.from, main.to))) return false
-  for (const s of sidecars) await renameLoose(vamDir, s.from, s.to, { optional: true })
-  return true
-}
-
-/** Iterate deduped extracted items claimed by any of `filenames`. */
-function* extractedItemsFor(filenames) {
-  const byPkg = getExtractedByPackage()
-  const seen = new Set()
-  for (const fn of filenames) {
-    for (const item of byPkg.get(fn) || []) {
-      if (seen.has(item.id)) continue
-      seen.add(item.id)
-      yield item
-    }
-  }
-}
-
-/**
  * After promote/demote, align `.hide` sidecars with active auto-hide rules for
  * both in-var content and extracted presets owned by the package. Extracted
  * presets are shared across versions, so the deps rule uses "any candidate
@@ -225,31 +150,6 @@ async function syncAutoHideAfterDirectChange(vamDir, filename, isDirect) {
 }
 
 /**
- * After package storage-state changes land, bring each extracted preset claimed
- * by an affected package into line with its owners: disable (`X.vap.disabled`)
- * when no candidate version remains active, re-enable when one does. Returns
- * whether any file was renamed (caller reconciles the store).
- */
-async function cascadeExtractedPresetState(affectedFilenames) {
-  if (affectedFilenames.size === 0) return false
-  const vamDir = getSetting('vam_dir')
-  if (!vamDir) return false
-  const pkgIndex = getPackageIndex()
-  const isActive = (cf) => {
-    const p = pkgIndex.get(cf)
-    return !!p && isPackageActive(p.storage_state)
-  }
-  let changed = false
-  for (const item of extractedItemsFor(affectedFilenames)) {
-    const shouldDisable = extractedShouldDisable(item.extractedCandidates, isActive)
-    const currentlyDisabled = item.internal_path.endsWith('.disabled')
-    if (shouldDisable === currentlyDisabled) continue
-    if (await setExtractedPresetDisabled(vamDir, item.internal_path, shouldDisable)) changed = true
-  }
-  return changed
-}
-
-/**
  * When packages are removed, delete the extracted presets they exclusively
  * owned — but only when no other installed version still claims them (`.latest`
  * refs keep the preset working otherwise). Returns whether any file was removed.
@@ -276,6 +176,36 @@ async function cleanupExtractedPresetsForRemoval(removedFilenames) {
   return removedAny
 }
 
+/**
+ * Shared worker for `packages:toggle-enabled` and `packages:set-enabled`. The
+ * caller supplies `intentFn(pkg)` returning `'enable' | 'disable'`; for each
+ * filename we resolve the resulting storage_state target via the
+ * `nextStorageStateForIntent` matrix (which encodes "no-op when already at
+ * the target end of the spectrum"), apply it via `applyStorageState`, and
+ * cascade through `computeCascadeEnable / computeCascadeDisable` according
+ * to the same intent. The `disable_behavior` setting decides whether disable
+ * means a VaM-native `.var.disabled` marker in main or move-to-aux.
+ *
+ * Returns the same shape on toggle and set-enabled so the renderer doesn't
+ * branch: `{ ok, filename?, storageState?, cascadeCount?, unchanged?, error? }` per
+ * filename, wrapped in the standard single/array envelope.
+ *
+ * Root rename failures yield `{ ok: false, filename, error }` and do not abort
+ * remaining filenames in the batch. Cascade renames run in parallel (bounded by
+ * `RENAME_CONCURRENCY`) only after the root rename succeeds. Cascade-member
+ * failures still log + continue.
+ *
+ * Does not emit `contents:updated`: storage-state toggles don't change content
+ * prefs (`hidden`/`favorite`), and content rows reference their package via
+ * `c.package` on the renderer — `useLibraryStore.fetchPackages` triggers a
+ * `useContentStore.relink()` after refetch, refreshing the package fields any
+ * content view reads (e.g. disabled badge dim) without a `contents:list` IPC.
+ *
+ * For multi-root batches a `packages:updated` notify is emitted after each root completes,
+ * throttled to `TOGGLE_PROGRESS_NOTIFY_MS`. The renderer's `packagesFetchInFlight` gate
+ * coalesces bursts, so the throttle is a soft floor on refetch frequency rather than a
+ * hard cap. A final notify always fires on completion.
+ */
 async function applyStorageStateChange(filenames, intentFn) {
   if (!getSetting('vam_dir')) throw new Error('VaM directory not configured')
   const parsedBehavior = parseDisableBehavior(getSetting('disable_behavior'))
@@ -360,17 +290,18 @@ async function applyStorageStateChange(filenames, intentFn) {
     }
 
     // Cascade the state change onto extracted presets owned by affected
-    // packages (rename .vap <-> .vap.disabled). Renames are app-owned, so the
-    // watcher stays quiet; we reconcile the loose-content rows explicitly.
-    const extractedChanged = await cascadeExtractedPresetState(affectedForExtracted)
-    if (extractedChanged) {
-      try {
-        await runLocalScan(getSetting('vam_dir'))
-        buildFromDb({ skipGraph: true })
-        notify('contents:updated')
-      } catch (err) {
-        console.warn('Extracted-preset lifecycle reconcile failed:', err.message)
-      }
+    // packages (rename .vap <-> .vap.disabled). Targeted by the flipped
+    // filenames — they're still present, so reachable via the store. Renames
+    // are app-owned, so the watcher stays quiet; the resync commits the moved
+    // loose-content rows to the store.
+    try {
+      const { changed } = await reconcileExtractedLifecycleAndResync({
+        vamDir: getSetting('vam_dir'),
+        filenames: affectedForExtracted,
+      })
+      if (changed > 0) notify('contents:updated')
+    } catch (err) {
+      console.warn('Extracted-preset lifecycle reconcile failed:', err.message)
     }
 
     // Toggles patch packageIndex in place without a full rebuild, so refresh the

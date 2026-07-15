@@ -88,6 +88,7 @@ let lookItemCountByPackage = new Map() // filename -> count of look / legacyLook
 let extractedAppearanceBasenames = new Set() // basenames of local 'look' rows under Custom/Atom/Person/Appearance/extracted/
 let extractedOwnership = new Map() // extracted-preset basename -> Set<packageFilename> (every installed version that could own it)
 let extractedByPackage = new Map() // packageFilename -> local extracted content item[] (indexed under every candidate version)
+let allExtractedLocalItems = [] // every local extracted preset row, including orphaned ones (empty extractedCandidates)
 let aggregateMorphCountMap = new Map() // filename -> morph count (own + all resolved deps)
 let transitiveDepsCountMap = new Map() // filename -> total unique deps (resolved + missing) in subtree
 let transitiveMissingMap = new Map() // filename -> count of unique missing dep refs in subtree
@@ -327,11 +328,15 @@ export function buildFromDb({ skipGraph = false } = {}) {
   // package content counts or cross-version dedup.
   for (const item of localExtractedRows) {
     const candidates = extractedOwnership.get(extractedBasenameOf(item.internal_path))
+    // Every candidate in `extractedOwnership` is a present package (built from
+    // `getAllContents`, which filters tombstones), so a preset whose owning
+    // versions were all removed lands here with an empty set — the reconcile
+    // reads that as "no active candidate" and disables it.
+    item.extractedCandidates = candidates ? [...candidates] : []
     if (!candidates || candidates.size === 0) continue
     const owner = highestVersionCandidate(candidates)
     if (!owner) continue
     item.extractedFrom = owner
-    item.extractedCandidates = [...candidates]
     for (const fn of candidates) {
       let arr = extractedByPackage.get(fn)
       if (!arr) {
@@ -341,6 +346,7 @@ export function buildFromDb({ skipGraph = false } = {}) {
       arr.push(item)
     }
   }
+  allExtractedLocalItems = localExtractedRows
 
   contentByPackage = new Map()
   for (const item of managedItems) {
@@ -688,6 +694,12 @@ export function getExtractedAppearanceBasenames() {
 /** packageFilename -> local extracted content item[] claimed by (any version of) that package. */
 export function getExtractedByPackage() {
   return extractedByPackage
+}
+/** Every local extracted preset row (appearance/outfit), including orphaned rows
+ *  whose owning package versions are all gone (empty `extractedCandidates`). Used
+ *  by the extracted-preset lifecycle reconcile full sweep. */
+export function getAllExtractedLocalItems() {
+  return allExtractedLocalItems
 }
 export function getPrefsMap() {
   return prefsMap
