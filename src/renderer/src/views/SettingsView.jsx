@@ -689,7 +689,7 @@ export default function SettingsView() {
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent className="max-w-[420px]">
-                  <SelectItem value="suffix">VaM native (rename to .var.disabled)</SelectItem>
+                  <SelectItem value="suffix">VaM native (.var.disabled marker)</SelectItem>
                   {libDirs.aux.map((d) => (
                     <SelectItem key={d.id} value={disableBehaviorMoveTo(d.id)} title={d.path}>
                       <span className="block min-w-0 truncate">Move to {shortenLibraryPath(d.path, vamDir)}</span>
@@ -1454,7 +1454,7 @@ function getLocalReachabilityTooltip(localIps, port) {
 
 function getDisableBehaviorTooltip(value, auxDirs) {
   const parsed = parseDisableBehavior(value)
-  if (parsed.kind === 'suffix') return 'VaM native disable (rename to .var.disabled)'
+  if (parsed.kind === 'suffix') return 'VaM native disable (empty .var.disabled marker beside the package)'
   const dir = auxDirs.find((d) => d.id === parsed.auxDirId)
   return dir ? `Move to ${dir.path}` : undefined
 }

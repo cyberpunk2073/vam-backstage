@@ -108,10 +108,7 @@ export function DisablePackageDialogContent({ pkg, name, onConfirm }) {
         <AlertDialogTitle className="select-text cursor-text">Disable {name}?</AlertDialogTitle>
         <AlertDialogDescription asChild>
           <div className="space-y-2 text-sm text-muted-foreground select-text cursor-text">
-            <p>
-              The package file will be renamed to <span className="font-mono text-[11px]">.var.disabled</span>. VaM will
-              not load it.
-            </p>
+            <p>The package will be marked as disabled. VaM will not load it.</p>
             {dependents.length > 0 && (
               <div>
                 <p className="text-destructive font-medium">

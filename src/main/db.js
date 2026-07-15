@@ -631,8 +631,10 @@ export function setPackageTypeFromHub(filename, hubType) {
 }
 
 /**
- * Update storage_state and library_dir_id for a package. The on-disk suffix is implied by
- * storage_state (`.disabled` only when storage_state==='disabled', and only ever in main).
+ * Update storage_state and library_dir_id for a package. The physical byte
+ * location (bare `.var` vs a legacy `.var.disabled` sibling) is never stored —
+ * it is re-derived from disk on demand by `resolveContentPath`, so there is no
+ * on-disk-name column to keep in sync here.
  *
  * `subpath` (the package's relative dir within its library dir) is updated only when
  * provided — pass it whenever the physical file moved (cross-dir move recovery, or a

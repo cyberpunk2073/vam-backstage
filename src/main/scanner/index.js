@@ -1,5 +1,5 @@
 import { readdir, stat } from 'fs/promises'
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { isVarFilename, canonicalVarFilename } from './var-reader.js'
 import { detectLeaves } from './graph.js'
 import { scanAndUpsert } from './ingest.js'
@@ -28,7 +28,7 @@ import {
   effectivePackageType,
 } from '../store.js'
 import { isLocalPackage } from '@shared/local-package.js'
-import { refreshLibraryDirs, getAllLibraryDirs, libraryRelSubpath } from '../library-dirs.js'
+import { refreshLibraryDirs, getAllLibraryDirs, libraryRelSubpath, classifyMainVarOnDisk } from '../library-dirs.js'
 import { normalizeAuxDisabled } from '../watcher.js'
 
 /**
@@ -93,9 +93,10 @@ export async function runScan(vamDir, onProgress = () => {}) {
 
     const cached = getPackageCacheInfo(filename)
     if (cached && cached.file_mtime === mtime && cached.size_bytes === size) {
-      // Cache hit (unchanged bytes) still reconciles location: storage_state, the
-      // library dir, and the subfolder the file now lives in (a same-mtime move
-      // into/out of a subdir, or a backfilled v24 row whose subpath is still '').
+      // Cache hit (unchanged content bytes) still reconciles location: storage_state,
+      // the library dir, and the subfolder the file now lives in. Adding/removing an
+      // empty `.var.disabled` marker doesn't touch the bare file's mtime/size, so this
+      // is the path that picks up a VaM-side enable/disable done while we were running.
       if (
         cached.storage_state !== storageState ||
         (cached.library_dir_id ?? null) !== (libraryDirId ?? null) ||
@@ -236,8 +237,9 @@ const VAR_STAT_CONCURRENCY = 8
  *    missing path); caller uses this to skip pruning packages that may still live there.
  *  - Unreadable subdirectories are silently skipped without flipping `ok`.
  *
- * `filename` is always the canonical `.var` form. Within one directory the suffix-less
- * `.var` wins if both variants are present.
+ * `filename` is always the canonical `.var` form. Within one directory the bare
+ * `.var` and its `.var.disabled` sibling are classified together (`classifyMainVar`):
+ * a marker present ⇒ disabled, content read from whichever file holds the bytes.
  *
  * Aux dirs (`libraryDirId != null`) are always suffix-less in our model. Stray
  * `.var.disabled` files from external tooling are normalized via `normalizeAuxDisabled`
@@ -259,27 +261,49 @@ async function walkForVars(dir, libraryDirId) {
   const records = await Promise.all(
     candidates.map((c) =>
       limit(async () => {
-        let { fullPath, isDisabled, canonical } = c
-        if (libraryDirId != null && isDisabled) {
-          const bare = await normalizeAuxDisabled(fullPath)
-          if (!bare) return null
-          fullPath = bare
-          isDisabled = false
-        }
-        try {
-          const s = await stat(fullPath)
-          const storageState = libraryDirId != null ? 'offloaded' : isDisabled ? 'disabled' : 'enabled'
+        const { canonical, barePath, disabledPath } = c
+
+        // Aux dirs are always suffix-less in our model (offloaded == active).
+        // A `.var.disabled` there is external tooling residue: normalize it to
+        // bare (or drop an empty/duplicate marker) and index the bare content.
+        if (libraryDirId != null) {
+          let contentPath = barePath
+          if (disabledPath) {
+            const bare = await normalizeAuxDisabled(disabledPath)
+            if (!contentPath) contentPath = bare
+          }
+          if (!contentPath) return null
+          const s = await stat(contentPath).catch(() => null)
+          if (!s) return null
           return {
             filename: canonical,
-            fullPath,
+            fullPath: contentPath,
             mtime: s.mtimeMs / 1000,
             size: s.size,
-            storageState,
+            storageState: 'offloaded',
             libraryDirId,
-            subpath: libraryRelSubpath(dir, fullPath),
+            subpath: libraryRelSubpath(dir, contentPath),
           }
-        } catch {
-          return null
+        }
+
+        // Main dir: classify the canonical's bare + `.disabled` footprint. Marker
+        // presence ⇒ disabled; content is read from the bare file when it holds
+        // bytes, else from the `.disabled` file (legacy rename). Empty-marker-only
+        // ⇒ skip. The dirent walk already proved whether a `.disabled` sibling
+        // exists, so the common no-sibling case skips its stat — one syscall per
+        // package on the full-scan hot path.
+        const cls = await classifyMainVarOnDisk(barePath ?? join(dirname(disabledPath), canonical), {
+          disabledKnownAbsent: !disabledPath,
+        })
+        if (!cls.present) return null
+        return {
+          filename: canonical,
+          fullPath: cls.contentPath,
+          mtime: cls.contentStat.mtimeMs / 1000,
+          size: cls.contentStat.size,
+          storageState: cls.storageState,
+          libraryDirId,
+          subpath: libraryRelSubpath(dir, cls.contentPath),
         }
       }),
     ),
@@ -292,10 +316,13 @@ async function walkForVars(dir, libraryDirId) {
 }
 
 /**
- * Recursive dirent walk that pushes `{canonical, fullPath, isDisabled}` candidates
- * into `out`. Returns false only when the **root** `dir` is unreachable so the
- * caller can distinguish "nothing here" from "couldn't read here". Sub-directory
- * read failures are silently skipped (matches today's silent-skip semantics).
+ * Recursive dirent walk that pushes one `{canonical, barePath, disabledPath}`
+ * candidate per canonical into `out` (either path is null when that variant is
+ * absent in the folder). Keeping *both* siblings — rather than collapsing to one
+ * — lets `walkForVars` classify the marker vs suffix disable layout from their
+ * sizes. Returns false only when the **root** `dir` is unreachable so the caller
+ * can distinguish "nothing here" from "couldn't read here"; sub-directory read
+ * failures are silently skipped (matches today's silent-skip semantics).
  */
 export async function collectVarCandidates(dir, out, isRoot) {
   let entries
@@ -317,13 +344,17 @@ export async function collectVarCandidates(dir, out, isRoot) {
     } else if (entry.isFile() && isVarFilename(entry.name)) {
       const isDisabled = /\.disabled$/i.test(entry.name)
       const canonical = isDisabled ? canonicalVarFilename(entry.name) : entry.name
-      const existing = localFiles.get(canonical)
-      if (existing && !existing.isDisabled) continue // .var already found, skip .var.disabled
-      localFiles.set(canonical, { fullPath, isDisabled })
+      let group = localFiles.get(canonical)
+      if (!group) {
+        group = { barePath: null, disabledPath: null }
+        localFiles.set(canonical, group)
+      }
+      if (isDisabled) group.disabledPath = fullPath
+      else group.barePath = fullPath
     }
   }
-  for (const [canonical, { fullPath, isDisabled }] of localFiles) {
-    out.push({ canonical, fullPath, isDisabled })
+  for (const [canonical, { barePath, disabledPath }] of localFiles) {
+    out.push({ canonical, barePath, disabledPath })
   }
   return true
 }

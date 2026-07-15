@@ -5,12 +5,22 @@
  * by `library_dir_id IS NULL` — it is not a row in the `library_dirs` table.
  * Aux dirs are user-registered offload directories (rows in `library_dirs`).
  *
- * The `pkgVarPath(pkg)` helper is the single source of truth for "where on
- * disk does this package live?" Every reader/writer/deleter that touches a
- * `.var` file must route through it. The on-disk suffix is implied by
- * `storage_state`: `.disabled` only when `storage_state === 'disabled'`
- * (which is only ever true in main). Aux dirs are always suffix-less; any
- * stray `.var.disabled` file there is normalized to bare `.var` on scan/add.
+ * Two helpers answer "where does this package live?":
+ *  - `pkgVarPath(pkg)` returns the *nominal* path — `<dir>/<subpath>/<filename>`,
+ *    always the canonical bare `.var` name. That IS where the content bytes live
+ *    for enabled and offloaded rows, and for a VaM-native marker-disabled row
+ *    (bytes in the bare `.var` beside an empty `.var.disabled` marker). It is the
+ *    right target for writers/deleters and for the companion `.jpg` dirname.
+ *  - `resolveContentPath(pkg)` (async) returns where the bytes *physically* are,
+ *    probing disk for disabled rows. It only differs from the nominal path for a
+ *    legacy rename-disabled package whose content sits in `X.var.disabled` with
+ *    no bare sibling. Readers that open the archive route through it.
+ *
+ * We deliberately do NOT cache the physical basename in the DB: reads that need
+ * the bytes are rare, one-off, and already hit the disk, so a couple of extra
+ * `stat`s cost nothing and the disk stays the single source of truth (no
+ * staleness). Aux dirs are always suffix-less; any stray `.var.disabled` there is
+ * normalized to bare `.var` on scan/add.
  *
  * A `.var` may live in a subfolder of its library dir, not only at the root —
  * VaM loads packages from anywhere under `AddonPackages`. `pkg.subpath` records
@@ -20,9 +30,10 @@
  */
 
 import { join, relative, dirname, sep, isAbsolute } from 'path'
-import { realpath } from 'fs/promises'
+import { realpath, stat } from 'fs/promises'
 import { ADDON_PACKAGES, ADDON_PACKAGES_FILE_PREFS } from '@shared/paths.js'
 import { LOCAL_CONTENT_DIRS } from '@shared/local-package.js'
+import { classifyMainVar } from './disable-layout.js'
 import { getSetting, listLibraryDirs as dbListLibraryDirs } from './db.js'
 
 let auxDirsById = new Map() // id -> { id, path, created_at }
@@ -67,16 +78,98 @@ export function getAuxLibraryDirs() {
 }
 
 /**
- * Resolve the absolute physical .var path for a package row. Returns null if the
- * library dir is unknown (e.g. aux dir was removed from registry).
+ * Resolve the *nominal* absolute path for a package row — its library dir joined
+ * with `subpath` and the canonical bare `filename`. Returns null if the library
+ * dir is unknown (e.g. aux dir was removed from registry).
+ *
+ * This is where the bytes live for enabled/offloaded rows and for a VaM-native
+ * marker-disabled row (bare `.var` beside an empty marker). It is the correct
+ * target for writers/deleters (they always normalize to the bare name) and for
+ * locating the companion `.jpg`. For a package whose bytes might sit in a
+ * `.var.disabled` sibling (legacy rename), readers that open the archive must
+ * use `resolveContentPath` instead.
  */
 export function pkgVarPath(pkg) {
   if (!pkg) return null
   const dir = getLibraryDirPath(pkg.library_dir_id)
   if (!dir) return null
-  const name = pkg.filename + (pkg.storage_state === 'disabled' ? '.disabled' : '')
   const sub = pkg.subpath || ''
-  return sub ? join(dir, sub, name) : join(dir, name)
+  return sub ? join(dir, sub, pkg.filename) : join(dir, pkg.filename)
+}
+
+/**
+ * Resolve where a package's content bytes physically live, reading the disk for
+ * disabled rows so a legacy rename-disabled package (bytes in `X.var.disabled`,
+ * no bare sibling) resolves to the suffixed file. Enabled and offloaded rows —
+ * and marker-disabled rows — always keep their bytes at the nominal bare `.var`,
+ * so those short-circuit without touching the disk (an offloaded package on an
+ * unmounted drive therefore never blocks on a stat here).
+ *
+ * Falls back to the nominal path when disk classification finds nothing (missing
+ * file / unreachable); the caller's subsequent open then surfaces the ENOENT.
+ * Returns null only when the library dir is unknown.
+ */
+export async function resolveContentPath(pkg) {
+  const nominal = pkgVarPath(pkg)
+  if (!nominal) return null
+
+  if (pkg.storage_state === 'disabled') {
+    // Main disabled: bytes may sit in the bare `.var` (VaM marker layout) or in a
+    // `.var.disabled` sibling (legacy rename). Re-derive from the two siblings.
+    const cls = await classifyMainVarOnDisk(nominal)
+    return cls.present ? cls.contentPath : nominal
+  }
+
+  // enabled: bytes are always at the bare nominal path — no disk probe.
+  // offloaded: also nominal today (aux dirs are normalized to bare, offloaded ==
+  // active). This branch is the single home for any future offload-specific
+  // resolution — e.g. a per-aux-dir mode where bytes are stored flattened with a
+  // sidecar (JayJayWon BrowserAssist), or any other scheme an aux dir might grow.
+  // Such logic is a *different mechanism* than main's size-based `.disabled`
+  // classification, so it belongs here (keyed on the aux dir's mode), not in
+  // `classifyMainVar`. Keep the unmounted-drive invariant: probe only when the
+  // resolved layout genuinely differs from nominal, and fall back to nominal so a
+  // detached offload drive never blocks on a stat.
+  return nominal
+}
+
+/**
+ * Inspect a canonical `.var`'s two possible sibling files at an absolute bare
+ * path in a MAIN library dir and report the on-disk truth. This is the single
+ * fs-level classifier shared by the scanner, watcher, and `applyStorageState`,
+ * so "look at both siblings and decide enabled / marker-disabled / suffix-
+ * disabled" lives in exactly one place. `barePath` is `<dir>/<canonical>`; the
+ * marker/legacy sibling is `barePath + '.disabled'`.
+ *
+ * Returns the `classifyMainVar` verdict plus the resolved paths and the `stat`
+ * of the file actually holding the content bytes (both null when not present):
+ *   `{ present, storageState?, contentPath, contentStat }`
+ * `contentPath` is the `.disabled`-suffixed sibling for a legacy suffix layout,
+ * else the bare `.var`. (Aux dirs never carry a disabled encoding — callers
+ * handle offloaded bare files directly, not through here.)
+ *
+ * `disabledKnownAbsent`: callers that already enumerated the folder's dirents
+ * (the scanner's walk) can assert the `.disabled` sibling doesn't exist, which
+ * skips its stat — keeping the full-scan hot path at one syscall per package
+ * while the classification verdict still comes from `classifyMainVar`.
+ */
+export async function classifyMainVarOnDisk(barePath, { disabledKnownAbsent = false } = {}) {
+  const disabledPath = barePath + '.disabled'
+  const [bareStat, disabledStat] = await Promise.all([
+    stat(barePath).catch(() => null),
+    disabledKnownAbsent ? null : stat(disabledPath).catch(() => null),
+  ])
+  const cls = classifyMainVar({
+    bareSize: bareStat ? bareStat.size : null,
+    disabledSize: disabledStat ? disabledStat.size : null,
+  })
+  if (!cls.present) return { present: false, contentPath: null, contentStat: null }
+  return {
+    present: true,
+    storageState: cls.storageState,
+    contentPath: cls.contentInDisabled ? disabledPath : barePath,
+    contentStat: cls.contentInDisabled ? disabledStat : bareStat,
+  }
 }
 
 /**

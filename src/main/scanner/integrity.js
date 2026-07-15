@@ -1,7 +1,7 @@
 import { stat } from 'fs/promises'
 import { crc32 } from 'zlib'
 import yauzl from 'yauzl'
-import { pkgVarPath } from '../library-dirs.js'
+import { resolveContentPath } from '../library-dirs.js'
 import { getPackageIndex } from '../store.js'
 
 /**
@@ -65,7 +65,7 @@ export async function verifyPackageFull(varPath) {
 export async function runIntegrityCheck(_vamDir, onProgress = () => {}) {
   const targets = []
   for (const pkg of getPackageIndex().values()) {
-    const fullPath = pkgVarPath(pkg)
+    const fullPath = await resolveContentPath(pkg)
     if (!fullPath) continue
     try {
       await stat(fullPath)

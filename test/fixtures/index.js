@@ -97,13 +97,33 @@ export function buildVar({ meta, files = {}, metaRaw } = {}) {
 }
 
 /**
- * Write a built `.var` buffer to a library directory. Pass `disabled: true` to
- * land the file with the `.var.disabled` suffix (only meaningful in main).
+ * Write a built `.var` buffer to a library directory.
+ *
+ * - default: bare `name` (enabled).
+ * - `disabled: true`: legacy rename layout — content lands in `name.disabled`,
+ *   no bare sibling.
+ * - `marker: true`: VaM-native layout — bare `name` (holding the content) plus
+ *   an empty `name.disabled` marker beside it.
+ *
+ * Returns the path to the file holding the content bytes.
  */
-export async function placeVar(dirPath, name, varBuffer, { disabled = false } = {}) {
+export async function placeVar(dirPath, name, varBuffer, { disabled = false, marker = false } = {}) {
+  if (marker) {
+    const barePath = join(dirPath, name)
+    await writeFile(barePath, varBuffer)
+    await writeFile(join(dirPath, name + '.disabled'), '')
+    return barePath
+  }
   const finalName = disabled ? name + '.disabled' : name
   const fullPath = join(dirPath, finalName)
   await writeFile(fullPath, varBuffer)
+  return fullPath
+}
+
+/** Write a lone empty `name.disabled` marker with no content sibling. */
+export async function placeEmptyMarker(dirPath, name) {
+  const fullPath = join(dirPath, name + '.disabled')
+  await writeFile(fullPath, '')
   return fullPath
 }
 

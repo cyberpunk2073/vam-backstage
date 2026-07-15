@@ -1,6 +1,6 @@
 import { createWriteStream } from 'fs'
 import { ipcMain, net } from 'electron'
-import { access, rename, unlink } from 'fs/promises'
+import { access, rename, unlink, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
 import {
@@ -53,7 +53,7 @@ import { computeAutoHidePathsForNewPackage } from '../scanner/index.js'
 import { computeRemovableDeps, computeCascadeDisable, computeCascadeEnable } from '../scanner/graph.js'
 import { LOCAL_PACKAGE_FILENAME } from '@shared/local-package.js'
 import { applyStorageState, parseDisableBehavior, nextStorageStateForIntent } from '../storage-state.js'
-import { pkgVarPath, getMainLibraryDirPath } from '../library-dirs.js'
+import { pkgVarPath, resolveContentPath, getMainLibraryDirPath } from '../library-dirs.js'
 import {
   enqueueInstall,
   enqueueInstallMissing,
@@ -94,16 +94,19 @@ function normalizeFilenameArgs(arg) {
 }
 
 /**
- * Record-as-owned + unlink the indexed physical file plus any stray main-dir
- * aliases (`<fn>` and `<fn>.disabled` in main) external tools may have left
- * around. Each path is unlinked at most once. Caller is responsible for
- * `deletePackage`. Effective only when caller wraps in `withBulkWindow`;
- * single non-bulk uninstalls accept the watcher event (idempotent).
+ * Record-as-owned + unlink everything belonging to a package: the bare `.var`
+ * and its `.var.disabled` sibling at the package's own location (covers enabled,
+ * marker-disabled, and legacy suffix-disabled layouts — nested subfolders too),
+ * plus any stray root-level aliases (`<fn>` / `<fn>.disabled` in main) external
+ * tools may have left around. Each path is unlinked at most once. Caller is
+ * responsible for `deletePackage`. Effective only when caller wraps in
+ * `withBulkWindow`; single non-bulk uninstalls accept the watcher event (idempotent).
  */
 async function unlinkPackagePhysicalAndAliases(pkg, filename) {
   const physical = pkg ? pkgVarPath(pkg) : null
   const mainDir = getMainLibraryDirPath()
-  const targets = [physical]
+  const targets = []
+  if (physical) targets.push(physical, physical + '.disabled')
   if (mainDir) targets.push(join(mainDir, filename), join(mainDir, filename + '.disabled'))
   const seen = new Set()
   for (const p of targets) {
@@ -124,7 +127,7 @@ async function unlinkPackagePhysicalAndAliases(pkg, filename) {
  * the target end of the spectrum"), apply it via `applyStorageState`, and
  * cascade through `computeCascadeEnable / computeCascadeDisable` according
  * to the same intent. The `disable_behavior` setting decides whether disable
- * means `.var.disabled` in main or move-to-aux.
+ * means a VaM-native `.var.disabled` marker in main or move-to-aux.
  *
  * Returns the same shape on toggle and set-enabled so the renderer doesn't
  * branch: `{ ok, filename?, storageState?, cascadeCount?, unchanged?, error? }` per
@@ -709,7 +712,7 @@ export function registerPackageHandlers() {
   ipcMain.handle('packages:file-list', async (_, filename) => {
     const pkg = getPackageIndex().get(filename)
     if (!pkg) throw new Error(`Package not found: ${filename}`)
-    const varPath = pkgVarPath(pkg)
+    const varPath = await resolveContentPath(pkg)
     if (!varPath) throw new Error('Library directory not configured')
     await access(varPath)
     const { fileList } = await readVar(varPath)
@@ -801,6 +804,16 @@ export function registerPackageHandlers() {
         await unlinkPackagePhysicalAndAliases(pkg, filename)
         recordOwnedPath(finalPath)
         await rename(tempPath, finalPath)
+        // `finalPath` is always the bare `.var`, so the fresh content lands there.
+        // If the package was disabled, recreate the empty `.var.disabled` marker
+        // beside it (VaM-native marker layout) — otherwise the redownload would
+        // silently re-enable a package the user had disabled. This also normalizes
+        // a legacy suffix-disabled package to the marker layout on redownload.
+        if (pkg.storage_state === 'disabled') {
+          const markerPath = finalPath + '.disabled'
+          recordOwnedPath(markerPath)
+          await writeFile(markerPath, '')
+        }
       })
 
       // Clear corrupted flag and re-scan the package

@@ -16,7 +16,7 @@ import JSON5 from 'json5'
 import { isLocalPackage } from '@shared/local-package.js'
 import { extractFiles } from '../scanner/var-reader.js'
 import { getPackageIndex } from '../store.js'
-import { pkgVarPath } from '../library-dirs.js'
+import { resolveContentPath } from '../library-dirs.js'
 
 function thumbPathFor(internalPath) {
   return internalPath.replace(/\.json$/i, '.jpg')
@@ -56,7 +56,7 @@ export async function readScene({ vamDir, packageFilename, internalPath }) {
 
   if (packageFilename && !isLocalPackage(packageFilename)) {
     const pkg = getPackageIndex().get(packageFilename)
-    const varPath = pkgVarPath(pkg)
+    const varPath = await resolveContentPath(pkg)
     if (!varPath) throw new Error(`Package not found or library dir missing: ${packageFilename}`)
     const extracted = await extractFiles(varPath, [internalPath, thumbPath])
     const sceneBuf = extracted.get(internalPath)

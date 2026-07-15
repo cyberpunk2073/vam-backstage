@@ -9,7 +9,7 @@ import { getSetting, getContentThumbnailPath } from './db.js'
 import { extractFile, extractFiles } from './scanner/var-reader.js'
 import { getPackageIndex } from './store.js'
 import { pLimit } from './p-limit.js'
-import { pkgVarPath } from './library-dirs.js'
+import { pkgVarPath, resolveContentPath } from './library-dirs.js'
 
 const MAX_ENTRIES = 3000
 // Bounded concurrency for thumbnail jobs (companion-jpg reads, loose ct: reads,
@@ -54,9 +54,9 @@ async function tryReadFile(filePath) {
   }
 }
 
-function resolveVarPath(filename) {
+async function resolveVarPath(filename) {
   const pkg = getPackageIndex().get(filename)
-  return pkgVarPath(pkg) ?? null
+  return (await resolveContentPath(pkg)) ?? null
 }
 
 // Persist extracted thumbnails to thumb-cache/ so subsequent launches read a
@@ -265,8 +265,9 @@ export async function getThumbnails(keys) {
   }
 
   // First pass: classify the remaining (library) keys into job buckets. Group
-  // ct: keys by varPath so one yauzl open extracts every needed thumb from a
-  // given archive.
+  // ct: keys by canonical filename so one yauzl open extracts every needed thumb
+  // from a given archive. The physical `.var` path is resolved lazily, only if
+  // that archive actually has to be opened (see varPromises below).
   const pkgJobs = []
   const ctLooseJobs = []
   const varExtractions = new Map()
@@ -297,15 +298,10 @@ export async function getThumbnails(keys) {
         ctLooseJobs.push({ key, fullPath: join(vamDir, thumbPath) })
         continue
       }
-      const varPath = resolveVarPath(filename)
-      if (!varPath) {
-        setKey(key, null)
-        continue
-      }
-      let group = varExtractions.get(varPath)
+      let group = varExtractions.get(filename)
       if (!group) {
-        group = { filename, items: [] }
-        varExtractions.set(varPath, group)
+        group = { items: [] }
+        varExtractions.set(filename, group)
       }
       group.items.push({ key, internalPath: thumbPath })
     }
@@ -313,16 +309,17 @@ export async function getThumbnails(keys) {
 
   const pkgPromises = pkgJobs.map(({ key, filename }) =>
     limit(async () => {
-      // Resolve the package once (a missing/aux-relocated one contributes a null
-      // thumb rather than throwing). Companion .jpg lives next to the current
-      // physical .var (could be aux dir or `.var.disabled` in main).
+      // The companion .jpg and every cache lookup only need the *directory*, which
+      // is the same whether the bytes sit in the bare `.var` or a `.var.disabled`
+      // sibling — so use the nominal path (no disk probe). The physical byte path
+      // is resolved lazily below, only if we must open the archive.
       const pkg = getPackageIndex().get(filename)
-      const varPath = pkgVarPath(pkg) ?? null
+      const nominalPath = pkgVarPath(pkg) ?? null
 
       // 1. Companion .jpg next to the .var (always named with .var stem, never .disabled)
       let buf = null
-      if (varPath) {
-        buf = await tryReadFile(join(dirname(varPath), filename.replace(/\.var$/i, '.jpg')))
+      if (nominalPath) {
+        buf = await tryReadFile(join(dirname(nominalPath), filename.replace(/\.var$/i, '.jpg')))
       }
       // 2. Hub CDN icon (resolved by thumb-resolver), keyed by resource id and
       //    shared with wishlist cards for the same resource.
@@ -337,11 +334,14 @@ export async function getThumbnails(keys) {
         const internalPath = getContentThumbnailPath(filename)
         if (internalPath) {
           buf = await tryReadFile(join(thumbCacheDir, ctCacheFilename(filename, internalPath)))
-          if (!buf && varPath) {
-            try {
-              buf = await extractFile(varPath, internalPath)
-            } catch {}
-            if (buf) void persistCtThumb(thumbCacheDir, filename, internalPath, buf)
+          if (!buf) {
+            const varPath = await resolveContentPath(pkg)
+            if (varPath) {
+              try {
+                buf = await extractFile(varPath, internalPath)
+              } catch {}
+              if (buf) void persistCtThumb(thumbCacheDir, filename, internalPath, buf)
+            }
           }
         }
       }
@@ -356,11 +356,12 @@ export async function getThumbnails(keys) {
     }),
   )
 
-  const varPromises = [...varExtractions.entries()].map(([varPath, group]) =>
+  const varPromises = [...varExtractions.entries()].map(([filename, group]) =>
     limit(async () => {
-      const { filename, items } = group
+      const { items } = group
       // Disk-cache lookup first: any item whose extracted thumb is already
-      // persisted skips yauzl. If every item is cached, the .var never opens.
+      // persisted skips yauzl. If every item is cached, the .var never opens
+      // (and we never resolve its physical path — no disk probe on the hot path).
       const cacheReads = await Promise.all(
         items.map((it) => tryReadFile(join(thumbCacheDir, ctCacheFilename(filename, it.internalPath)))),
       )
@@ -372,6 +373,11 @@ export async function getThumbnails(keys) {
         else need.push(it)
       }
       if (need.length === 0) return
+      const varPath = await resolveVarPath(filename)
+      if (!varPath) {
+        for (const { key } of need) setKey(key, null)
+        return
+      }
       try {
         const paths = need.map((i) => i.internalPath)
         const extracted = await extractFiles(varPath, paths)

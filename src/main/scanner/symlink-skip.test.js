@@ -117,7 +117,7 @@ describe('collectVarCandidates — symlink skip', () => {
     expect(out).toHaveLength(0)
   })
 
-  it('within one directory bare .var wins over .var.disabled for the same canonical', async () => {
+  it('within one directory a bare .var and its .var.disabled sibling collapse to one candidate carrying both paths', async () => {
     readdir.mockImplementation(async (dir) => {
       if (dir === '/root') {
         return [dirent({ name: 'A.B.1.var.disabled', isFile: true }), dirent({ name: 'A.B.1.var', isFile: true })]
@@ -128,7 +128,8 @@ describe('collectVarCandidates — symlink skip', () => {
     await collectVarCandidates('/root', out, true)
     expect(out).toHaveLength(1)
     expect(out[0].canonical).toBe('A.B.1.var')
-    expect(out[0].isDisabled).toBe(false)
+    expect(out[0].barePath).toBe('/root/A.B.1.var')
+    expect(out[0].disabledPath).toBe('/root/A.B.1.var.disabled')
   })
 
   it('does not dedup across different dirs — both canonical copies appear', async () => {

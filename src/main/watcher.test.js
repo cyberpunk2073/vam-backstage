@@ -1,7 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { join } from 'path'
-import { mkdir, rename, readdir, writeFile, readFile } from 'fs/promises'
-import { mkTempVamDir, mkAuxDir, buildVar, placeVar, openTestDatabase } from '../../test/fixtures/index.js'
+import { mkdir, rename, readdir, writeFile, readFile, stat, unlink } from 'fs/promises'
+import {
+  mkTempVamDir,
+  mkAuxDir,
+  buildVar,
+  placeVar,
+  placeEmptyMarker,
+  openTestDatabase,
+} from '../../test/fixtures/index.js'
 import { runScan } from './scanner/index.js'
 import { closeDatabase, getAllPackages, insertLibraryDir, setSetting, setStorageState } from './db.js'
 import {
@@ -12,7 +19,7 @@ import {
   withBulkWindow,
   recordOwnedPath,
 } from './watcher.js'
-import { refreshLibraryDirs, pkgVarPath } from './library-dirs.js'
+import { refreshLibraryDirs, pkgVarPath, resolveContentPath } from './library-dirs.js'
 import { buildFromDb, getPackageIndex, getPrefsMap } from './store.js'
 import { applyStorageState } from './storage-state.js'
 import { ADDON_PACKAGES_FILE_PREFS } from '@shared/paths.js'
@@ -207,15 +214,35 @@ describe('applyStorageState — nested .var preserves its subfolder', () => {
     return sub
   }
 
-  it('disable renames in place to .var.disabled within the same subfolder', async () => {
+  it('disable drops an empty .var.disabled marker beside the bare file in the same subfolder', async () => {
     const sub = await seedNested()
     await applyStorageState('Sub.Pkg.1.var', { storageState: 'disabled', libraryDirId: null })
 
     const row = getAllPackages().find((r) => r.filename === 'Sub.Pkg.1.var')
     expect(row.storage_state).toBe('disabled')
+    // VaM-native marker layout: content stays in the bare .var.
+    expect(await resolveContentPath(row)).toBe(join(sub, 'Sub.Pkg.1.var'))
     expect(row.subpath).toBe('Creator/Bundle')
-    expect(await readdir(sub)).toContain('Sub.Pkg.1.var.disabled')
-    expect(pkgVarPath(getPackageIndex().get('Sub.Pkg.1.var'))).toBe(join(sub, 'Sub.Pkg.1.var.disabled'))
+    // Both the bare content and the empty marker sit side by side.
+    const onDisk = await readdir(sub)
+    expect(onDisk).toContain('Sub.Pkg.1.var')
+    expect(onDisk).toContain('Sub.Pkg.1.var.disabled')
+    const markerStat = await stat(join(sub, 'Sub.Pkg.1.var.disabled'))
+    expect(markerStat.size).toBe(0)
+    // pkgVarPath still resolves to the bare content, not the marker.
+    expect(pkgVarPath(getPackageIndex().get('Sub.Pkg.1.var'))).toBe(join(sub, 'Sub.Pkg.1.var'))
+  })
+
+  it('enable of a marker-disabled package deletes the marker and keeps the bare content', async () => {
+    const sub = await seedNested()
+    await applyStorageState('Sub.Pkg.1.var', { storageState: 'disabled', libraryDirId: null })
+    await applyStorageState('Sub.Pkg.1.var', { storageState: 'enabled', libraryDirId: null })
+
+    const row = getAllPackages().find((r) => r.filename === 'Sub.Pkg.1.var')
+    expect(row.storage_state).toBe('enabled')
+    const onDisk = await readdir(sub)
+    expect(onDisk).toContain('Sub.Pkg.1.var')
+    expect(onDisk).not.toContain('Sub.Pkg.1.var.disabled')
   })
 
   it('offload to an aux dir mirrors the subfolder, and enable restores it', async () => {
@@ -265,7 +292,7 @@ describe('applyStorageState — destination collision size guard', () => {
 
     await expect(
       applyStorageState('Guard.Pkg.1.var', { storageState: 'offloaded', libraryDirId: auxId }),
-    ).rejects.toThrow(/different file already exists at destination/)
+    ).rejects.toThrow(/different file already exists at the destination/)
 
     // Neither side was touched: source stays in main, foreign dest is intact.
     expect(await readdir(tmp.addonPackages)).toContain('Guard.Pkg.1.var')
@@ -293,6 +320,140 @@ describe('applyStorageState — destination collision size guard', () => {
     expect(row.library_dir_id).toBe(auxId)
     expect(await readdir(aux)).toContain('Guard.Pkg.1.var')
     expect(await readdir(tmp.addonPackages)).not.toContain('Guard.Pkg.1.var')
+  })
+
+  it('replaces an empty (0-byte) stub already at the destination', async () => {
+    await seedEnabled()
+    const aux = await mkAuxDir(tmp.vamDir)
+    const auxId = insertLibraryDir(aux)
+    refreshLibraryDirs()
+
+    // A 0-byte stub (leftover from an interrupted write / external `touch`) occupies
+    // the aux dest — it carries no content, so the offload should replace it.
+    const mainPath = join(tmp.addonPackages, 'Guard.Pkg.1.var')
+    const auxDest = join(aux, 'Guard.Pkg.1.var')
+    const realBytes = await readFile(mainPath)
+    await writeFile(auxDest, '')
+
+    await applyStorageState('Guard.Pkg.1.var', { storageState: 'offloaded', libraryDirId: auxId })
+
+    const row = getAllPackages().find((r) => r.filename === 'Guard.Pkg.1.var')
+    expect(row.storage_state).toBe('offloaded')
+    expect(row.library_dir_id).toBe(auxId)
+    // The real content bytes now live at the aux dest, the stub is gone.
+    expect(await readFile(auxDest)).toEqual(realBytes)
+    expect(await readdir(tmp.addonPackages)).not.toContain('Guard.Pkg.1.var')
+  })
+})
+
+describe('applyStorageState — marker vs suffix disable safety', () => {
+  async function seedMain(name, pkgMeta, opts) {
+    const buf = await buildVar({ meta: pkgMeta, files: { 'Saves/scene/s.json': '{"atoms":[]}' } })
+    await placeVar(tmp.addonPackages, name, buf, opts)
+    await runScan(tmp.vamDir)
+    buildFromDb()
+    return buf
+  }
+
+  it('enable of a legacy suffix-disabled package renames .var.disabled → bare .var', async () => {
+    await seedMain('Legacy.D.1.var', { packageName: 'Legacy.D', creator: 'L' }, { disabled: true })
+    // Content initially lives in the suffixed file (legacy rename layout).
+    expect(await resolveContentPath(getAllPackages().find((r) => r.filename === 'Legacy.D.1.var'))).toBe(
+      join(tmp.addonPackages, 'Legacy.D.1.var.disabled'),
+    )
+
+    await applyStorageState('Legacy.D.1.var', { storageState: 'enabled', libraryDirId: null })
+
+    const onDisk = await readdir(tmp.addonPackages)
+    expect(onDisk).toContain('Legacy.D.1.var')
+    expect(onDisk).not.toContain('Legacy.D.1.var.disabled')
+    const row = getAllPackages().find((r) => r.filename === 'Legacy.D.1.var')
+    expect(row.storage_state).toBe('enabled')
+    expect(await resolveContentPath(row)).toBe(join(tmp.addonPackages, 'Legacy.D.1.var'))
+  })
+
+  it('enable removes a byte-identical .var.disabled copy sitting beside the bare content', async () => {
+    const buf = await seedMain('Dup.En.1.var', { packageName: 'Dup.En', creator: 'D' })
+    // Drop a byte-identical .disabled copy beside the bare content, then reconcile.
+    await writeFile(join(tmp.addonPackages, 'Dup.En.1.var.disabled'), buf)
+    await runScan(tmp.vamDir)
+    buildFromDb()
+    expect(getAllPackages().find((r) => r.filename === 'Dup.En.1.var')?.storage_state).toBe('disabled')
+
+    await applyStorageState('Dup.En.1.var', { storageState: 'enabled', libraryDirId: null })
+
+    const onDisk = await readdir(tmp.addonPackages)
+    expect(onDisk).toContain('Dup.En.1.var')
+    expect(onDisk).not.toContain('Dup.En.1.var.disabled')
+    expect(getAllPackages().find((r) => r.filename === 'Dup.En.1.var')?.storage_state).toBe('enabled')
+  })
+
+  it('enable refuses (throws) when a different-size non-empty .var.disabled sits beside the bare content', async () => {
+    await seedMain('Amb.En.1.var', { packageName: 'Amb.En', creator: 'A' })
+    await writeFile(join(tmp.addonPackages, 'Amb.En.1.var.disabled'), 'totally different bytes, non-empty')
+    await runScan(tmp.vamDir)
+    buildFromDb()
+    // Classified as disabled (marker layout — content in the bare file).
+    expect(getAllPackages().find((r) => r.filename === 'Amb.En.1.var')?.storage_state).toBe('disabled')
+
+    await expect(applyStorageState('Amb.En.1.var', { storageState: 'enabled', libraryDirId: null })).rejects.toThrow(
+      /Refusing to remove/,
+    )
+
+    // Neither file destroyed.
+    const onDisk = await readdir(tmp.addonPackages)
+    expect(onDisk).toContain('Amb.En.1.var')
+    expect(onDisk).toContain('Amb.En.1.var.disabled')
+  })
+})
+
+describe('watcher.processBatch — VaM-native marker events', () => {
+  async function seedEnabled(name, pkgMeta) {
+    const buf = await buildVar({ meta: pkgMeta, files: { 'Saves/scene/s.json': '{"atoms":[]}' } })
+    await placeVar(tmp.addonPackages, name, buf)
+    await runScan(tmp.vamDir)
+    buildFromDb()
+    return buf
+  }
+
+  it('external .var.disabled marker add flips an enabled package to disabled (no re-read)', async () => {
+    await seedEnabled('Ext.M.1.var', { packageName: 'Ext.M', creator: 'E' })
+    const markerPath = await placeEmptyMarker(tmp.addonPackages, 'Ext.M.1.var')
+
+    __setProcessBatchStateForTests({
+      vamDir: tmp.vamDir,
+      packageEvents: [[markerPath, { type: 'add', libraryDirId: null }]],
+    })
+    await __processBatchForTests()
+
+    const row = getAllPackages().find((r) => r.filename === 'Ext.M.1.var')
+    expect(row.storage_state).toBe('disabled')
+    expect(await resolveContentPath(row)).toBe(join(tmp.addonPackages, 'Ext.M.1.var'))
+    // Bare content untouched.
+    expect(await readdir(tmp.addonPackages)).toContain('Ext.M.1.var')
+  })
+
+  it('external .var.disabled marker removal flips a disabled package back to enabled', async () => {
+    const buf = await buildVar({
+      meta: { packageName: 'Ext.E', creator: 'E' },
+      files: { 'Saves/scene/e.json': '{"atoms":[]}' },
+    })
+    await placeVar(tmp.addonPackages, 'Ext.E.1.var', buf, { marker: true })
+    await runScan(tmp.vamDir)
+    buildFromDb()
+    expect(getAllPackages().find((r) => r.filename === 'Ext.E.1.var')?.storage_state).toBe('disabled')
+
+    const markerPath = join(tmp.addonPackages, 'Ext.E.1.var.disabled')
+    await unlink(markerPath)
+    __setProcessBatchStateForTests({
+      vamDir: tmp.vamDir,
+      packageEvents: [[markerPath, { type: 'unlink', libraryDirId: null }]],
+    })
+    await __processBatchForTests()
+
+    const row = getAllPackages().find((r) => r.filename === 'Ext.E.1.var')
+    expect(row.storage_state).toBe('enabled')
+    expect(await resolveContentPath(row)).toBe(join(tmp.addonPackages, 'Ext.E.1.var'))
   })
 })
 
@@ -392,8 +553,14 @@ describe('watcher.processBatch — aux .var.disabled normalization', () => {
   })
 })
 
-describe('watcher.processBatch — cascade enable', () => {
-  it('newly enabled package cascade-enables disabled forward deps', async () => {
+// External (watcher-observed) changes never cascade state onto other packages:
+// enabling a parent by dropping its `.var` on disk must NOT re-enable/restore its
+// disabled or offloaded deps. That would race a peer app's own queued changes,
+// enable content the user may not want, and be a surprising side effect. Missing
+// deps just surface as "broken" in the graph. (App/user-initiated enables still
+// cascade — that path lives in ipc/packages.js and downloads/manager.js.)
+describe('watcher.processBatch — external adds never cascade', () => {
+  it('leaves a disabled forward dep disabled when its parent is added on disk', async () => {
     const depBuf = await buildVar({
       meta: { packageName: 'Dep.D', creator: 'D' },
       files: { 'Saves/scene/d1.json': '{"atoms":[]}' },
@@ -420,12 +587,13 @@ describe('watcher.processBatch — cascade enable', () => {
     })
     await __processBatchForTests()
 
+    // Parent itself is scanned + enabled, but the dep is untouched.
+    expect(getAllPackages().find((r) => r.filename === 'Par.P.1.var')?.storage_state).toBe('enabled')
     const dep = getAllPackages().find((r) => r.filename === 'Dep.D.1.var')
-    expect(dep?.storage_state).toBe('enabled')
-    expect(await readdir(tmp.addonPackages)).toContain('Dep.D.1.var')
+    expect(dep?.storage_state).toBe('disabled')
   })
 
-  it('cascade-enables offloaded deps', async () => {
+  it('leaves an offloaded forward dep offloaded when its parent is added on disk', async () => {
     const aux = await mkAuxDir(tmp.vamDir)
     const auxId = insertLibraryDir(aux)
     const depBuf = await buildVar({
@@ -455,11 +623,11 @@ describe('watcher.processBatch — cascade enable', () => {
     await __processBatchForTests()
 
     const dep = getAllPackages().find((r) => r.filename === 'DepOff.O.1.var')
-    expect(dep?.storage_state).toBe('enabled')
-    expect(dep?.library_dir_id).toBeNull()
+    expect(dep?.storage_state).toBe('offloaded')
+    expect(dep?.library_dir_id).toBe(auxId)
   })
 
-  it('does not cascade-enable when the new package state is disabled', async () => {
+  it('leaves a disabled dep disabled even when the added parent is itself disabled', async () => {
     const depBuf = await buildVar({
       meta: { packageName: 'DepX.X', creator: 'X' },
       files: { 'Saves/scene/dx.json': '{"atoms":[]}' },
@@ -485,7 +653,7 @@ describe('watcher.processBatch — cascade enable', () => {
     expect(getAllPackages().find((r) => r.filename === 'DepX.X.1.var')?.storage_state).toBe('disabled')
   })
 
-  it('does not cascade-enable when the new package state is offloaded', async () => {
+  it('leaves an offloaded dep offloaded even when the added parent is itself offloaded', async () => {
     const aux = await mkAuxDir(tmp.vamDir)
     const auxId = insertLibraryDir(aux)
     const depBuf = await buildVar({
@@ -516,7 +684,7 @@ describe('watcher.processBatch — cascade enable', () => {
     expect(getAllPackages().find((r) => r.filename === 'DepY.Y.1.var')?.storage_state).toBe('offloaded')
   })
 
-  it('batching: one cascade pass covers deps for multiple newly enabled roots', async () => {
+  it('leaves a shared dep disabled when multiple parents are added in one batch', async () => {
     const depBuf = await buildVar({
       meta: { packageName: 'Shared.S', creator: 'S' },
       files: { 'Saves/scene/s1.json': '{"atoms":[]}' },
@@ -547,7 +715,7 @@ describe('watcher.processBatch — cascade enable', () => {
     })
     await __processBatchForTests()
 
-    expect(getAllPackages().find((r) => r.filename === 'Shared.S.1.var')?.storage_state).toBe('enabled')
+    expect(getAllPackages().find((r) => r.filename === 'Shared.S.1.var')?.storage_state).toBe('disabled')
   })
 })
 

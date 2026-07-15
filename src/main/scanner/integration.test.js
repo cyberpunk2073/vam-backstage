@@ -1,9 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { readdir, writeFile, mkdir, rm, utimes, rename } from 'fs/promises'
 import { join } from 'path'
-import { mkTempVamDir, mkAuxDir, buildVar, placeVar, openTestDatabase } from '../../../test/fixtures/index.js'
+import {
+  mkTempVamDir,
+  mkAuxDir,
+  buildVar,
+  placeVar,
+  placeEmptyMarker,
+  openTestDatabase,
+} from '../../../test/fixtures/index.js'
 import { runScan } from './index.js'
 import { closeDatabase, getAllPackages, insertLibraryDir, setSetting, getAllContents } from '../db.js'
+import { resolveContentPath } from '../library-dirs.js'
 import { runLocalScan } from './local.js'
 import { LOCAL_PACKAGE_FILENAME } from '@shared/local-package.js'
 
@@ -50,10 +58,74 @@ describe('runScan — main library only', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0].storage_state).toBe('disabled')
     expect(rows[0].library_dir_id).toBeNull()
+    // Content lives in the suffixed file — resolved from disk on demand.
+    expect(await resolveContentPath(rows[0])).toBe(join(tmp.addonPackages, 'Author.Pkg.1.var.disabled'))
 
     // The on-disk suffix must NOT be normalized away in main.
     const onDisk = await readdir(tmp.addonPackages)
     expect(onDisk).toContain('Author.Pkg.1.var.disabled')
+  })
+
+  it('indexes a VaM-native marker (bare .var + empty .var.disabled) as disabled, content in bare', async () => {
+    const buf = await buildVar({
+      meta: { packageName: 'Marker.Pkg', creator: 'Marker' },
+      files: { 'Saves/scene/Demo.json': '{"atoms":[]}' },
+    })
+    await placeVar(tmp.addonPackages, 'Marker.Pkg.1.var', buf, { marker: true })
+
+    const result = await runScan(tmp.vamDir)
+    expect(result.added).toBe(1)
+
+    const row = getAllPackages().find((r) => r.filename === 'Marker.Pkg.1.var')
+    expect(row.storage_state).toBe('disabled')
+    // Content stays in the bare .var (marker layout).
+    expect(await resolveContentPath(row)).toBe(join(tmp.addonPackages, 'Marker.Pkg.1.var'))
+
+    // Both files remain untouched on disk — we never renamed the real package.
+    const onDisk = await readdir(tmp.addonPackages)
+    expect(onDisk).toContain('Marker.Pkg.1.var')
+    expect(onDisk).toContain('Marker.Pkg.1.var.disabled')
+  })
+
+  it('treats a bare .var beside a non-empty .var.disabled as disabled (content read from bare)', async () => {
+    const buf = await buildVar({
+      meta: { packageName: 'Mixed.Pkg', creator: 'Mixed' },
+      files: { 'Saves/scene/Demo.json': '{"atoms":[]}' },
+    })
+    // bare content + a non-empty (stale) .disabled sibling
+    await placeVar(tmp.addonPackages, 'Mixed.Pkg.1.var', buf)
+    await writeFile(join(tmp.addonPackages, 'Mixed.Pkg.1.var.disabled'), buf)
+
+    await runScan(tmp.vamDir)
+    const row = getAllPackages().find((r) => r.filename === 'Mixed.Pkg.1.var')
+    expect(row.storage_state).toBe('disabled')
+    // Content read from the bare .var (it holds bytes), not the stale suffix.
+    expect(await resolveContentPath(row)).toBe(join(tmp.addonPackages, 'Mixed.Pkg.1.var'))
+  })
+
+  it('skips a lone empty .var.disabled marker (no content anywhere)', async () => {
+    await placeEmptyMarker(tmp.addonPackages, 'Ghost.Pkg.1.var')
+    const result = await runScan(tmp.vamDir)
+    expect(result.added).toBe(0)
+    expect(getAllPackages().some((r) => r.filename === 'Ghost.Pkg.1.var')).toBe(false)
+  })
+
+  it('reconciles a marker added out-of-band (cache hit) to disabled without re-reading', async () => {
+    const buf = await buildVar({
+      meta: { packageName: 'Flip.Pkg', creator: 'Flip' },
+      files: { 'Saves/scene/f.json': '{"atoms":[]}' },
+    })
+    await placeVar(tmp.addonPackages, 'Flip.Pkg.1.var', buf)
+    await runScan(tmp.vamDir)
+    expect(getAllPackages().find((r) => r.filename === 'Flip.Pkg.1.var')?.storage_state).toBe('enabled')
+
+    // Drop an empty marker beside the (unchanged) bare file — mtime/size unchanged.
+    await placeEmptyMarker(tmp.addonPackages, 'Flip.Pkg.1.var')
+    const r = await runScan(tmp.vamDir)
+    expect(r.scanned).toBe(0) // stat cache hit — archive not re-read
+    const row = getAllPackages().find((r) => r.filename === 'Flip.Pkg.1.var')
+    expect(row.storage_state).toBe('disabled')
+    expect(await resolveContentPath(row)).toBe(join(tmp.addonPackages, 'Flip.Pkg.1.var'))
   })
 
   it('indexes a bare .var as storage_state="enabled"', async () => {

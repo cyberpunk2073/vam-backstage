@@ -1,9 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { join } from 'path'
-import { mkdir } from 'fs/promises'
+import { mkdir, writeFile } from 'fs/promises'
 import { mkTempVamDir, openTestDatabase } from '../../test/fixtures/index.js'
 import { closeDatabase, setSetting, insertLibraryDir } from './db.js'
-import { validateNewAuxDirPath, refreshLibraryDirs, pkgVarPath, libraryRelSubpath } from './library-dirs.js'
+import {
+  validateNewAuxDirPath,
+  refreshLibraryDirs,
+  pkgVarPath,
+  resolveContentPath,
+  libraryRelSubpath,
+} from './library-dirs.js'
 import { ADDON_PACKAGES_FILE_PREFS } from '@shared/paths.js'
 
 // Domain separation: an offload (aux) library dir may live anywhere *except*
@@ -108,7 +114,7 @@ describe('libraryRelSubpath', () => {
   })
 })
 
-describe('pkgVarPath — nested subpath resolution', () => {
+describe('pkgVarPath — nominal subpath resolution', () => {
   it('joins subpath for an enabled package in main', () => {
     const pkg = {
       filename: 'Author.Pkg.1.var',
@@ -119,9 +125,14 @@ describe('pkgVarPath — nested subpath resolution', () => {
     expect(pkgVarPath(pkg)).toBe(join(tmp.addonPackages, 'Author', 'Scenes', 'Author.Pkg.1.var'))
   })
 
-  it('appends .disabled at the nested location for a disabled package', () => {
-    const pkg = { filename: 'Author.Pkg.1.var', storage_state: 'disabled', library_dir_id: null, subpath: 'Author' }
-    expect(pkgVarPath(pkg)).toBe(join(tmp.addonPackages, 'Author', 'Author.Pkg.1.var.disabled'))
+  it('is always the bare canonical name, even for a disabled package', () => {
+    const pkg = {
+      filename: 'Author.Pkg.1.var',
+      storage_state: 'disabled',
+      library_dir_id: null,
+      subpath: 'Author',
+    }
+    expect(pkgVarPath(pkg)).toBe(join(tmp.addonPackages, 'Author', 'Author.Pkg.1.var'))
   })
 
   it('resolves nested subpath inside an aux/offload dir', () => {
@@ -135,5 +146,43 @@ describe('pkgVarPath — nested subpath resolution', () => {
   it('still works for a root-level package (empty subpath)', () => {
     const pkg = { filename: 'Author.Pkg.1.var', storage_state: 'enabled', library_dir_id: null, subpath: '' }
     expect(pkgVarPath(pkg)).toBe(join(tmp.addonPackages, 'Author.Pkg.1.var'))
+  })
+})
+
+// resolveContentPath reads the disk for disabled rows, so where the bytes
+// physically live (bare marker layout vs legacy `.var.disabled` suffix) is
+// re-derived on demand rather than cached in the DB.
+describe('resolveContentPath — physical byte location from disk', () => {
+  it('returns the nominal bare path for an enabled package (no disk probe needed)', async () => {
+    const dir = join(tmp.addonPackages, 'Author')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'Author.Pkg.1.var'), 'content')
+    const pkg = { filename: 'Author.Pkg.1.var', storage_state: 'enabled', library_dir_id: null, subpath: 'Author' }
+    expect(await resolveContentPath(pkg)).toBe(join(dir, 'Author.Pkg.1.var'))
+  })
+
+  it('returns the bare path for a marker-disabled package (bytes in the bare .var)', async () => {
+    const dir = join(tmp.addonPackages, 'Author')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'Author.Pkg.1.var'), 'content')
+    await writeFile(join(dir, 'Author.Pkg.1.var.disabled'), '') // empty marker
+    const pkg = { filename: 'Author.Pkg.1.var', storage_state: 'disabled', library_dir_id: null, subpath: 'Author' }
+    expect(await resolveContentPath(pkg)).toBe(join(dir, 'Author.Pkg.1.var'))
+  })
+
+  it('returns the .var.disabled path for a legacy suffix-disabled package (bytes in the suffix)', async () => {
+    const dir = join(tmp.addonPackages, 'Author')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'Author.Pkg.1.var.disabled'), 'content') // no bare sibling
+    const pkg = { filename: 'Author.Pkg.1.var', storage_state: 'disabled', library_dir_id: null, subpath: 'Author' }
+    expect(await resolveContentPath(pkg)).toBe(join(dir, 'Author.Pkg.1.var.disabled'))
+  })
+
+  it('returns the nominal aux path for an offloaded package without probing disk', async () => {
+    const auxPath = join(tmp.vamDir, '..', 'auxlib')
+    const auxId = insertLibraryDir(auxPath)
+    refreshLibraryDirs()
+    const pkg = { filename: 'Author.Pkg.1.var', storage_state: 'offloaded', library_dir_id: auxId, subpath: 'Sub' }
+    expect(await resolveContentPath(pkg)).toBe(join(auxPath, 'Sub', 'Author.Pkg.1.var'))
   })
 })

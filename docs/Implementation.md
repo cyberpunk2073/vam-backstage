@@ -13,7 +13,7 @@ VaM Backstage solves this by:
 - **Package removal with dependency cascade.** Uninstalling a package identifies orphan dependencies and optionally removes them.
 - **Custom labels.** User-defined colored tags on packages and individual content items, with Library/Content filters and inheritance on version upgrades.
 - **Preset extraction.** Write appearance/outfit presets from scenes (and convert legacy looks) into loose VaM files under `Custom/Atom/Person/.../extracted/`.
-- **Disable and offload.** Packages can be disabled (`.var.disabled` suffix) or offloaded to registered aux library directories on the same filesystem; disable behavior is configurable.
+- **Disable and offload.** Packages can be disabled in place (VaM-native: an empty `.var.disabled` marker beside the real `.var`) or offloaded to registered aux library directories on the same filesystem; disable behavior is configurable.
 - **Remote client/server mode.** One machine can host the library backend over LAN WebSocket while other instances connect as thin clients (`--connect=`).
 
 The application is built with Electron 39, React 19, SQLite (better-sqlite3), Zustand for state management, and Tailwind CSS v4 with shadcn/ui-style components (via the `shadcn` CLI and `radix-ui` primitives). It is JavaScript-only (no TypeScript). The UI is dark-only.
@@ -355,15 +355,16 @@ CREATE INDEX idx_packages_creator ON packages(creator);
 
 `storage_state` replaces the legacy `is_enabled` boolean (v21). It encodes three physical placements:
 
-| state       | location                                              | on-disk name (canonical) |
-| ----------- | ----------------------------------------------------- | ------------------------ |
-| `enabled`   | main `AddonPackages` (`library_dir_id IS NULL`)       | `Foo.1.var`              |
-| `disabled`  | main `AddonPackages` (`library_dir_id IS NULL`)       | `Foo.1.var.disabled`     |
-| `offloaded` | a registered aux library directory (`library_dir_id`) | `Foo.1.var`              |
+| state                      | location                                              | content bytes live in                                |
+| -------------------------- | ----------------------------------------------------- | ---------------------------------------------------- |
+| `enabled`                  | main `AddonPackages` (`library_dir_id IS NULL`)       | bare `Foo.1.var`                                     |
+| `disabled` (marker)        | main `AddonPackages` (`library_dir_id IS NULL`)       | bare `Foo.1.var` + empty `Foo.1.var.disabled` marker |
+| `disabled` (legacy suffix) | main `AddonPackages` (`library_dir_id IS NULL`)       | `Foo.1.var.disabled` (no bare sibling)               |
+| `offloaded`                | a registered aux library directory (`library_dir_id`) | bare `Foo.1.var`                                     |
 
-For dependency-graph purposes, `disabled` and `offloaded` behave identically (the package is unavailable to VaM at runtime). On-disk names are fully derived from `storage_state`: `disabled` carries the `.var.disabled` suffix; `enabled` and `offloaded` are suffix-less. All app-initiated transitions go through a single `applyStorageState` chokepoint that does `fs.rename`, DB update, in-memory patch, and watcher suppression atomically. Aux dirs must live on the same filesystem as main `AddonPackages` (validated by a probe-rename when the dir is registered), so a plain rename is always sufficient.
+For dependency-graph purposes, `disabled` and `offloaded` behave identically (the package is unavailable to VaM at runtime). Two on-disk encodings express "disabled" in main: VaM's native **marker** style keeps the real `Foo.1.var` in place beside an empty `Foo.1.var.disabled` sentinel (the marker's presence is the disable signal), while the **legacy suffix** style — used by older versions of this app and some external tools — renames the content to `Foo.1.var.disabled` with no bare sibling. We deliberately do **not** store which encoding a row uses: the DB keeps only the canonical bare `filename`, `storage_state`, and `subpath`. Where the content bytes physically live is re-derived from disk on demand by `resolveContentPath` (`src/main/library-dirs.js`), which probes the bare + `.disabled` sizes via `classifyMainVar` (`src/main/disable-layout.js`) for disabled rows and short-circuits to the nominal bare path for everything else. Reads that need the bytes are rare, one-off, and already touch the disk, so a couple of extra `stat`s cost nothing while keeping the disk the single source of truth — no cached column to go stale, and a future third scheme (e.g. Qvaro, which renames `Foo.1.var` → `Foo.1.DISABLED`) needs no migration, just another branch in the classifier. App-initiated disables always produce the marker style. All app-initiated transitions go through a single `applyStorageState` chokepoint that normalizes content to the bare name, reconciles the marker, updates the DB (`storage_state`, `library_dir_id`), patches memory, and suppresses the resulting watcher events atomically. Aux dirs must live on the same filesystem as main `AddonPackages` (validated by a probe-rename when the dir is registered), so a plain rename is always sufficient. Aux dirs are always suffix-less (offloaded == active); a stray `.var.disabled` there is normalized to bare `.var` on scan/add.
 
-A `.var` is valid anywhere under a library root, not only at the top level — VaM loads packages from any subfolder of `AddonPackages`. The `subpath` column records that relative folder (POSIX-style, `''` at the root); `pkgVarPath(pkg)` joins `library dir + subpath + filename(+ suffix)` so every reader/writer/deleter resolves nested files. `applyStorageState` preserves `subpath` across all transitions: an enabled/disabled flip renames in place inside the subfolder, and an offload mirrors the same relative subpath under the aux dir (creating it as needed), so an offload→enable round-trip is lossless. The scanner records `subpath` at discovery and reconciles it on a stat-cache hit (a same-bytes move into/out of a subfolder updates the column without re-reading the archive). The companion thumbnail (`Foo.1.jpg` next to `Foo.1.var`) is found via `dirname(pkgVarPath)`, so it tracks the package into subfolders for free.
+A `.var` is valid anywhere under a library root, not only at the top level — VaM loads packages from any subfolder of `AddonPackages`. The `subpath` column records that relative folder (POSIX-style, `''` at the root); `pkgVarPath(pkg)` joins `library dir + subpath + filename` to the nominal bare path (writers/deleters and the companion-thumbnail lookup use this), while `resolveContentPath(pkg)` layers the on-demand disk probe on top for readers that open the archive of a possibly suffix-disabled package. `applyStorageState` preserves `subpath` across all transitions: an enabled/disabled flip renames in place inside the subfolder, and an offload mirrors the same relative subpath under the aux dir (creating it as needed), so an offload→enable round-trip is lossless. The scanner records `subpath` at discovery and reconciles it on a stat-cache hit (a same-bytes move into/out of a subfolder updates the column without re-reading the archive). The companion thumbnail (`Foo.1.jpg` next to `Foo.1.var`) is found via `dirname(pkgVarPath)`, so it tracks the package into subfolders for free.
 
 ### `library_dirs` — Offload Library Directories
 
@@ -511,7 +512,7 @@ CREATE TABLE settings (
 - `hub_debug_requests` — `'1'` to log all Hub API requests
 - `hub_filters_json` — cached Hub filter metadata (types, tags, sort options)
 - `update_channel` — `'stable'` | `'dev'`; selects updater feed (see §23)
-- `disable_behavior` — `'suffix'` (rename to `.var.disabled` in main; default) or `'move-to:<auxDirId>'` (move to the named aux library directory). Removing the referenced aux dir resets this to `'suffix'`.
+- `disable_behavior` — `'suffix'` (VaM-native: drop an empty `.var.disabled` marker beside the bare `.var` in main; default) or `'move-to:<auxDirId>'` (move to the named aux library directory). Removing the referenced aux dir resets this to `'suffix'`.
 - `remote_mode_enabled` — `'1'` when the Settings remote section is enabled (server UI + optional auto-start).
 - `remote_serve_on_launch` — `'1'` to call `remote:start` automatically on startup when remote mode is enabled.
 
@@ -968,6 +969,7 @@ Events are debounced for 500ms and processed as a batch:
 - Removed files: Delete from database (CASCADE removes content rows)
 - After all changes: `buildFromDb()` to rebuild in-memory structures
 - Apply auto-hide rules to freshly-scanned packages via `computeAutoHidePathsForNewPackage` + `hidePackageContent` — same flow as `postDownloadIntegrate`, ensures externally-dropped `.var`s honor the foreign-hair / poses / clothing rules. Watcher-installed files are treated as `is_direct=1`, so the `deps` rule doesn't fire here.
+- **No cascade on external changes.** Enabling a package on disk (dropping its `.var`, or a peer app removing a `.var.disabled` marker) never cascade-enables its disabled/offloaded deps, and disabling never cascade-disables dependents. A watcher event is an unattended external change: silently flipping _other_ packages would race a peer app's own queued dep changes, enable content the user may not want, and be a surprising side effect. Unsatisfied deps simply show as "broken" in the graph. Cascade only happens on app/user-initiated transitions (`ipc/packages.js` toggle-enabled, `postDownloadIntegrate`). Freshly-scanned enabled packages are still Hub-enriched (metadata only, no state change).
 - Emit `packages:updated`, `contents:updated`
 
 **Prefs events** (sidecar add/remove):
@@ -1231,7 +1233,7 @@ User clicks "Disable" on package A
   ├─ Compute cascadeDisable(A) → {B, C}
   ├─ For each target: nextStorageStateForIntent(current, 'disable', disableTarget)
   │     disableTarget ← parseDisableBehavior(settings.disable_behavior)
-  │       'suffix'  → storage_state='disabled' in main (rename to .var.disabled)
+  │       'suffix'  → storage_state='disabled' in main (empty .var.disabled marker beside bare .var)
   │       'move-to:<id>' → storage_state='offloaded' in aux dir (bare .var)
   ├─ applyStorageState for A, B, C  (single chokepoint: fs.rename + DB + watcher suppression)
   ├─ In-mem: patchStorageState([A, B, C], …)

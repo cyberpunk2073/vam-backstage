@@ -3,37 +3,139 @@
  * package's physical location and on-disk name.
  *
  * Every caller that wants to enable/disable/offload a package goes through
- * here. It performs an `fs.rename` (aux dirs are guaranteed same-FS as main
- * by the registration probe in `ipc/library-dirs.js`), updates the DB row
- * (`storage_state` + `library_dir_id`), patches the in-memory store, and
- * registers both paths as app-owned with the watcher (effective only when
- * the caller wraps the bulk in `withBulkWindow`; outside a bulk window,
- * the watcher event is harmless because the cache check in `scanSingleVar`
- * sees matching mtime+size and skips re-ingest).
+ * here. It keeps the content bytes at the bare `.var` name and expresses
+ * "disabled" the VaM-native way — an empty `.var.disabled` marker beside the
+ * bare file — so disabling never renames content and enabling just removes the
+ * marker (no rename onto real content). Relocations (offload / restore-from-aux
+ * / legacy suffix→bare enable) use `fs.rename` guarded against overwriting a
+ * different file (aux dirs are guaranteed same-FS as main by the registration
+ * probe in `ipc/library-dirs.js`). It then updates the DB row (`storage_state`,
+ * `library_dir_id`), patches the in-memory store, and
+ * registers touched paths as app-owned with the watcher (effective only when
+ * the caller wraps the bulk in `withBulkWindow`; outside a bulk window, the
+ * watcher event is harmless because the cache check in `scanSingleVar` /
+ * marker reconciliation is idempotent).
  *
- * External (watcher-observed) state changes are reconciled separately by
- * `watcher.js` and never go through this function.
+ * Current on-disk location is resolved from the *filesystem*, not the cached
+ * row, so an external swap done while the app was off can't cause data loss —
+ * ambiguous states throw instead of guessing. External (watcher-observed) state
+ * changes are reconciled separately by `watcher.js`.
  */
 
-import { rename, mkdir, stat } from 'fs/promises'
+import { rename, mkdir, stat, lstat, unlink, writeFile } from 'fs/promises'
 import { join, dirname } from 'path'
 import { getPackageIndex, patchStorageState } from './store.js'
 import { setStorageState } from './db.js'
 import { recordOwnedPath } from './watcher.js'
-import { getLibraryDirPath, pkgVarPath } from './library-dirs.js'
+import { getLibraryDirPath, classifyMainVarOnDisk } from './library-dirs.js'
 import { isLocalPackage } from '@shared/local-package.js'
 import { STORAGE_STATES } from '@shared/storage-state-predicates.js'
 
 const VALID_STORAGE_STATES = new Set(STORAGE_STATES)
 
 /**
+ * Rename `from`→`to`, refusing to clobber anything unexpected already at `to`.
+ * `to` is always a bare `.var` content path (never a marker), so a file sitting
+ * there is only safe to replace when it's a plain regular file that is either:
+ *   - byte-identical in size to the source (a redundant copy of the same
+ *     content-addressed, immutable `.var`), or
+ *   - empty (a 0-byte stub/placeholder — a leftover from an interrupted write or
+ *     an external `touch` — which carries no content worth preserving).
+ * Anything else — a different-size file, or fs weirdness (symlink, junction,
+ * directory, device) — is refused rather than destroyed. We `lstat` (not `stat`)
+ * the destination so a symlink is caught as a symlink instead of being followed
+ * to its target's size: a link could otherwise report size 0 while pointing at
+ * real content. This guard applies to every relocating rename (enable-from-suffix,
+ * offload, restore-from-aux). Records both paths as app-owned.
+ */
+async function guardedRename(from, to) {
+  const [fromStat, toStat] = await Promise.all([stat(from).catch(() => null), lstat(to).catch(() => null)])
+  if (!fromStat) throw new Error(`Source file missing: ${from}`)
+  if (toStat) {
+    const replaceable = toStat.isFile() && (toStat.size === fromStat.size || toStat.size === 0)
+    if (!replaceable) {
+      throw new Error(
+        `Refusing to move ${from} → ${to}: a different file already exists at the destination ` +
+          `(${toStat.size} bytes vs source ${fromStat.size} bytes)`,
+      )
+    }
+  }
+  recordOwnedPath(from)
+  recordOwnedPath(to)
+  await mkdir(dirname(to), { recursive: true })
+  await rename(from, to)
+}
+
+/**
+ * Ensure an empty `.var.disabled` marker exists at `markerPath` (VaM-native
+ * disable). Idempotent when a 0-byte marker is already there. Throws if a
+ * *non-empty* file occupies the marker path — we never create content there, so
+ * that would be an unexpected on-disk state we won't silently overwrite.
+ * Returns whether a marker was newly created.
+ */
+async function ensureEmptyMarker(markerPath) {
+  const s = await stat(markerPath).catch(() => null)
+  if (s) {
+    if (s.size === 0) return false
+    throw new Error(`Refusing to mark disabled: unexpected non-empty file at ${markerPath} (${s.size} bytes)`)
+  }
+  recordOwnedPath(markerPath)
+  await writeFile(markerPath, '')
+  return true
+}
+
+/**
+ * Remove a `.var.disabled` marker/leftover in main without ever destroying real
+ * content. Deletes only when the file is empty (a marker) or byte-identical in
+ * size to the surviving content at `contentPath` (a redundant copy of the same
+ * content-addressed `.var`); anything else throws. No-op when absent. Returns
+ * whether a file was removed.
+ */
+async function removeDisabledMarker(markerPath, contentPath) {
+  const s = await stat(markerPath).catch(() => null)
+  if (!s) return false
+  if (s.size !== 0) {
+    const c = await stat(contentPath).catch(() => null)
+    if (!c || c.size !== s.size) {
+      throw new Error(
+        `Refusing to remove ${markerPath}: not an empty marker and not a byte-identical copy of ${contentPath}`,
+      )
+    }
+  }
+  recordOwnedPath(markerPath)
+  await unlink(markerPath)
+  return true
+}
+
+/**
+ * Resolve where the package's content bytes currently live, reading the real
+ * filesystem (not the cached row) so an external swap done while the app was off
+ * can't mislead us: we act on reality and throw on an ambiguous/absent state.
+ * Offloaded packages are always bare in their aux dir; main packages are
+ * classified from bare + `.disabled` sizes.
+ */
+async function resolveCurrentContentPath(pkg, mainBare) {
+  const subpath = pkg.subpath || ''
+  if (pkg.storage_state === 'offloaded') {
+    const auxDir = getLibraryDirPath(pkg.library_dir_id)
+    if (!auxDir) {
+      throw new Error(`Cannot resolve current path for ${pkg.filename} (library_dir_id=${pkg.library_dir_id})`)
+    }
+    return subpath ? join(auxDir, subpath, pkg.filename) : join(auxDir, pkg.filename)
+  }
+  const cls = await classifyMainVarOnDisk(mainBare)
+  if (!cls.present) throw new Error(`Source file missing for ${pkg.filename} in main (${mainBare})`)
+  return cls.contentPath
+}
+
+/**
  * @param {string} filename canonical .var filename (PK)
  * @param {{ storageState: 'enabled'|'disabled'|'offloaded', libraryDirId: number|null }} target
- * @returns {Promise<{ ok: boolean, fromPath: string|null, toPath: string, changed: boolean }>}
+ * @returns {Promise<{ ok: boolean, fromPath: string|null, toPath: string|null, changed: boolean }>}
  */
 export async function applyStorageState(filename, target) {
   // `__local__` is a synthetic sentinel package owning loose Saves/Custom content.
-  // It has no `.var` file on disk, so any rename here would ENOENT. Treat as a no-op.
+  // It has no `.var` file on disk, so any op here would ENOENT. Treat as a no-op.
   // Filter at the chokepoint so neither toggle/set-enabled nor download paths can
   // ever attempt to "enable" or "offload" loose content as if it were a package.
   if (isLocalPackage(filename)) return { ok: true, fromPath: null, toPath: null, changed: false }
@@ -50,15 +152,8 @@ export async function applyStorageState(filename, target) {
   const pkg = getPackageIndex().get(filename)
   if (!pkg) throw new Error(`Package not in store: ${filename}`)
 
-  const fromPath = pkgVarPath(pkg)
-  if (!fromPath) {
-    // pkgVarPath returns null when the package's library_dir_id points at a dir
-    // that's no longer registered. Refuse to operate — caller should treat this
-    // as a stale row that needs a rescan.
-    throw new Error(
-      `Cannot resolve current path for ${filename} (library_dir_id=${pkg.library_dir_id}); aux dir missing?`,
-    )
-  }
+  const mainDir = getLibraryDirPath(null)
+  if (!mainDir) throw new Error('Main library directory not configured')
   const targetDir = getLibraryDirPath(target.libraryDirId)
   if (!targetDir) throw new Error(`Library directory not configured for libraryDirId=${target.libraryDirId}`)
 
@@ -68,56 +163,41 @@ export async function applyStorageState(filename, target) {
   // dir — so toggles never silently flatten a curated folder layout, and an
   // offload→enable round-trip is lossless.
   const subpath = pkg.subpath || ''
-  // The on-disk suffix is implied by storage_state: `.disabled` only when storage_state
-  // is 'disabled' (and only ever in main, since aux dirs are always suffix-less).
-  const targetName = target.storageState === 'disabled' ? filename + '.disabled' : filename
-  const toPath = subpath ? join(targetDir, subpath, targetName) : join(targetDir, targetName)
+  const withSub = (dir) => (subpath ? join(dir, subpath) : dir)
+  const mainBare = join(withSub(mainDir), filename)
+  const mainMarker = mainBare + '.disabled'
 
-  // Already at target — nothing to do. In practice callers (toggle-enabled,
-  // postDownloadIntegrate) short-circuit no-ops upstream via nextStorageStateForIntent /
-  // computeInstallTarget returning null, so this is mostly defensive. (If memory
-  // disagrees with disk here it's a watcher-reconciliation responsibility, not ours.)
-  if (fromPath === toPath) return { ok: true, fromPath, toPath, changed: false }
+  const fromPath = await resolveCurrentContentPath(pkg, mainBare)
+  // Content always lands at the bare name in the target dir — we never rename to
+  // the suffix. Disabling instead drops an empty marker beside the bare file, so
+  // an app-driven disable is always the VaM-native marker layout.
+  const toPath = join(withSub(targetDir), filename)
 
-  // A file already sitting at the destination should be a byte-identical copy of the
-  // same canonical (content-addressed, immutable) `.var` — in which case rename safely
-  // replaces it. If sizes differ it's an unexpected, non-identical duplicate (stale,
-  // corrupt, or a foreign build sharing the filename); refuse rather than silently
-  // clobber it. Same-size proxy for equality mirrors `normalizeAuxDisabled`; missing
-  // source is left to the ENOENT branch below.
-  const [fromStat, toStat] = await Promise.all([stat(fromPath).catch(() => null), stat(toPath).catch(() => null)])
-  if (toStat && fromStat && toStat.size !== fromStat.size) {
-    throw new Error(
-      `Refusing to move ${filename}: a different file already exists at destination ` +
-        `(${toPath}: ${toStat.size} bytes vs source ${fromStat.size} bytes)`,
-    )
+  // 1. Move the bytes to the target's bare name if they aren't already there.
+  let moved = false
+  if (fromPath !== toPath) {
+    await guardedRename(fromPath, toPath)
+    moved = true
   }
 
-  recordOwnedPath(fromPath)
-  recordOwnedPath(toPath)
-
-  // The destination subfolder may not exist yet when offloading into a fresh aux
-  // dir (or restoring into a main subtree that was never created there). Creating
-  // it is idempotent for the common in-place enable/disable (dir already exists).
-  await mkdir(dirname(toPath), { recursive: true })
-
-  try {
-    await rename(fromPath, toPath)
-  } catch (err) {
-    if (err.code === 'ENOENT') {
-      throw new Error(`Source file missing for ${filename}: ${fromPath}`)
-    }
-    throw err
+  // 2. Reconcile the main-dir `.var.disabled` marker with the target state.
+  let markerChanged = false
+  if (target.storageState === 'disabled') {
+    markerChanged = await ensureEmptyMarker(mainMarker)
+  } else {
+    // enabled/offloaded: no marker may remain in main. For offload, `toPath` is
+    // the aux copy — a same-size main leftover is then an identical duplicate.
+    markerChanged = await removeDisabledMarker(mainMarker, toPath)
   }
 
-  // subpath is unchanged by the move (preserved above), but pass it through so the
-  // column is authoritative even on rows backfilled to '' before their first rescan.
+  // Every app-driven transition lands content in the bare name, so there is no
+  // on-disk-name to record — the physical path is re-derived from disk on demand.
   setStorageState(filename, target.storageState, target.libraryDirId ?? null, subpath)
   // Patch in-memory `packageIndex` row so the next `packages:list` reads the new
   // state without a full rebuild. Content rows reference the package via
   // `c.package` on the renderer and pick up the patched value on relink.
   patchStorageState([filename], target.storageState, target.libraryDirId ?? null)
-  return { ok: true, fromPath, toPath, changed: true }
+  return { ok: true, fromPath, toPath, changed: moved || markerChanged }
 }
 
 /**

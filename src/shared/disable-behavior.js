@@ -3,7 +3,10 @@
  *
  * Stored as a string so existing settings:get/set IPC plumbing carries it
  * unchanged. The two valid forms are:
- *  - `'suffix'` — VaM-native disable (rename to `.var.disabled` in main).
+ *  - `'suffix'` — VaM-native disable: keep the bare `.var` in main and drop an
+ *    empty `.var.disabled` marker beside it (the on-disk encoding is handled by
+ *    `applyStorageState`; see `src/main/disable-layout.js`). The `'suffix'` wire
+ *    value is kept for back-compat even though it no longer renames.
  *  - `'move-to:<auxDirId>'` — move to a registered aux library directory.
  *
  * Lives in `src/shared/` so both the main process (storage-state, IPC) and the
