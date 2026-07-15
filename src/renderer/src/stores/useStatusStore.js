@@ -5,6 +5,7 @@ export const useStatusStore = create((set) => ({
     directCount: 0,
     depCount: 0,
     totalCount: 0,
+    enabledCount: 0,
     brokenCount: 0,
     totalContent: 0,
     totalSize: 0,

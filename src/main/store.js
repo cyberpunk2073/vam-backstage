@@ -109,6 +109,7 @@ function emptyStats() {
     directCount: 0,
     depCount: 0,
     totalCount: 0,
+    enabledCount: 0,
     brokenCount: 0,
     totalContent: 0,
     totalSize: 0,
@@ -570,6 +571,7 @@ function computeStats() {
   let directCount = 0,
     depCount = 0,
     totalCount = 0,
+    enabledCount = 0,
     totalSize = 0,
     directSize = 0,
     depSize = 0,
@@ -578,6 +580,7 @@ function computeStats() {
 
   for (const [filename, pkg] of userPackageEntries()) {
     totalCount++
+    if (isPackageActive(pkg.storage_state)) enabledCount++
     if (pkg.is_direct) {
       directCount++
       directSize += pkg.size_bytes
@@ -606,6 +609,7 @@ function computeStats() {
     directCount,
     depCount,
     totalCount,
+    enabledCount,
     brokenCount,
     totalContent: contentItems.length,
     totalSize,

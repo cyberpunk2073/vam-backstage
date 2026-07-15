@@ -281,7 +281,7 @@ export default function StatusBar() {
   return (
     <div className="h-7 bg-surface border-t border-border flex items-center px-4 text-[11px] text-text-secondary/60 gap-4 shrink-0">
       <StatTooltip
-        lines={`${stats.directCount} installed\n${stats.depCount} dependencies\n${stats.totalCount} total installed`}
+        lines={`${stats.enabledCount} enabled\n${stats.directCount} installed\n${stats.depCount} dependencies\n${stats.totalCount} total installed`}
       >
         <span className="flex items-center gap-1">
           <Package size={11} />
