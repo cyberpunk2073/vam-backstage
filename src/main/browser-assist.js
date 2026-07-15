@@ -49,6 +49,58 @@ function sceneTagForPackageType(pt) {
 }
 
 /**
+ * Resolve label ids to display names, preserving first-seen order and skipping unknowns.
+ *
+ * @param {Iterable<number>} ids
+ * @returns {string[]}
+ */
+function labelNamesFromIds(ids) {
+  const names = []
+  const seenIds = new Set()
+  for (const id of ids) {
+    if (seenIds.has(id)) continue
+    seenIds.add(id)
+    const name = getLabelNameById(id)
+    if (name) names.push(name)
+  }
+  return names
+}
+
+/**
+ * Build a package-level lookup keyed by `lower(package_name)`.
+ *
+ * BrowserAssist stores package-wide tags as a resource with an empty
+ * `resourceFullFileName`. Multiple installed versions share that key (BA has no
+ * version axis), so label names are unioned across versions.
+ *
+ * Every indexed package gets an entry (possibly empty) so a later sync can strip
+ * stale `Label`-category tags when all labels were removed.
+ *
+ * @returns {Map<string, Set<string>>}
+ */
+function buildPackageLookup() {
+  const packageIndex = getPackageIndex()
+  const labelsByPackage = getLabelsByPackageMap()
+
+  const lookup = new Map()
+  for (const [filename, pkg] of packageIndex) {
+    const pkgName = typeof pkg.package_name === 'string' ? pkg.package_name : ''
+    if (!pkgName) continue
+    const pkgKey = pkgName.toLowerCase()
+
+    let entry = lookup.get(pkgKey)
+    if (!entry) {
+      entry = new Set()
+      lookup.set(pkgKey, entry)
+    }
+    for (const name of labelNamesFromIds(labelsByPackage.get(filename) || [])) {
+      entry.add(name)
+    }
+  }
+  return lookup
+}
+
+/**
  * Build a content lookup keyed by `lower(package_name) + '\0' + lower(internal_path)`.
  *
  * Each entry carries:
@@ -87,20 +139,7 @@ function buildContentLookup() {
       const key = pkgKey + '\0' + pathKey
 
       const ownIds = labelsByContent.get(filename + '\0' + item.internal_path) || []
-      const labelNames = []
-      const seenIds = new Set()
-      for (const id of inheritedIds) {
-        if (seenIds.has(id)) continue
-        seenIds.add(id)
-        const name = getLabelNameById(id)
-        if (name) labelNames.push(name)
-      }
-      for (const id of ownIds) {
-        if (seenIds.has(id)) continue
-        seenIds.add(id)
-        const name = getLabelNameById(id)
-        if (name) labelNames.push(name)
-      }
+      const labelNames = labelNamesFromIds([...inheritedIds, ...ownIds])
 
       const isSceneItem = item.type === 'scene' || item.type === 'legacyScene'
       const sceneType = isSceneItem ? pt : null
@@ -216,7 +255,8 @@ export async function syncBrowserAssistTags(vamDir) {
   }
 
   const shardFiles = names.filter((n) => /^VARResourcesData.*\.userData$/i.test(n)).sort()
-  const lookup = buildContentLookup()
+  const contentLookup = buildContentLookup()
+  const packageLookup = buildPackageLookup()
 
   for (const name of shardFiles) {
     const filePath = join(dir, name)
@@ -246,29 +286,39 @@ export async function syncBrowserAssistTags(vamDir) {
     let modified = false
     for (const res of resources) {
       if (!res || typeof res !== 'object') continue
-      const rawPath = res.resourceFullFileName
-      if (typeof rawPath !== 'string' || !rawPath) continue
-      const normPath = rawPath.replace(/\\/g, '/')
 
       const cName = typeof res.creatorName === 'string' ? res.creatorName : ''
       const pName = typeof res.packageName === 'string' ? res.packageName : ''
       if (!cName || !pName) continue
 
+      const rawPath = typeof res.resourceFullFileName === 'string' ? res.resourceFullFileName : ''
+      const normPath = rawPath.replace(/\\/g, '/').trim()
+      // Empty resourceFullFileName = package-level row (tags on the .var itself).
+      const isPackageLevel = !normPath
+
       resourcesScanned++
       const dbPackageName = `${cName}.${pName}`.toLowerCase()
-      const pathKey = normPath.toLowerCase()
-      const key = dbPackageName + '\0' + pathKey
-      const entry = lookup.get(key)
-      if (!entry) {
-        skippedNoMatch++
-        continue
-      }
 
       let nextTags = res.Tags
-      if (entry.sceneType && isSceneContentPath(normPath)) {
-        nextTags = mergeSceneUserTag(nextTags, sceneTagForPackageType(entry.sceneType))
+      if (isPackageLevel) {
+        const labelNames = packageLookup.get(dbPackageName)
+        if (!labelNames) {
+          skippedNoMatch++
+          continue
+        }
+        nextTags = mergeLabelTags(nextTags, [...labelNames])
+      } else {
+        const key = dbPackageName + '\0' + normPath.toLowerCase()
+        const entry = contentLookup.get(key)
+        if (!entry) {
+          skippedNoMatch++
+          continue
+        }
+        if (entry.sceneType && isSceneContentPath(normPath)) {
+          nextTags = mergeSceneUserTag(nextTags, sceneTagForPackageType(entry.sceneType))
+        }
+        nextTags = mergeLabelTags(nextTags, [...entry.labelNames])
       }
-      nextTags = mergeLabelTags(nextTags, [...entry.labelNames])
 
       if (shallowTagsEqual(res.Tags, nextTags)) continue
       res.Tags = nextTags

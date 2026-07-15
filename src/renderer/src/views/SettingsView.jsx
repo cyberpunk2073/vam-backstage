@@ -1000,9 +1000,9 @@ export default function SettingsView() {
                   <div>
                     <div className="text-xs text-text-primary font-medium">Sync with BrowserAssist</div>
                     <div className="text-[11px] text-text-tertiary mt-0.5">
-                      Write User tags (scene-real / scene-look / scene-other) plus user-defined Labels (own + inherited
-                      from package) into JayJayWon BrowserAssist settings for matching resources in this app&apos;s
-                      library.
+                      Write User tags (scene-real / scene-look / scene-other) plus user-defined Labels into JayJayWon
+                      BrowserAssist settings — package Labels onto package rows, and content Labels (own + inherited
+                      from package) onto matching resources in this app&apos;s library.
                     </div>
                   </div>
                   <div className="space-y-3">
