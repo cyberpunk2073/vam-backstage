@@ -2,7 +2,6 @@ import { createWriteStream } from 'fs'
 import { ipcMain, net } from 'electron'
 import { access, rename, unlink, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
-import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
 import {
   setPackageDirect,
   touchPackageFirstSeen,
@@ -778,7 +777,7 @@ export function registerPackageHandlers() {
 
     try {
       const res = await net.fetch(downloadUrl, {
-        headers: { 'User-Agent': HUB_HTTP_USER_AGENT, Cookie: 'vamhubconsent=yes' },
+        headers: { Cookie: 'vamhubconsent=yes' },
         redirect: 'follow',
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`)

@@ -18,7 +18,6 @@ import {
   isCommercialUseAllowed,
   isNonCommercialUseAllowed,
 } from '@shared/licenses.js'
-import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
 
 const API_URL = 'https://hub.virtamate.com/citizenx/api.php'
 
@@ -77,7 +76,6 @@ async function hubPost(body, { throwOnApiError = true } = {}) {
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      'User-Agent': HUB_HTTP_USER_AGENT,
     },
     body: JSON.stringify(payload),
   })

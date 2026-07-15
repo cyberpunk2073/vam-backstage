@@ -1,7 +1,6 @@
 import { net } from 'electron'
 import { randomUUID } from 'crypto'
 import { getSetting, setSetting } from '../db.js'
-import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
 
 const PACKAGES_JSON_URL = 'https://s3cdn.virtamate.com/data/packages.json'
 const DB_KEY_DATA = 'packages_json_data'
@@ -83,7 +82,7 @@ export async function fetchPackagesJson({ force = false } = {}) {
     try {
       const buster = randomUUID()
       const stored = getSetting(DB_KEY_ETAG)
-      const headers = { 'User-Agent': HUB_HTTP_USER_AGENT }
+      const headers = {}
       if (stored && !force && packagesIndex) headers['If-None-Match'] = stored
 
       const res = await net.fetch(`${PACKAGES_JSON_URL}?cb=${buster}`, { headers })

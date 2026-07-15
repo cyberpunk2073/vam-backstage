@@ -2,7 +2,6 @@ import { createWriteStream, constants as fsConstants } from 'fs'
 import { stat as fsStat, rename, unlink, mkdir, copyFile } from 'fs/promises'
 import { join, dirname } from 'path'
 import { randomUUID } from 'crypto'
-import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
 import { net } from 'electron'
 import { verifyZipFile } from '../var-stability.js'
 import { parseVarFilename, canonicalVarFilename } from '../scanner/var-reader.js'
@@ -943,7 +942,7 @@ async function startDownload(entry) {
     } catch {}
     transferState.bytesLoaded = existingBytes
 
-    const headers = { 'User-Agent': HUB_HTTP_USER_AGENT, Cookie: 'vamhubconsent=yes' }
+    const headers = { Cookie: 'vamhubconsent=yes' }
     if (existingBytes > 0) headers['Range'] = `bytes=${existingBytes}-`
 
     const res = await net.fetch(download_url, {

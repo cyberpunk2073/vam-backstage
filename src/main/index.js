@@ -25,6 +25,7 @@ import { startServer, stopServer } from './remote/server.js'
 import { getServePort, getConnectUrl } from './remote/cli.js'
 import { initAutostart, readAutostartUrl } from './remote/autostart.js'
 import { DEFAULT_REMOTE_PORT } from '@shared/remote-config.js'
+import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
 import {
   attachMainWindowStatePersistence,
   loadMainWindowState,
@@ -299,6 +300,16 @@ function createWindow() {
 }
 
 /**
+ * Identify programmatic Hub / CDN traffic as VaM Backstage. Applies to
+ * `net.fetch` and anything else on defaultSession. Leave `persist:hub` alone —
+ * the Hub webview and cookie-bound scrape requests must keep Electron's UA so
+ * Cloudflare's `cf_clearance` still matches.
+ */
+function installDefaultSessionUserAgent(ses = session.defaultSession) {
+  ses.setUserAgent(HUB_HTTP_USER_AGENT)
+}
+
+/**
  * The Hub serves .var downloads with a `content-disposition: attachment;
  * filename="<pkg>.var"` header, and package names can contain non-ASCII
  * characters (e.g. Chinese: `Qing.黑色符文（免费版）.1.var`). Electron's
@@ -351,6 +362,7 @@ function initBackend() {
   initLogForward(() => mainWindow)
   setupHubConsent()
   initHubAuthWatch()
+  installDefaultSessionUserAgent()
 
   // Client head: no local DB / scan / watcher / downloads. Everything data-side
   // is served by the remote instance over the transport.

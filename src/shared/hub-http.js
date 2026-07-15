@@ -1,4 +1,8 @@
-/** User-Agent for Hub and related HTTP requests from VaM Backstage. */
+/**
+ * User-Agent for programmatic Hub / CDN traffic from VaM Backstage.
+ * Applied once to `session.defaultSession` at startup (`index.js`).
+ * Hub webview + `persist:hub` keep Electron's UA (Cloudflare cookie binding).
+ */
 export const HUB_HTTP_USER_AGENT = 'VaMBackstage/1.0'
 
 /** Hub resource-icon CDN base. Icons are sharded into folders by floor(id/1000). */
