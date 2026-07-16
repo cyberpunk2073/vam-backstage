@@ -67,16 +67,6 @@ export const useDownloadStore = create((set, get) => ({
         liveProgress: { ...state.liveProgress, [data.id]: data },
       }))
     })
-
-    window.api.onDownloadFailed(({ packageRef, displayName, error }) => {
-      const label = (displayName && displayName.trim()) || packageRef || 'Download'
-      toast(error ? `Download failed: ${label} — ${error}` : `Download failed: ${label}`)
-    })
-
-    window.api.onInstallLookNoPreset(({ label, filename }) => {
-      const name = (label && String(label).trim()) || filename || 'Package'
-      toast(`No appearance preset in "${name}"`, 'info', 6000)
-    })
   },
 
   fetchItems: async () => {

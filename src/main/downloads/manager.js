@@ -28,7 +28,7 @@ import {
   setPackageHubMeta,
 } from '../db.js'
 import { getResourceDetail, getResourceDetailByName, getCachedDetail, findPackages } from '../hub/client.js'
-import { notify } from '../notify.js'
+import { notify, notifyToast } from '../notify.js'
 import { scanAndUpsert } from '../scanner/ingest.js'
 import { computeAutoHidePathsForNewPackage } from '../scanner/index.js'
 import { inheritFromOlderVersion } from '../scanner/inherit.js'
@@ -112,11 +112,8 @@ function emitUpdated() {
 }
 
 function emitFailed(entry, error) {
-  notify('download:failed', {
-    packageRef: entry.package_ref,
-    displayName: entry.display_name || null,
-    error: error || null,
-  })
+  const label = (entry.display_name && String(entry.display_name).trim()) || entry.package_ref || 'Download'
+  notifyToast(error ? `Download failed: ${label} — ${error}` : `Download failed: ${label}`)
 }
 
 function emitProgress(id, data) {
@@ -1252,7 +1249,8 @@ async function postDownloadIntegrate(filename, fullPath, isDirect, hubResourceId
     if (isDirect && packageHasNoLookPresetTag(filename)) {
       const pkg = getPackageIndex().get(filename)
       const label = pkg?.hub_display_name || pkg?.title || pkg?.package_name || filename
-      notify('install:look-no-preset', { filename, label })
+      const name = (label && String(label).trim()) || filename || 'Package'
+      notifyToast(`No appearance preset in "${name}"`, 'info', 6000)
     }
 
     notify('packages:updated')

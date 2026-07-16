@@ -22,10 +22,11 @@ export function notify(channel, data) {
  * Push a user-facing toast to the renderer (and any remote clients) over the
  * generic `toast` channel, so a main-process site can surface a message without
  * inventing a bespoke IPC event for it. `type` matches the renderer toast API
- * ('error' | 'success' | 'info'); `message` is shown verbatim.
+ * ('error' | 'success' | 'info'); `message` is shown verbatim. Optional
+ * `duration` (ms) is forwarded to the renderer toast helper.
  */
-export function notifyToast(message, type = 'error') {
-  notify('toast', { message, type })
+export function notifyToast(message, type = 'error', duration) {
+  notify('toast', { message, type, ...(duration != null ? { duration } : {}) })
 }
 
 /**

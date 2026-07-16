@@ -12,7 +12,7 @@ import { reconcileExtractedLifecycleAndResync } from './scenes/extracted-reconci
 import { runLocalScan } from './scanner/local.js'
 import { markPackageMissing, getPackageReconcileInfo, setStorageState } from './db.js'
 import { buildFromDb, getPrefsMap, setPrefsMap } from './store.js'
-import { notify } from './notify.js'
+import { notify, notifyToast } from './notify.js'
 import { enrichNewPackages } from './hub/scanner.js'
 import {
   getAllLibraryDirs,
@@ -593,7 +593,7 @@ async function processBatch() {
             }
           } catch (err) {
             console.warn(`Watcher: package event failed for`, canonical, err.message)
-            notify('scan:unreadable', { filename: canonical })
+            notifyToast(`Corrupted package skipped: ${canonical}`)
           }
         }
       }

@@ -102,11 +102,8 @@ export default function App() {
       void useLibraryStore.getState().refreshDetail()
       void useContentStore.getState().refreshSelection()
     })
-    const cleanupUnreadable = window.api.onScanUnreadable(({ filename }) => {
-      toast(`Corrupted package skipped: ${filename}`)
-    })
-    const cleanupToast = window.api.onToast(({ message, type }) => {
-      toast(message, type)
+    const cleanupToast = window.api.onToast(({ message, type, duration }) => {
+      toast(message, type, duration)
     })
     window.api.startup.consumeUnreadable().then((filenames) => {
       if (!filenames?.length) return
@@ -120,7 +117,6 @@ export default function App() {
       cleanupLabels()
       cleanupPackagesUpdated()
       cleanupContentsUpdated()
-      cleanupUnreadable()
       cleanupToast()
     }
   }, [])
