@@ -6,6 +6,16 @@ import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_DIRS, isLocalPackage } from '@sha
 import { recordOwnedPath, withBulkWindow } from './watcher.js'
 import { pLimit } from './p-limit.js'
 
+/**
+ * Drop a trailing `.disabled` marker, yielding the canonical (live) path. Loose
+ * sidecars and content labels bind to this path, so a preset's favorite/hidden
+ * flags survive the `.disabled` marker toggling on enable/disable. Exported for
+ * the watcher and label IPC, which key the same loose-content prefs.
+ */
+export function stripDisabledSuffix(p) {
+  return p.endsWith('.disabled') ? p.slice(0, -'.disabled'.length) : p
+}
+
 // Bounded concurrency for the per-package-stem sidecar walk. Each stem owns a
 // disjoint key range in the prefs Map (`pkgFilename/...`) so writes don't
 // race. Default libuv pool is 4 workers; 8 is 2× headroom for transient bursts
@@ -30,7 +40,11 @@ function prefsDir(vamDir) {
 
 function sidecarPath(vamDir, packageFilename, internalPath, ext) {
   if (isLocalPackage(packageFilename)) {
-    return join(vamDir, internalPath + ext)
+    // Loose sidecars sit next to the *live* file (`X.vap.fav`), never the
+    // `.disabled` marker form — favorites/hidden bind to the canonical path so a
+    // single sidecar serves both enabled and disabled states (and matches what
+    // VaM itself reads when the preset is live).
+    return join(vamDir, stripDisabledSuffix(internalPath) + ext)
   }
   const stem = packageFilename.replace(/\.var$/i, '')
   return join(prefsDir(vamDir), stem, internalPath + ext)
@@ -90,7 +104,13 @@ async function walkSidecarDir(dirPath, relativePath, keyPrefix, prefs, { require
     return
   }
 
-  const siblingFiles = requireSiblingTarget ? new Set(entries.filter((e) => e.isFile()).map((e) => e.name)) : null
+  // A sidecar is always canonical (`X.vap.fav`), but the content file it guards is
+  // renamed to `X.vap.disabled` while the preset is disabled. Strip the marker off
+  // the content filenames so a favorited-but-disabled preset's sidecar still finds
+  // its sibling instead of looking orphaned.
+  const siblingFiles = requireSiblingTarget
+    ? new Set(entries.filter((e) => e.isFile()).map((e) => stripDisabledSuffix(e.name)))
+    : null
 
   for (const entry of entries) {
     const relPath = relativePath ? relativePath + '/' + entry.name : entry.name
@@ -108,9 +128,9 @@ async function walkSidecarDir(dirPath, relativePath, keyPrefix, prefs, { require
 
     const ext = isHide ? '.hide' : '.fav'
     const targetName = entry.name.slice(0, -ext.length)
-    if (siblingFiles && !siblingFiles.has(targetName)) continue // orphaned sidecar
+    if (siblingFiles && !siblingFiles.has(stripDisabledSuffix(targetName))) continue // orphaned sidecar
 
-    const contentPath = relPath.slice(0, -ext.length)
+    const contentPath = stripDisabledSuffix(relPath.slice(0, -ext.length))
     const key = keyPrefix + '/' + contentPath
     if (!prefs.has(key)) prefs.set(key, { hidden: false, favorite: false })
     const p = prefs.get(key)
@@ -120,12 +140,16 @@ async function walkSidecarDir(dirPath, relativePath, keyPrefix, prefs, { require
 }
 
 /**
- * Set hidden state for a content item by creating/deleting the .hide sidecar.
+ * Create (or delete) a sidecar marker — an empty file whose existence encodes the
+ * flag. Sidecars bind to the canonical (live) path (see `sidecarPath`), so one
+ * file serves a preset in both its enabled and disabled states. Legacy `.disabled`
+ * sidecar forms are normalized away once at startup by `migrateLooseSidecarLayout`, so
+ * there's nothing extra to clean up here.
  */
-export async function setHidden(vamDir, packageFilename, internalPath, hidden) {
-  const p = sidecarPath(vamDir, packageFilename, internalPath, '.hide')
+async function setSidecar(vamDir, packageFilename, internalPath, ext, on) {
+  const p = sidecarPath(vamDir, packageFilename, internalPath, ext)
   recordOwnedPath(p)
-  if (hidden) {
+  if (on) {
     await mkdir(dirname(p), { recursive: true })
     await writeFile(p, '')
   } else {
@@ -136,19 +160,17 @@ export async function setHidden(vamDir, packageFilename, internalPath, hidden) {
 }
 
 /**
+ * Set hidden state for a content item by creating/deleting the .hide sidecar.
+ */
+export async function setHidden(vamDir, packageFilename, internalPath, hidden) {
+  return setSidecar(vamDir, packageFilename, internalPath, '.hide', hidden)
+}
+
+/**
  * Set favorite state for a content item by creating/deleting the .fav sidecar.
  */
 export async function setFavorite(vamDir, packageFilename, internalPath, favorite) {
-  const p = sidecarPath(vamDir, packageFilename, internalPath, '.fav')
-  recordOwnedPath(p)
-  if (favorite) {
-    await mkdir(dirname(p), { recursive: true })
-    await writeFile(p, '')
-  } else {
-    try {
-      await unlink(p)
-    } catch {}
-  }
+  return setSidecar(vamDir, packageFilename, internalPath, '.fav', favorite)
 }
 
 const BATCH_CONCURRENCY = 20

@@ -3,10 +3,16 @@ import { mkdir, writeFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join, dirname } from 'path'
 import { mkTempVamDir, openTestDatabase } from '../../../test/fixtures/index.js'
-import { closeDatabase, getDb } from '../db.js'
+import { LOCAL_PACKAGE_FILENAME } from '@shared/local-package.js'
+import { closeDatabase, getDb, findOrCreateLabel, applyLabelToContents, getAllLabelContents } from '../db.js'
 import { runLocalScan } from '../scanner/local.js'
-import { buildFromDb, getAllExtractedLocalItems } from '../store.js'
-import { reconcileExtractedLifecycle, deleteOrphanedExtractedPresets } from './extracted-reconcile.js'
+import { buildFromDb, getAllExtractedLocalItems, getLabelsByContentMap, setPrefsMap } from '../store.js'
+import { readAllPrefs } from '../vam-prefs.js'
+import {
+  reconcileExtractedLifecycle,
+  reconcileExtractedLifecycleAndResync,
+  deleteOrphanedExtractedPresets,
+} from './extracted-reconcile.js'
 
 // End-to-end against a real temp VaM dir + DB: a scene-source package owns a
 // loose extracted appearance preset (name derived by the store's ownership
@@ -132,6 +138,69 @@ describe('reconcileExtractedLifecycle', () => {
     const hit = await reconcileExtractedLifecycle({ vamDir: tmp.vamDir, filenames: new Set([PKG]) })
     expect(hit.changed).toBe(1)
     expect(disabled()).toBe(true)
+  })
+
+  it('keeps favorite across disable/enable — one canonical .vap.fav serves both states', async () => {
+    seedScenePackage(PKG)
+    await writePreset(PRESET)
+    await writeFile(join(tmp.vamDir, PRESET + '.fav'), '')
+    await resync()
+    setPrefsMap(await readAllPrefs(tmp.vamDir))
+    buildFromDb()
+    expect(getAllExtractedLocalItems()[0].favorite).toBe(true)
+    expect(existsSync(join(tmp.vamDir, PRESET + '.fav'))).toBe(true)
+
+    setPackageState(PKG, 'disabled')
+    buildFromDb()
+    const r1 = await reconcileExtractedLifecycleAndResync({ vamDir: tmp.vamDir })
+    expect(r1.changed).toBe(1)
+    expect(disabled()).toBe(true)
+    // Sidecar is not renamed — it stays on the canonical live stem.
+    expect(existsSync(join(tmp.vamDir, PRESET + '.fav'))).toBe(true)
+    expect(existsSync(join(tmp.vamDir, PRESET + '.disabled.fav'))).toBe(false)
+    const disabledItem = getAllExtractedLocalItems()[0]
+    expect(disabledItem.internal_path).toBe(PRESET + '.disabled')
+    expect(disabledItem.favorite).toBe(true)
+
+    setPackageState(PKG, 'enabled')
+    buildFromDb()
+    const r2 = await reconcileExtractedLifecycleAndResync({ vamDir: tmp.vamDir })
+    expect(r2.changed).toBe(1)
+    expect(live()).toBe(true)
+    expect(existsSync(join(tmp.vamDir, PRESET + '.fav'))).toBe(true)
+    expect(getAllExtractedLocalItems()[0].favorite).toBe(true)
+  })
+
+  it('keeps content labels across disable/enable — label row stays on the canonical path', async () => {
+    seedScenePackage(PKG)
+    await writePreset(PRESET)
+    await resync()
+    const { id: labelId } = findOrCreateLabel('Tagged')
+    applyLabelToContents(labelId, [{ packageFilename: LOCAL_PACKAGE_FILENAME, internalPath: PRESET }])
+    buildFromDb()
+    expect(getLabelsByContentMap().get(`${LOCAL_PACKAGE_FILENAME}\0${PRESET}`)).toEqual([labelId])
+
+    setPackageState(PKG, 'disabled')
+    buildFromDb()
+    const r1 = await reconcileExtractedLifecycleAndResync({ vamDir: tmp.vamDir })
+    expect(r1.changed).toBe(1)
+    expect(disabled()).toBe(true)
+    // Label row never moves; it stays keyed on the canonical (live) path and the
+    // disabled row still resolves it via canonical lookup.
+    expect(getAllLabelContents()).toEqual([
+      { label_id: labelId, package_filename: LOCAL_PACKAGE_FILENAME, internal_path: PRESET },
+    ])
+    expect(getLabelsByContentMap().get(`${LOCAL_PACKAGE_FILENAME}\0${PRESET}`)).toEqual([labelId])
+
+    setPackageState(PKG, 'enabled')
+    buildFromDb()
+    const r2 = await reconcileExtractedLifecycleAndResync({ vamDir: tmp.vamDir })
+    expect(r2.changed).toBe(1)
+    expect(live()).toBe(true)
+    expect(getAllLabelContents()).toEqual([
+      { label_id: labelId, package_filename: LOCAL_PACKAGE_FILENAME, internal_path: PRESET },
+    ])
+    expect(getLabelsByContentMap().get(`${LOCAL_PACKAGE_FILENAME}\0${PRESET}`)).toEqual([labelId])
   })
 })
 

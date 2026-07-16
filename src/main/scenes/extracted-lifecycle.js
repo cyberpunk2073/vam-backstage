@@ -12,23 +12,20 @@ export function liveExtractedPath(internalPath) {
   return internalPath.endsWith('.disabled') ? internalPath.slice(0, -'.disabled'.length) : internalPath
 }
 
-/** Sidecars renamed alongside the `.vap` so favorites/hidden survive a toggle. */
-const PRESET_SIDECARS = ['.hide', '.fav']
-
 /**
- * Rename plan (`{ from, to, optional }`, paths relative to the VaM dir) to move
- * a loose preset to the disabled (`disable=true`) or enabled state, carrying its
- * `.hide`/`.fav` sidecars. The first entry is the `.vap` itself (required); the
- * rest are optional sidecars. The `.jpg` thumbnail is intentionally left in
- * place — the classifier pairs it with the live stem either way.
+ * Rename plan (`{ from, to, optional }`, paths relative to the VaM dir) to move a
+ * loose preset to the disabled (`disable=true`) or enabled state. Only the `.vap`
+ * itself moves: the `.jpg` thumbnail and the `.hide`/`.fav` sidecars are left in
+ * place on the live stem, because settings bind to the canonical (live) path
+ * rather than the marker-bearing name — so a single `X.vap.fav`/`X.vap.hide`
+ * serves both states and nothing has to be migrated on a toggle. Returned as a
+ * one-entry list to keep the applier shape stable.
  */
 export function extractedRenamePlan(internalPath, disable) {
   const live = liveExtractedPath(internalPath)
   const from = disable ? live : live + '.disabled'
   const to = disable ? live + '.disabled' : live
-  const plan = [{ from, to, optional: false }]
-  for (const s of PRESET_SIDECARS) plan.push({ from: from + s, to: to + s, optional: true })
-  return plan
+  return [{ from, to, optional: false }]
 }
 
 /**

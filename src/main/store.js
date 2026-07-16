@@ -266,7 +266,9 @@ export function buildFromDb({ skipGraph = false } = {}) {
 
   const allContentItems = contentRows.map((row) => {
     const pkg = packageIndex.get(row.package_filename)
-    const prefsKey = row.package_filename + '/' + row.internal_path
+    // Prefs bind to the canonical (live) path, so a preset keeps its favorite/
+    // hidden state across the `.disabled` marker flipping on/off.
+    const prefsKey = row.package_filename + '/' + stripDisabledSuffix(row.internal_path)
     const prefs = prefsMap.get(prefsKey) || { hidden: false, favorite: false }
     return {
       ...row,
@@ -450,7 +452,10 @@ function buildLabels() {
   labelsByContent = new Map()
   for (const row of getAllLabelContents()) {
     if (!labelIndex.has(row.label_id)) continue
-    const key = row.package_filename + '\0' + row.internal_path
+    // Canonical key: content labels bind to the live path, so a preset's labels
+    // survive the `.disabled` marker toggling (and legacy `.disabled` rows fold
+    // onto the same key as their live counterpart).
+    const key = row.package_filename + '\0' + stripDisabledSuffix(row.internal_path)
     let arr = labelsByContent.get(key)
     if (!arr) {
       arr = []
@@ -712,7 +717,7 @@ export function setPrefsMap(map) {
   prefsMap = map
   for (const items of contentByPackage.values()) {
     for (const item of items) {
-      const key = item.package_filename + '/' + item.internal_path
+      const key = item.package_filename + '/' + stripDisabledSuffix(item.internal_path)
       const prefs = prefsMap.get(key) || { hidden: false, favorite: false }
       item.hidden = prefs.hidden
       item.favorite = prefs.favorite
@@ -721,7 +726,10 @@ export function setPrefsMap(map) {
 }
 
 export function updatePref(packageFilename, internalPath, field, value) {
-  const key = packageFilename + '/' + internalPath
+  // Prefs bind to the canonical (live) path — a disabled preset (`X.vap.disabled`)
+  // and its enabled form share one entry.
+  const canonicalPath = stripDisabledSuffix(internalPath)
+  const key = packageFilename + '/' + canonicalPath
   let entry = prefsMap.get(key)
   if (!entry) {
     entry = { hidden: false, favorite: false }
@@ -731,7 +739,7 @@ export function updatePref(packageFilename, internalPath, field, value) {
   const items = contentByPackage.get(packageFilename)
   if (!items) return
   for (const item of items) {
-    if (item.internal_path === internalPath) {
+    if (stripDisabledSuffix(item.internal_path) === canonicalPath) {
       item[field] = value
       break
     }
@@ -881,7 +889,7 @@ export function getPackageDetail(filename) {
     hidden: c.hidden,
     favorite: c.favorite,
     thumbnailPath: c.thumbnail_path,
-    ownLabelIds: labelsByContent.get(c.package_filename + '\0' + c.internal_path) || [],
+    ownLabelIds: labelsByContent.get(c.package_filename + '\0' + stripDisabledSuffix(c.internal_path)) || [],
     ...extra,
   })
 
@@ -973,7 +981,7 @@ export function getFilteredContents(filters = {}) {
         internalPath: c.internal_path,
         personAtomIdsJson: c.person_atom_ids,
       }),
-    ownLabelIds: labelsByContent.get(c.package_filename + '\0' + c.internal_path) || [],
+    ownLabelIds: labelsByContent.get(c.package_filename + '\0' + stripDisabledSuffix(c.internal_path)) || [],
   }))
 }
 

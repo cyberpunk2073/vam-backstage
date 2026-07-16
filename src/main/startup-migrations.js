@@ -1,4 +1,5 @@
 import { migrateThumbCacheLayout } from './thumb-cache-migrate.js'
+import { migrateLooseSidecarLayout } from './loose-sidecar-migrate.js'
 
 /**
  * Home for one-time, versioned upgrades that run once at boot (after the DB is
@@ -9,4 +10,5 @@ import { migrateThumbCacheLayout } from './thumb-cache-migrate.js'
  */
 export function runStartupMigrations() {
   migrateThumbCacheLayout()
+  migrateLooseSidecarLayout()
 }

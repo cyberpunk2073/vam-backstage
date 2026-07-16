@@ -333,6 +333,84 @@ describe('tombstones (soft delete)', () => {
       { package_filename: 'Keep.1.var', internal_path: 'Saves/scene/live.json' },
     ])
   })
+
+  it('does not prune a disabled loose preset label (canonical row backed by the .disabled contents row)', () => {
+    const db = getDb()
+    db.prepare(
+      `INSERT INTO packages (filename, creator, package_name, version, size_bytes, file_mtime) VALUES (?, '', '', '', 0, 0)`,
+    ).run(LOCAL_PACKAGE_FILENAME)
+    db.prepare(`INSERT INTO labels (id, name, color) VALUES (1, 'L', -1)`).run()
+    const applyLc = db.prepare(
+      `INSERT INTO label_contents (label_id, package_filename, internal_path) VALUES (1, ?, ?)`,
+    )
+    // A currently-disabled loose preset: label bound to the canonical path, but the
+    // contents row carries the `.disabled` marker — must NOT be treated as orphaned.
+    applyLc.run(LOCAL_PACKAGE_FILENAME, 'Custom/Atom/Person/Appearance/extracted/A.vap')
+    db.prepare(
+      `INSERT INTO contents (package_filename, internal_path, display_name, type) VALUES (?, ?, 'x', 'preset')`,
+    ).run(LOCAL_PACKAGE_FILENAME, 'Custom/Atom/Person/Appearance/extracted/A.vap.disabled')
+    // A genuinely orphaned local label (no backing contents at all) — still pruned.
+    applyLc.run(LOCAL_PACKAGE_FILENAME, 'Custom/Atom/Person/Appearance/extracted/B.vap')
+
+    expect(countOrphanContentLabels()).toBe(1) // only B
+    expect(forgetDeletedData().contentLabels).toBe(1)
+    expect(countOrphanContentLabels()).toBe(0)
+    expect(
+      db.prepare('SELECT internal_path FROM label_contents WHERE package_filename = ?').all(LOCAL_PACKAGE_FILENAME),
+    ).toEqual([{ internal_path: 'Custom/Atom/Person/Appearance/extracted/A.vap' }])
+  })
+})
+
+// ── v28 migration: normalize accidental `.disabled` content labels ─────────────
+//
+// Earlier builds stored a loose extracted preset's content label under whatever
+// path it had when applied, so labeling a *disabled* preset persisted a stale
+// `…/X.vap.disabled` row. migrate() to head folds those back onto the canonical
+// live path, merging into any existing canonical row; canonical local rows and
+// packaged rows are left untouched.
+
+describe('migrate v28 (normalize .disabled content labels)', () => {
+  beforeEach(async () => {
+    tmp = await mkTempVamDir()
+    // Seed a pre-v28 DB with the accidental marker rows, then migrate to head.
+    const raw = new Database(tmp.dbPath)
+    raw.exec(V22_SCHEMA_SQL)
+    raw.pragma('user_version = 22')
+    raw
+      .prepare(
+        `INSERT INTO packages (filename, creator, package_name, version, size_bytes, file_mtime)
+         VALUES (?, '', '', '', 0, 0), ('P.1.var', 'C', 'C.P', '1', 1, 0)`,
+      )
+      .run(LOCAL_PACKAGE_FILENAME)
+    raw.prepare(`INSERT INTO labels (id, name, color) VALUES (1, 'L', -1)`).run()
+    const ins = raw.prepare(`INSERT INTO label_contents (label_id, package_filename, internal_path) VALUES (?, ?, ?)`)
+    ins.run(1, LOCAL_PACKAGE_FILENAME, 'Custom/Atom/Person/Appearance/extracted/A.vap.disabled') // stale marker → folded
+    ins.run(1, LOCAL_PACKAGE_FILENAME, 'X.vap') // canonical already labeled
+    ins.run(1, LOCAL_PACKAGE_FILENAME, 'X.vap.disabled') // marker duplicate → merges into X.vap
+    ins.run(1, LOCAL_PACKAGE_FILENAME, 'Custom/keep.vap') // canonical local — untouched
+    ins.run(1, 'P.1.var', 'Saves/scene/weird.disabled') // packaged, out of scope — untouched
+    raw.close()
+
+    await openTestDatabase(tmp.dbPath)
+  })
+
+  it('folds `.disabled` local labels onto the live path and merges duplicates, leaving canonical + packaged rows alone', () => {
+    const rows = getDb()
+      .prepare(
+        'SELECT label_id, package_filename, internal_path FROM label_contents ORDER BY package_filename, internal_path',
+      )
+      .all()
+    expect(rows).toEqual([
+      { label_id: 1, package_filename: 'P.1.var', internal_path: 'Saves/scene/weird.disabled' },
+      {
+        label_id: 1,
+        package_filename: LOCAL_PACKAGE_FILENAME,
+        internal_path: 'Custom/Atom/Person/Appearance/extracted/A.vap',
+      },
+      { label_id: 1, package_filename: LOCAL_PACKAGE_FILENAME, internal_path: 'Custom/keep.vap' },
+      { label_id: 1, package_filename: LOCAL_PACKAGE_FILENAME, internal_path: 'X.vap' },
+    ])
+  })
 })
 
 // ── frozen v22 baseline + schema parity ────────────────────────────────────────

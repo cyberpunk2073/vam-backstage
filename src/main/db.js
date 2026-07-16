@@ -4,7 +4,7 @@ import { app } from 'electron'
 import { join } from 'path'
 import { LOCAL_PACKAGE_FILENAME, LOCAL_PACKAGE_DISPLAY_NAME } from '@shared/local-package.js'
 
-export const SCHEMA_VERSION = 27
+export const SCHEMA_VERSION = 28
 
 /**
  * Normalize a value to a non-negative integer string, or null. Hub resource/user
@@ -146,6 +146,7 @@ export const MIGRATIONS = [
   [25, applyV25],
   [26, applyV26],
   [27, applyV27],
+  [28, applyV28],
 ]
 
 function migrate() {
@@ -446,6 +447,27 @@ function applyV26() {
 function applyV27() {
   db.exec(`ALTER TABLE packages ADD COLUMN missing_since INTEGER`)
   db.exec(`CREATE INDEX IF NOT EXISTS idx_packages_missing_since ON packages(missing_since)`)
+}
+
+/**
+ * v28 — normalize accidental `.disabled` content labels (data-only, no schema
+ * change). Earlier builds keyed a loose extracted preset's content label on
+ * whatever path it had when applied, so labeling a *disabled* preset stored
+ * `…/X.vap.disabled`; labels now bind to the live path, orphaning those rows.
+ * Fold each `__local__` marker row onto its canonical path — merging into an
+ * existing canonical row (INSERT OR IGNORE), then dropping the marker row. Scoped
+ * to `__local__` because the `.disabled` marker only ever exists on loose presets.
+ */
+function applyV28() {
+  db.prepare(
+    `INSERT OR IGNORE INTO label_contents (label_id, package_filename, internal_path)
+       SELECT label_id, package_filename, substr(internal_path, 1, length(internal_path) - length('.disabled'))
+       FROM label_contents
+       WHERE package_filename = ? AND internal_path LIKE '%.disabled'`,
+  ).run(LOCAL_PACKAGE_FILENAME)
+  db.prepare(`DELETE FROM label_contents WHERE package_filename = ? AND internal_path LIKE '%.disabled'`).run(
+    LOCAL_PACKAGE_FILENAME,
+  )
 }
 
 /**
@@ -1238,10 +1260,17 @@ export function markPackagesMissing(filenames) {
 export function forgetDeletedData() {
   const tx = db.transaction(() => {
     const packages = stmt('DELETE FROM packages WHERE missing_since IS NOT NULL').run().changes
+    // Labels bind to the canonical (live) path, but a disabled loose preset's
+    // contents row keeps the `.disabled` marker (`X.vap` labeled ↔ `X.vap.disabled`
+    // on disk), so match that form too (scoped to `__local__`) — otherwise a merely
+    // disabled preset's label would look orphaned and get pruned.
     const contentLabels = stmt(
       `DELETE FROM label_contents WHERE NOT EXISTS (
          SELECT 1 FROM contents c
-         WHERE c.package_filename = label_contents.package_filename AND c.internal_path = label_contents.internal_path
+         WHERE c.package_filename = label_contents.package_filename
+           AND (c.internal_path = label_contents.internal_path
+                OR (label_contents.package_filename = '${LOCAL_PACKAGE_FILENAME}'
+                    AND c.internal_path = label_contents.internal_path || '.disabled'))
        )`,
     ).run().changes
     return { packages, contentLabels }
@@ -1256,10 +1285,15 @@ export function countMissingPackages() {
 
 /** Count of orphaned content labels (present package, internal_path no longer in `contents`) that `forgetDeletedData` would prune. */
 export function countOrphanContentLabels() {
+  // Canonical-path aware, matching forgetDeletedData: a disabled loose preset's
+  // canonical label row is backed by its `.disabled` contents row.
   return stmt(
     `SELECT COUNT(*) AS n FROM label_contents WHERE NOT EXISTS (
        SELECT 1 FROM contents c
-       WHERE c.package_filename = label_contents.package_filename AND c.internal_path = label_contents.internal_path
+       WHERE c.package_filename = label_contents.package_filename
+         AND (c.internal_path = label_contents.internal_path
+              OR (label_contents.package_filename = '${LOCAL_PACKAGE_FILENAME}'
+                  AND c.internal_path = label_contents.internal_path || '.disabled'))
      )`,
   ).get().n
 }

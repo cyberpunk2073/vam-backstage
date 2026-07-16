@@ -22,7 +22,7 @@ import {
   classifyMainVarOnDisk,
 } from './library-dirs.js'
 import { awaitStable } from './var-stability.js'
-import { hidePackageContent, readAllPrefs } from './vam-prefs.js'
+import { hidePackageContent, readAllPrefs, stripDisabledSuffix } from './vam-prefs.js'
 import { warmFileWatcherBackend } from './watcher-warm.js'
 
 const DEBOUNCE_MS = 500
@@ -742,7 +742,9 @@ async function processBatch() {
         try {
           const rel = relative(vamDirPath, fullPath).split(sep).join('/')
           const sidecarExt = extname(rel).toLowerCase()
-          const internalPath = rel.slice(0, -sidecarExt.length)
+          // Bind to the canonical (live) path so the flag tracks the preset
+          // across the `.disabled` marker toggling.
+          const internalPath = stripDisabledSuffix(rel.slice(0, -sidecarExt.length))
           const key = LOCAL_PACKAGE_FILENAME + '/' + internalPath
           let exists = false
           try {

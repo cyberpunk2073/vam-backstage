@@ -17,24 +17,20 @@ describe('liveExtractedPath', () => {
 })
 
 describe('extractedRenamePlan', () => {
-  it('disable: live -> .disabled, sidecars follow and are optional', () => {
-    expect(extractedRenamePlan(APP, true)).toEqual([
-      { from: APP, to: APP + '.disabled', optional: false },
-      { from: APP + '.hide', to: APP + '.disabled.hide', optional: true },
-      { from: APP + '.fav', to: APP + '.disabled.fav', optional: true },
-    ])
+  it('disable: only the .vap moves — sidecars stay on the canonical live stem', () => {
+    expect(extractedRenamePlan(APP, true)).toEqual([{ from: APP, to: APP + '.disabled', optional: false }])
   })
 
   it('enable: .disabled -> live regardless of the input form', () => {
     const fromDisabled = extractedRenamePlan(APP + '.disabled', false)
     const fromLive = extractedRenamePlan(APP, false)
     expect(fromDisabled).toEqual(fromLive)
-    expect(fromLive[0]).toEqual({ from: APP + '.disabled', to: APP, optional: false })
+    expect(fromLive).toEqual([{ from: APP + '.disabled', to: APP, optional: false }])
   })
 
-  it('does not include the .jpg thumbnail in the rename plan', () => {
+  it('does not rename the .jpg thumbnail or the .hide/.fav sidecars', () => {
     const froms = extractedRenamePlan(APP, true).map((p) => p.from)
-    expect(froms.some((f) => f.endsWith('.jpg'))).toBe(false)
+    expect(froms).toEqual([APP])
   })
 })
 

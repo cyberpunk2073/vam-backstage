@@ -12,9 +12,11 @@
  *     happened while the app was closed.
  *
  * A preset is disabled (`X.vap.disabled`) when no candidate version is active,
- * and enabled otherwise. Renames go through `recordOwnedPath` so the watcher
- * treats them as app-owned. Nothing here touches the DB/store — callers run
- * their own `runLocalScan`/`buildFromDb`/notify once we report a change.
+ * and enabled otherwise. Only the `.vap` (marker) is renamed; every user setting
+ * (labels, `.fav`/`.hide` prefs) binds to the canonical live path, so nothing
+ * has to be migrated on a toggle. Renames go through `recordOwnedPath` so the
+ * watcher treats them as app-owned. Nothing here touches the DB/store — callers
+ * run their own `runLocalScan`/`buildFromDb`/notify once we report a change.
  */
 
 import { join } from 'path'
@@ -46,10 +48,8 @@ async function renameLoose(vamDir, fromRel, toRel, { optional = false } = {}) {
 
 /** Apply the disable/enable rename plan for one loose preset (see extractedRenamePlan). */
 async function setExtractedPresetDisabled(vamDir, internalPath, disable) {
-  const [main, ...sidecars] = extractedRenamePlan(internalPath, disable)
-  if (!(await renameLoose(vamDir, main.from, main.to))) return false
-  for (const s of sidecars) await renameLoose(vamDir, s.from, s.to, { optional: true })
-  return true
+  const [main] = extractedRenamePlan(internalPath, disable)
+  return renameLoose(vamDir, main.from, main.to)
 }
 
 /** Iterate deduped extracted items claimed by any of `filenames`. */
@@ -102,10 +102,12 @@ export async function reconcileExtractedLifecycle({ vamDir, filenames = null } =
 /**
  * Commit an extracted-preset filesystem mutation (rename or unlink) to the store:
  * the change leaves the `__local__` content rows pointing at the stale path, so
- * when `count > 0` we rescan the loose dirs (updates internal_path + sidecar
- * prefs) and rebuild the store (`skipGraph` — preset moves never touch the
- * package graph). Announcing is left to the caller, whose notify strategy differs
- * (immediate `contents:updated`, a batched flag, or none mid-scan).
+ * when `count > 0` we rescan the loose dirs (updates `internal_path`) and rebuild
+ * the store (`skipGraph` — preset moves never touch the package graph). Prefs and
+ * labels bind to the canonical live path, so they need no migration here — the
+ * rebuild re-merges them onto the renamed row. Announcing is left to the caller,
+ * whose notify strategy differs (immediate `contents:updated`, a batched flag, or
+ * none mid-scan).
  */
 async function resyncLooseIfChanged(vamDir, count) {
   if (count > 0) {
