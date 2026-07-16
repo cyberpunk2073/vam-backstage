@@ -55,6 +55,8 @@ export const GRAPH_PARAM_DEFAULTS = {
 const initializer = (set) => ({
   warningDismissed: false,
   dismissWarning: () => set({ warningDismissed: true }),
+  frictionHintDismissed: false,
+  dismissFrictionHint: () => set({ frictionHintDismissed: true }),
   ...GRAPH_PARAM_DEFAULTS,
   setParam: (key, value) => set({ [key]: value }),
   resetParams: () => set({ ...GRAPH_PARAM_DEFAULTS }),
@@ -70,6 +72,7 @@ export const useGraphStore = create(
         initializer,
         persistViewState('graph-view', {
           warningDismissed: asBool,
+          frictionHintDismissed: asBool,
           // Only slider-backed knobs — gravity/center/collision/cluster stay at code defaults.
           repulsion: asClamped(0, 200),
           friction: asClamped(0, 1),

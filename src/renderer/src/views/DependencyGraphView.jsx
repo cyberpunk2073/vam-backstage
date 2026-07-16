@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Graph } from '@cosmos.gl/graph'
-import { Loader2, Maximize2, Play, Pause, AlertTriangle, X, RotateCcw } from 'lucide-react'
+import { Loader2, Maximize2, Play, Pause, AlertTriangle, X, RotateCcw, Lightbulb } from 'lucide-react'
 import { useGraphStore } from '@/stores/useGraphStore'
 
 /*
@@ -540,6 +540,8 @@ export default function DependencyGraphView() {
   const [running, setRunning] = useState(true)
   const warningDismissed = useGraphStore((s) => s.warningDismissed)
   const dismissWarning = useGraphStore((s) => s.dismissWarning)
+  const frictionHintDismissed = useGraphStore((s) => s.frictionHintDismissed)
+  const dismissFrictionHint = useGraphStore((s) => s.dismissFrictionHint)
   const setParam = useGraphStore((s) => s.setParam)
   const resetParams = useGraphStore((s) => s.resetParams)
   const params = useGraphStore(
@@ -981,6 +983,23 @@ export default function DependencyGraphView() {
           onChange={set('friction')}
           format={(v) => v.toFixed(2)}
         />
+        {!frictionHintDismissed && (
+          <div className="flex items-start gap-2 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1.5 text-text-tertiary leading-snug">
+            <Lightbulb size={12} className="mt-0.5 shrink-0 text-accent-blue/80" />
+            <span className="min-w-0 flex-1">
+              Tip: drag <span className="text-text-secondary">Friction</span> to 0 to let the layout settle, then pull
+              it back up to freeze things in place.
+            </span>
+            <button
+              type="button"
+              onClick={dismissFrictionHint}
+              title="Dismiss"
+              className="-mr-0.5 -mt-0.5 shrink-0 cursor-pointer rounded p-0.5 text-text-tertiary hover:bg-white/10 hover:text-text-primary"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
         <Slider
           label="Repulsion"
           value={params.repulsion}
