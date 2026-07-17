@@ -11,7 +11,7 @@ import HubDetail from '@/components/HubDetail'
 import FilterPanel, { sectionActive } from '@/components/FilterPanel'
 import { LICENSE_FILTER_OPTIONS, getHubResourceLicense } from '@/lib/licenses'
 import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
-import { wishlistSearchExtras } from '@/lib/search-text'
+import { WISHLIST_IS_FLAGS, wishlistFlags } from '@/lib/search-text'
 import { matchesPolarityList, matchesAuthorFilter, matchesLicenseFilter } from '@/lib/filter-match'
 import { SearchOnHubButton } from '@/components/SearchOnHubButton'
 import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
@@ -90,10 +90,12 @@ function wishlistPredicates({ search, type, tags, paid, author, excludedAuthors,
     search: (r) =>
       !tokens.length ||
       matchesSmartQuery(tokens, {
-        text: () => [r.title, r.username, r.tag_line, ...wishlistSearchExtras(r)],
+        text: () => [r.title, r.username, r.tag_line],
         author: () => r.username || '',
         tags: () => parseSnapshotTags(r),
         labels: () => [],
+        types: () => [r.type].filter(Boolean),
+        flags: () => wishlistFlags(r),
       }),
     type: (r) => type === 'All' || r.type === type,
     tags: (r) => matchesPolarityList(tagItems, parseSnapshotTags(r), { normalize: true }),
@@ -739,7 +741,15 @@ export default function HubView({ onNavigate }) {
         search={wishlistMode ? wlSearch : searchDraft}
         onSearchChange={wishlistMode ? setWlSearch : handleSearchChange}
         smartSearch={
-          wishlistMode ? { authors: wishlistFacets.authorCounts, tags: wishlistFacets.tagCounts, labels: [] } : null
+          wishlistMode
+            ? {
+                authors: wishlistFacets.authorCounts,
+                tags: wishlistFacets.tagCounts,
+                labels: [],
+                types: hubTypes,
+                flags: WISHLIST_IS_FLAGS,
+              }
+            : null
         }
         sections={wishlistMode ? wishlistSections : sections}
       />

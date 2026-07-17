@@ -60,7 +60,7 @@ export function sectionActive(section) {
 export default function FilterPanel({
   search,
   onSearchChange,
-  /** When set, the top search box becomes a sigil-aware smart bar (`@`/`#`/`%` + `-`/`!`). */
+  /** When set, the top search box becomes a sigil-aware smart bar (`@`/`#`/`%`/`^` + `key:` + `-`/`!`). */
   smartSearch = null,
   sections = [],
   defaultWidth = 220,
@@ -107,6 +107,9 @@ export default function FilterPanel({
                 authors={smartSearch.authors}
                 tags={smartSearch.tags}
                 labels={smartSearch.labels}
+                types={smartSearch.types}
+                pkgTypes={smartSearch.pkgTypes}
+                flags={smartSearch.flags}
                 placeholder={smartSearch.placeholder}
               />
             ) : (

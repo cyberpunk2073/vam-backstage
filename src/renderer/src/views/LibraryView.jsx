@@ -88,7 +88,7 @@ import { useLibraryUpdateState } from '@/hooks/useLibraryUpdateState'
 import { LICENSE_FILTER_OPTIONS } from '@/lib/licenses'
 import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
 import { matchesPolarityList, matchesAuthorFilter, matchesLicenseFilter, polarityScrollKey } from '@/lib/filter-match'
-import { haystacksMatchAllTerms, packageSearchExtras, searchAndTerms } from '@/lib/search-text'
+import { haystacksMatchAllTerms, LIBRARY_IS_FLAGS, libraryFlags, searchAndTerms } from '@/lib/search-text'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { LicenseTag } from '@/components/LicenseTag'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
@@ -310,18 +310,19 @@ export default function LibraryView({ onNavigate, navContext }) {
       const { tokens } = parseSmartQuery(search)
       result = result.filter((p) =>
         matchesSmartQuery(tokens, {
-          text: () => {
-            const rid = p.hubResourceId != null ? String(p.hubResourceId) : ''
-            return [
-              p.title,
-              p.packageName,
-              p.filename,
-              ...packageSearchExtras({ ...p, wishlisted: !!rid && wishlistIds.has(rid) }),
-            ]
-          },
+          text: () => [p.title, p.packageName, p.filename],
           author: () => p.creator || '',
           tags: () => packageHubTags(p),
           labels: () => (p.labelIds || []).map((id) => labelNameById.get(id)).filter(Boolean),
+          types: () => [libraryTypeBadgeLabel(p.type)],
+          flags: () => {
+            const rid = p.hubResourceId != null ? String(p.hubResourceId) : ''
+            return libraryFlags({
+              ...p,
+              wishlisted: !!rid && wishlistIds.has(rid),
+              broken: isBrokenPackage(p),
+            })
+          },
         }),
       )
     }
@@ -900,7 +901,13 @@ export default function LibraryView({ onNavigate, navContext }) {
       <FilterPanel
         search={search}
         onSearchChange={setSearch}
-        smartSearch={{ authors: authorCounts, tags: tagCounts, labels }}
+        smartSearch={{
+          authors: authorCounts,
+          tags: tagCounts,
+          labels,
+          types: LIBRARY_FILTER_TYPES,
+          flags: LIBRARY_IS_FLAGS,
+        }}
         sections={sections}
       />
 

@@ -11,28 +11,33 @@ const FIELD_CLASS = {
   author: 'text-accent-blue',
   tag: 'text-accent-purple',
   label: 'text-accent-pink',
+  type: 'text-accent-green',
+  pkg: 'text-accent-green',
+  is: 'text-accent-amber',
 }
 const NEGATE_CLASS = 'text-error'
 
-// Negation first, then field sigils. `field: null` → negation (red).
-// Colors mirror the in-field highlight.
+// Negation first, then field sigils / short keys. `field: null` → negation (red).
+// Colors mirror the in-field highlight. Entries with `needs` are gated on sources.
 const SYNTAX_LEGEND = [
   { sigil: '−', label: 'exclude', field: null },
   { sigil: '@', label: 'author', field: 'author' },
   { sigil: '#', label: 'tag', field: 'tag' },
-  { sigil: '%', label: 'label', field: 'label' },
+  { sigil: '%', label: 'label', field: 'label', needs: 'labels' },
+  { sigil: '^', label: 'type', field: 'type', needs: 'types' },
+  { sigil: 'pkg:', label: 'pkg type', field: 'pkg', needs: 'pkgTypes' },
+  { sigil: 'is:', label: 'flag', field: 'is', needs: 'flags' },
 ]
 
 function segmentClass(seg) {
   if (seg.kind === 'space') return ''
-  const bold = seg.kind === 'negate' || seg.kind === 'sigil'
+  const bold = seg.kind === 'negate' || seg.kind === 'sigil' || seg.kind === 'key'
   const color = seg.negate || seg.kind === 'negate' ? NEGATE_CLASS : FIELD_CLASS[seg.field] || ''
   return bold ? `${color} font-medium` : color
 }
 
-// One realistic query that shows a positive sigil, free text, and a negated
-// sigil combined — the tip renders it highlighted instead of listing every rule.
-const EXAMPLE_SEGMENTS = highlightSegments('@MacGruber hair -#nude')
+// One realistic query that shows a positive sigil, a type, and a negated flag.
+const EXAMPLE_SEGMENTS = highlightSegments('@MacGruber ^Scenes -is:broken')
 
 /**
  * Bar tokens are whitespace-delimited with no quotes, so multi-word values
@@ -57,10 +62,27 @@ function rankLabelSuggestions(labels, q, limit = 20) {
   return [...prefix, ...rest].slice(0, limit)
 }
 
+/** Prefix-then-substring rank for a closed string list (types, flags, …). */
+function rankEnum(names, q, limit = 20) {
+  const all = names || []
+  if (!q) {
+    return all.slice(0, limit).map((name) => ({ key: name, label: name }))
+  }
+  const prefix = []
+  const rest = []
+  for (const name of all) {
+    const lower = name.toLowerCase()
+    if (lower.startsWith(q)) prefix.push(name)
+    else if (lower.includes(q)) rest.push(name)
+  }
+  return [...prefix, ...rest].slice(0, limit).map((name) => ({ key: name, label: name }))
+}
+
 /**
- * Top-of-panel smart search: plain text + `@`/`#`/`%` field sigils + `-`/`!`
- * negation. Token-under-caret autocomplete and a progressive syntax tip share
- * the full-width slot below the input.
+ * Top-of-panel smart search: plain text + `@`/`#`/`%`/`^` field sigils +
+ * `key:` long forms (`author:`/`type:`/`is:`/…) + `-`/`!` negation.
+ * Token-under-caret autocomplete and a progressive syntax tip share the
+ * full-width slot below the input.
  */
 export function SmartSearchBar({
   value = '',
@@ -68,6 +90,9 @@ export function SmartSearchBar({
   authors = {},
   tags = {},
   labels = [],
+  types = null,
+  pkgTypes = null,
+  flags = null,
   placeholder = 'Search…',
 }) {
   const [caret, setCaret] = useState(0)
@@ -76,11 +101,30 @@ export function SmartSearchBar({
 
   const segments = useMemo(() => highlightSegments(value), [value])
   const active = useMemo(() => tokenAtCaret(value, caret), [value, caret])
-  const completing = !!(active?.completable && (active.field !== 'label' || (labels && labels.length > 0)))
+  const sources = useMemo(
+    () => ({
+      author: true,
+      tag: true,
+      label: !!(labels && labels.length),
+      type: !!(types && types.length),
+      pkg: !!(pkgTypes && pkgTypes.length),
+      is: !!(flags && flags.length),
+    }),
+    [labels, types, pkgTypes, flags],
+  )
+  const completing = !!(active?.completable && sources[active.field])
   const { hasSyntax } = useMemo(() => parseSmartQuery(value), [value])
   const legend = useMemo(
-    () => (labels?.length ? SYNTAX_LEGEND : SYNTAX_LEGEND.filter((x) => x.sigil !== '%')),
-    [labels],
+    () =>
+      SYNTAX_LEGEND.filter((x) => {
+        if (!x.needs) return true
+        if (x.needs === 'labels') return sources.label
+        if (x.needs === 'types') return sources.type
+        if (x.needs === 'pkgTypes') return sources.pkg
+        if (x.needs === 'flags') return sources.is
+        return true
+      }),
+    [sources],
   )
 
   const matches = useMemo(() => {
@@ -95,6 +139,9 @@ export function SmartSearchBar({
         disabled: !isSingleToken(l.name),
       }))
     }
+    if (active.field === 'type') return rankEnum(types, q)
+    if (active.field === 'pkg') return rankEnum(pkgTypes, q)
+    if (active.field === 'is') return rankEnum(flags, q)
     const source = active.field === 'author' ? authors : tags
     return rankSuggestions(source, q).map(([name, count]) => ({
       key: name,
@@ -102,7 +149,7 @@ export function SmartSearchBar({
       count,
       disabled: !isSingleToken(name),
     }))
-  }, [completing, active, authors, tags, labels])
+  }, [completing, active, authors, tags, labels, types, pkgTypes, flags])
 
   const pick = (name) => {
     if (!active) return
@@ -275,7 +322,9 @@ export function SmartSearchBar({
           <div className="flex flex-col gap-0.5 text-[11px]">
             {legend.map(({ sigil, label, field }) => (
               <div key={sigil} className="flex items-center gap-1.5">
-                <span className={`w-3 text-center font-medium opacity-80 ${field ? FIELD_CLASS[field] : NEGATE_CLASS}`}>
+                <span
+                  className={`min-w-3 text-center font-medium opacity-80 ${field ? FIELD_CLASS[field] : NEGATE_CLASS}`}
+                >
                   {sigil}
                 </span>
                 <span className="text-text-tertiary">{label}</span>

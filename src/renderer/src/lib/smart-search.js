@@ -1,15 +1,26 @@
-/** Sigil → field. Plain tokens (no sigil) are free-text. */
-export const SMART_SIGILS = {
-  '@': 'author',
-  '#': 'tag',
-  '%': 'label',
-}
+/**
+ * Field registry: each entry is a `key:` long form; optional `sigil` is a
+ * single-char shortcut. Plain tokens (no sigil / unknown key) are free-text.
+ */
+export const FIELDS = [
+  { key: 'author', sigil: '@', match: 'substring' },
+  { key: 'tag', sigil: '#', match: 'exact' },
+  { key: 'label', sigil: '%', match: 'exact' },
+  { key: 'type', sigil: '^', match: 'exact' },
+  { key: 'pkg', match: 'exact' },
+  { key: 'is', match: 'flag' },
+]
+
+/** Sigil → field key (derived). */
+export const SMART_SIGILS = Object.fromEntries(FIELDS.filter((f) => f.sigil).map((f) => [f.sigil, f.key]))
+
+const KEYS = new Set(FIELDS.map((f) => f.key))
 
 /**
  * Parse a smart-search query into AND-ed tokens.
- * `-`/`!` negate; `@`/`#`/`%` scope to author/tag/label; plain = free text.
- * Incomplete tokens (bare `-`, bare `#`, …) are skipped from `tokens` but still
- * flip `hasSyntax` so the UI tip can appear while typing a prefix.
+ * `-`/`!` negate; `@`/`#`/`%`/`^` or `key:` scope a field; plain = free text.
+ * Incomplete tokens (bare `-`, bare `#`, `is:`, …) are skipped from `tokens`
+ * but still flip `hasSyntax` so the UI tip can appear while typing a prefix.
  */
 export function parseSmartQuery(search) {
   const tokens = []
@@ -34,12 +45,26 @@ function parseToken(raw) {
     i = 1
   }
   let field = 'text'
-  const sigil = raw[i]
-  if (sigil && sigil in SMART_SIGILS) {
-    field = SMART_SIGILS[sigil]
+  let prefixLen = negate ? 1 : 0
+
+  const ch = raw[i]
+  if (ch && ch in SMART_SIGILS) {
+    field = SMART_SIGILS[ch]
     i += 1
+    prefixLen += 1
+  } else {
+    const rest = raw.slice(i)
+    const colon = rest.indexOf(':')
+    if (colon > 0) {
+      const key = rest.slice(0, colon).toLowerCase()
+      if (KEYS.has(key)) {
+        field = key
+        i += colon + 1
+        prefixLen += colon + 1
+      }
+    }
   }
-  return { negate, field, value: raw.slice(i).toLowerCase(), raw }
+  return { negate, field, value: raw.slice(i).toLowerCase(), raw, prefixLen }
 }
 
 /**
@@ -69,17 +94,16 @@ export function tokenAtCaret(text, caret) {
 
   const raw = s.slice(start, end)
   if (!raw) return null
-  const { negate, field, value } = parseToken(raw)
-  const prefixLen = (negate ? 1 : 0) + (field !== 'text' ? 1 : 0)
+  const { negate, field, value, prefixLen } = parseToken(raw)
   return {
     start,
     end,
     raw,
     negate,
     field,
-    /** Value after stripping -/! and sigil (may be empty while typing). */
+    /** Value after stripping -/! and sigil/key: (may be empty while typing). */
     query: value,
-    /** Leading `-`/`!` + sigil preserved when splicing a suggestion. */
+    /** Leading `-`/`!` + sigil or `key:` preserved when splicing a suggestion. */
     prefix: raw.slice(0, prefixLen),
     completable: field !== 'text',
   }
@@ -101,8 +125,9 @@ export function spliceToken(text, token, value) {
  * 1:1 over the input text. Segment `kind`:
  *   'space'  → run of whitespace
  *   'negate' → a leading `-` / `!`
- *   'sigil'  → a field sigil (`@`/`#`/`%`), with `field`
- *   'value'  → the value after a sigil, with `field`
+ *   'sigil'  → a field sigil (`@`/`#`/`%`/`^`), with `field`
+ *   'key'    → a `key:` run, with `field`
+ *   'value'  → the value after a sigil/key, with `field`
  *   'text'   → plain free-text
  */
 export function highlightSegments(text) {
@@ -119,13 +144,24 @@ export function highlightSegments(text) {
       out.push({ text: part[0], kind: 'negate' })
       i = 1
     }
-    const field = SMART_SIGILS[part[i]]
-    if (field) {
-      out.push({ text: part[i], kind: 'sigil', field, negate })
+    const ch = part[i]
+    if (ch && ch in SMART_SIGILS) {
+      const field = SMART_SIGILS[ch]
+      out.push({ text: ch, kind: 'sigil', field, negate })
       const value = part.slice(i + 1)
       if (value) out.push({ text: value, kind: 'value', field, negate })
     } else {
       const rest = part.slice(i)
+      const colon = rest.indexOf(':')
+      if (colon > 0) {
+        const key = rest.slice(0, colon).toLowerCase()
+        if (KEYS.has(key)) {
+          out.push({ text: rest.slice(0, colon + 1), kind: 'key', field: key, negate })
+          const value = rest.slice(colon + 1)
+          if (value) out.push({ text: value, kind: 'value', field: key, negate })
+          continue
+        }
+      }
       if (rest) out.push({ text: rest, kind: 'text', negate })
     }
   }
@@ -135,10 +171,13 @@ export function highlightSegments(text) {
 /**
  * Match an item against parsed smart-search tokens (implicit AND).
  * `get` supplies field accessors (called lazily per token):
- *   text()   → string[] haystacks
- *   author() → string
- *   tags()   → string[] already-lowercased tag names
- *   labels() → string[] label names (any case)
+ *   text()     → string[] haystacks
+ *   author()   → string
+ *   tags()     → string[] already-lowercased tag names
+ *   labels()   → string[] label names (any case)
+ *   types()    → string[] type labels (any case)
+ *   pkgTypes() → string[] package-type labels (any case)
+ *   flags()    → string[] already-lowercased flag names
  */
 export function matchesSmartQuery(tokens, get) {
   if (!tokens?.length) return true
@@ -153,6 +192,12 @@ export function matchesSmartQuery(tokens, get) {
       hit = (get.tags?.() || []).includes(value)
     } else if (field === 'label') {
       hit = (get.labels?.() || []).some((n) => (n || '').toLowerCase() === value)
+    } else if (field === 'type') {
+      hit = (get.types?.() || []).some((t) => (t || '').toLowerCase() === value)
+    } else if (field === 'pkg') {
+      hit = (get.pkgTypes?.() || []).some((t) => (t || '').toLowerCase() === value)
+    } else if (field === 'is') {
+      hit = (get.flags?.() || []).includes(value)
     }
     if (negate ? hit : !hit) return false
   }

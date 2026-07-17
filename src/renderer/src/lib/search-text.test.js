@@ -1,67 +1,75 @@
 import { describe, expect, it } from 'vitest'
-import { contentSearchExtras, packageSearchExtras, wishlistSearchExtras } from './search-text.js'
+import { contentFlags, libraryFlags, wishlistFlags } from './search-text.js'
 
-describe('packageSearchExtras', () => {
-  it('splits no preset vs extracted by checkmark state', () => {
+describe('libraryFlags', () => {
+  it('splits nopreset vs extracted by checkmark state', () => {
     expect(
-      packageSearchExtras({
+      libraryFlags({
         noLookPresetTag: true,
         hasExtractedAppearancePreset: false,
       }),
-    ).toEqual(['no preset'])
+    ).toEqual(['nopreset'])
     expect(
-      packageSearchExtras({
+      libraryFlags({
         noLookPresetTag: true,
         hasExtractedAppearancePreset: true,
       }),
     ).toEqual(['extracted'])
   })
 
-  it('includes corrupted when the package is corrupted', () => {
-    expect(packageSearchExtras({ isCorrupted: true })).toEqual(['corrupted'])
+  it('includes corrupted / broken / wishlist / favorite when set', () => {
+    expect(libraryFlags({ isCorrupted: true })).toEqual(['corrupted'])
+    expect(libraryFlags({ broken: true })).toEqual(['broken'])
+    expect(libraryFlags({ wishlisted: true })).toEqual(['wishlist'])
+    expect(libraryFlags({ favoriteContentCount: 1 })).toEqual(['favorite'])
+    expect(libraryFlags({ favoriteContentCount: 0 })).toEqual([])
   })
 
-  it('includes favorite when the package has favorited content', () => {
-    expect(packageSearchExtras({ favoriteContentCount: 1 })).toEqual(['favorite'])
-    expect(packageSearchExtras({ favoriteContentCount: 3 })).toEqual(['favorite'])
-    expect(packageSearchExtras({ favoriteContentCount: 0 })).toEqual([])
-  })
-
-  it('includes wishlist when the package is on the Hub wishlist', () => {
-    expect(packageSearchExtras({ wishlisted: true })).toEqual(['wishlist'])
-    expect(packageSearchExtras({ wishlisted: false })).toEqual([])
+  it('includes storage and status flags', () => {
+    expect(libraryFlags({ storageState: 'disabled' })).toEqual(['disabled'])
+    expect(libraryFlags({ storageState: 'offloaded' })).toEqual(['offloaded'])
+    expect(libraryFlags({ isOrphan: true })).toEqual(['orphan'])
+    expect(libraryFlags({ isLocalOnly: true })).toEqual(['local'])
   })
 
   it('returns nothing for an ordinary package', () => {
-    expect(packageSearchExtras({})).toEqual([])
+    expect(libraryFlags({})).toEqual([])
   })
 })
 
-describe('contentSearchExtras', () => {
-  it('includes subtype tag labels', () => {
-    expect(contentSearchExtras({ tag: { label: 'Legacy' } })).toEqual(['Legacy'])
-    expect(contentSearchExtras({ tag: { label: 'Preset' } })).toEqual(['Preset'])
-    expect(contentSearchExtras({ tag: { label: 'Skin Preset' } })).toEqual(['Skin Preset'])
+describe('contentFlags', () => {
+  it('includes favorite / hidden / extracted', () => {
+    expect(contentFlags({ favorite: true })).toEqual(['favorite'])
+    expect(contentFlags({ hidden: true })).toEqual(['hidden'])
+    expect(contentFlags({ extractedFrom: 'Author.Pkg.1.var' })).toEqual(['extracted'])
+    expect(contentFlags({ hasExtractedAppearancePreset: true })).toEqual(['extracted'])
   })
 
-  it('includes extracted for loose extracted presets and legacy looks with a checkmark', () => {
-    expect(contentSearchExtras({ extractedFrom: 'Author.Pkg.1.var' })).toEqual(['extracted'])
-    expect(contentSearchExtras({ hasExtractedAppearancePreset: true })).toEqual(['extracted'])
+  it('normalizes subtype tag labels to single-token flags', () => {
+    expect(contentFlags({ tag: { label: 'Legacy' } })).toEqual(['legacy'])
+    expect(contentFlags({ tag: { label: 'Preset' } })).toEqual(['preset'])
+    expect(contentFlags({ tag: { label: 'Skin Preset' } })).toEqual(['skinpreset'])
   })
 
   it('combines tag + extracted without duplicating', () => {
     expect(
-      contentSearchExtras({
+      contentFlags({
         tag: { label: 'Legacy' },
         hasExtractedAppearancePreset: true,
       }),
-    ).toEqual(['Legacy', 'extracted'])
+    ).toEqual(['extracted', 'legacy'])
   })
 })
 
-describe('wishlistSearchExtras', () => {
+describe('wishlistFlags', () => {
   it('includes unavailable when the hub snapshot is gone', () => {
-    expect(wishlistSearchExtras({ _unavailable: true })).toEqual(['unavailable'])
-    expect(wishlistSearchExtras({})).toEqual([])
+    expect(wishlistFlags({ _unavailable: true })).toEqual(['unavailable'])
+    expect(wishlistFlags({})).toEqual([])
+  })
+
+  it('includes installed only for direct library installs', () => {
+    expect(wishlistFlags({ _installed: true, _isDirect: true })).toEqual(['installed'])
+    expect(wishlistFlags({ _installed: true, _isDirect: false })).toEqual([])
+    expect(wishlistFlags({ _installed: false, _isDirect: false })).toEqual([])
   })
 })
