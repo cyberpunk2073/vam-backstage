@@ -1420,7 +1420,7 @@ Handlers live under `src/main/ipc/` split per domain (`packages.js`, `contents.j
 | `packages:install-all-missing` | Install every missing ref across the library                                                     |
 | `packages:install-deps-batch`  | Install a renderer-supplied list of missing refs                                                 |
 | `packages:install-dep`         | Install a single dep by Hub file record                                                          |
-| `packages:promote`             | Promote dep → direct (single filename or array)                                                  |
+| `packages:promote`             | Promote dep → direct (single filename or array); auto-enables if disabled/offloaded              |
 | `packages:uninstall`           | Single filename or array; demotes instead of deleting when dependents remain                     |
 | `packages:toggle-enabled`      | Toggle disable/enable/offload via `applyStorageState` (cascade-aware; honors `disable_behavior`) |
 | `packages:set-enabled`         | Set enabled/disabled for an explicit filename list                                               |

@@ -384,6 +384,16 @@ export function registerPackageHandlers() {
     if (!vamDir) throw new Error('VaM directory not configured')
 
     const filenames = normalizeFilenameArgs(filenameOrFilenames)
+    // Promoting implies the user wants the package usable — enable disabled/offloaded
+    // targets first (cascade-enables inactive deps, same path as packages:set-enabled).
+    const toEnable = filenames.filter((fn) => {
+      const pkg = getPackageIndex().get(fn)
+      return pkg && !isPackageActive(pkg.storage_state)
+    })
+    if (toEnable.length > 0) {
+      await applyStorageStateChange(toEnable, () => 'enable')
+    }
+
     for (const filename of filenames) {
       setPackageDirect(filename, true)
       touchPackageFirstSeen(filename)
