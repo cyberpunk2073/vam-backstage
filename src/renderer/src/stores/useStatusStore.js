@@ -8,6 +8,7 @@ export const useStatusStore = create((set) => ({
     enabledCount: 0,
     brokenCount: 0,
     totalContent: 0,
+    totalMorphCount: 0,
     totalSize: 0,
     directSize: 0,
     depSize: 0,

@@ -682,6 +682,42 @@ describe('buildFromDb — counts / filters', () => {
     buildFromDb()
     expect(getStats().contentByType.Scenes).toBeGreaterThanOrEqual(1)
   })
+
+  it('getStats.totalMorphCount sums morphBinary items across packages', async () => {
+    const db = getDb()
+    seedPackage(db, {
+      filename: 'Morph.A.1.var',
+      package_name: 'Morph.A',
+      version: '1',
+      is_direct: 1,
+    })
+    seedPackage(db, {
+      filename: 'Morph.B.1.var',
+      package_name: 'Morph.B',
+      version: '1',
+      is_direct: 1,
+    })
+    seedContent(db, {
+      package_filename: 'Morph.A.1.var',
+      internal_path: 'Custom/Atom/Person/Morphs/a.vmi',
+      display_name: 'a',
+      type: 'morphBinary',
+    })
+    seedContent(db, {
+      package_filename: 'Morph.A.1.var',
+      internal_path: 'Custom/Atom/Person/Morphs/b.vmi',
+      display_name: 'b',
+      type: 'morphBinary',
+    })
+    seedContent(db, {
+      package_filename: 'Morph.B.1.var',
+      internal_path: 'Custom/Atom/Person/Morphs/c.vmi',
+      display_name: 'c',
+      type: 'morphBinary',
+    })
+    buildFromDb()
+    expect(getStats().totalMorphCount).toBe(3)
+  })
 })
 
 describe('buildFromDb — extracted-preset ownership', () => {

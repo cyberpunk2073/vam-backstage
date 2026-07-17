@@ -112,6 +112,7 @@ function emptyStats() {
     enabledCount: 0,
     brokenCount: 0,
     totalContent: 0,
+    totalMorphCount: 0,
     totalSize: 0,
     directSize: 0,
     depSize: 0,
@@ -603,6 +604,9 @@ function computeStats() {
     if (!item.isDirect) depContentCount++
   }
 
+  let totalMorphCount = 0
+  for (const n of morphCountByPackage.values()) totalMorphCount += n
+
   let missingDepCount = 0
   for (const deps of forwardDeps.values()) {
     for (const d of deps) {
@@ -617,6 +621,7 @@ function computeStats() {
     enabledCount,
     brokenCount,
     totalContent: contentItems.length,
+    totalMorphCount,
     totalSize,
     directSize,
     depSize,

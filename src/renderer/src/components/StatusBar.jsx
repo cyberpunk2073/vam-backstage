@@ -248,6 +248,7 @@ export default function StatusBar() {
       .filter((t) => !CONTENT_TYPES.includes(t))
       .sort((a, b) => String(a).localeCompare(String(b)))
       .map((t) => `${t}: ${by[t]}`),
+    `Morphs: ${stats.totalMorphCount ?? 0}`,
   ].join('\n')
 
   const active = dlItems.filter((d) => d.status === 'active')
