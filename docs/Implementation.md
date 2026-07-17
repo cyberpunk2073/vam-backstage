@@ -522,6 +522,7 @@ CREATE TABLE settings (
 - `hub_filters_json` — cached Hub filter metadata (types, tags, sort options)
 - `update_channel` — `'stable'` | `'dev'`; selects updater feed (see §23)
 - `disable_behavior` — `'suffix'` (VaM-native: drop an empty `.var.disabled` marker beside the bare `.var` in main; default) or `'move-to:<auxDirId>'` (move to the named aux library directory). Removing the referenced aux dir resets this to `'suffix'`.
+- `import_move_files` — `'1'` to _move_ (rather than copy) a `.var` added via drag-and-drop into the library, removing the source. Only affects the local fast path (`importLocalFromPath`): a same-filesystem `rename` (instant, no bytes copied — the key win on NTFS where reflinks don't apply), falling back to copy + unlink-source across filesystems (`EXDEV`). The same-fs rename verifies the bytes in place and renames back on failure so an invalid package never destroys the source. A remote client head has no local source and always streams a copy, so the option is hidden client-side and ignored server-side there.
 - `remote_mode_enabled` — `'1'` when the Settings remote section is enabled (server UI + optional auto-start).
 - `remote_serve_on_launch` — `'1'` to call `remote:start` automatically on startup when remote mode is enabled.
 

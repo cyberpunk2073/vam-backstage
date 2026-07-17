@@ -500,11 +500,29 @@ function toBuffer(bytes) {
 }
 
 /**
- * Verify a fully-written temp .var, atomically rename it into place, and run the
- * same post-add integration the download path uses (scan + upsert, inherit,
- * auto-hide, graph rebuild, cascade-enable, notify). Imported as a direct
- * install with no Hub linkage and without auto-queuing deps — missing deps
- * surface in the normal Library UI. Unlinks the temp file on verify failure.
+ * Atomically move a verified .var from `stagedPath` into `finalPath` (recording
+ * it as app-owned so the watcher stays quiet), then run the same post-add
+ * integration the download path uses (scan + upsert, inherit, auto-hide, graph
+ * rebuild, cascade-enable, notify). Imported as a direct install with no Hub
+ * linkage and without auto-queuing deps — missing deps surface in the normal
+ * Library UI. `stagedPath` is consumed by the rename (a temp copy, or the source
+ * file itself for a same-filesystem move).
+ */
+async function installStagedVar(canonical, stagedPath, finalPath) {
+  await withBulkWindow(async () => {
+    recordOwnedPath(finalPath)
+    await rename(stagedPath, finalPath)
+  })
+
+  await postDownloadIntegrate(canonical, finalPath, true, null, false)
+
+  return { ok: true, filename: canonical }
+}
+
+/**
+ * Verify a fully-written candidate .var in a temp file, then install it. Unlinks
+ * the temp on verify failure. Shared by the streamed-upload path and the
+ * copy-based local import — both stage the bytes in a temp file first.
  */
 async function finalizeImportedVar(canonical, tempPath, finalPath) {
   try {
@@ -515,35 +533,52 @@ async function finalizeImportedVar(canonical, tempPath, finalPath) {
     } catch {}
     throw new Error(`Not a valid .var package: ${err.message}`)
   }
-
-  await withBulkWindow(async () => {
-    recordOwnedPath(finalPath)
-    await rename(tempPath, finalPath)
-  })
-
-  await postDownloadIntegrate(canonical, finalPath, true, null, false)
-
-  return { ok: true, filename: canonical }
+  return installStagedVar(canonical, tempPath, finalPath)
 }
 
 /**
  * Import a dragged-in .var that the main process can read directly by path —
- * the local (non-remote) fast path. Copies the source into place instead of
- * streaming its bytes through the renderer/IPC: no read into renderer memory,
- * no structured-clone copy per chunk. `COPYFILE_FICLONE` makes this a
- * copy-on-write reflink on filesystems that support it (e.g. APFS/Btrfs), so a
- * same-volume import is near-instant; elsewhere it falls back to a plain copy.
- * The source file is left untouched. Verify + atomic rename + integrate are
- * shared with the streamed path via `finalizeImportedVar`.
+ * the local (non-remote) fast path (no renderer/IPC byte streaming).
+ *
+ * `move` (the "move files when dragging them in" setting) removes the source
+ * once the package is safely in the library, taking an instant same-disk
+ * shortcut when it can. The source is only ever touched after it's verified, and
+ * only deleted after the import fully succeeds, so no failure can cost the user
+ * their file:
+ *   - Same filesystem: verify the source in place, then rename it straight to
+ *     its final home — atomic, no bytes copied (the whole point, since reflinks
+ *     are only free on APFS/Btrfs, not the NTFS volumes most users run). A
+ *     cross-device rename throws `EXDEV` and falls through to the copy path.
+ *   - Otherwise (default copy, or a cross-device move): stage a temp copy,
+ *     verify, install, and — for a move — unlink the source afterward.
  */
-export async function importLocalFromPath({ filename, sourcePath }) {
+export async function importLocalFromPath({ filename, sourcePath, move = false }) {
   const { addonDir, canonical } = resolveImportTarget(filename)
   if (findLocalByFilename(canonical)) return { already: true, filename: canonical }
 
   const finalPath = join(addonDir, canonical)
-  const tempPath = finalPath + '.import.tmp'
   await mkdir(dirname(finalPath), { recursive: true })
 
+  // Same-filesystem move: verify in place, then rename the source straight to
+  // its final home. The only failure a rename can produce here is EXDEV (a
+  // cross-device source), which falls through to the copy path below.
+  if (move) {
+    try {
+      await verifyZipFile(sourcePath)
+    } catch (err) {
+      throw new Error(`Not a valid .var package: ${err.message}`)
+    }
+    try {
+      return await installStagedVar(canonical, sourcePath, finalPath)
+    } catch (err) {
+      if (err?.code !== 'EXDEV') throw err
+    }
+  }
+
+  // Copy: stage a temp copy (reflink where supported, leaving the source
+  // intact), verify, and install. For a cross-device move, remove the source
+  // only after the import has fully succeeded.
+  const tempPath = finalPath + '.import.tmp'
   try {
     await copyFile(sourcePath, tempPath, fsConstants.COPYFILE_FICLONE)
   } catch (err) {
@@ -553,7 +588,16 @@ export async function importLocalFromPath({ filename, sourcePath }) {
     throw err
   }
 
-  return finalizeImportedVar(canonical, tempPath, finalPath)
+  const result = await finalizeImportedVar(canonical, tempPath, finalPath)
+
+  if (move) {
+    try {
+      await unlink(sourcePath)
+    } catch (err) {
+      console.warn(`Import succeeded but could not remove source ${sourcePath}:`, err.message)
+    }
+  }
+  return result
 }
 
 /**

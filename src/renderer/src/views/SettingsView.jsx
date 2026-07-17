@@ -71,6 +71,7 @@ export default function SettingsView() {
   const [libDirs, setLibDirs] = useState({ main: '', aux: [] })
   const [libDirsLoading, setLibDirsLoading] = useState(false)
   const [disableBehavior, setDisableBehavior] = useState('suffix')
+  const [moveOnImport, setMoveOnImport] = useState(false)
   const [offloadSuggestions, setOffloadSuggestions] = useState([])
   const [dismissedOffload, setDismissedOffload] = useState(() => new Set())
   const stats = useStatusStore((s) => s.stats)
@@ -109,6 +110,7 @@ export default function SettingsView() {
     window.api.settings.get('hub_debug_requests').then((v) => setHubDebugRequests(v === '1'))
     window.api.settings.get('developer_options_unlocked').then((v) => setDeveloperUnlocked(v === '1'))
     window.api.settings.get('disable_behavior').then((v) => setDisableBehavior(v || 'suffix'))
+    window.api.settings.get('import_move_files').then((v) => setMoveOnImport(v === '1'))
     window.api.settings.get('offload_suggestions_dismissed').then((v) =>
       setDismissedOffload(
         new Set(
@@ -237,6 +239,11 @@ export default function SettingsView() {
   const handleDisableBehaviorChange = useCallback(async (value) => {
     setDisableBehavior(value)
     await window.api.settings.set('disable_behavior', value)
+  }, [])
+
+  const handleToggleMoveOnImport = useCallback(async (checked) => {
+    setMoveOnImport(checked)
+    await window.api.settings.set('import_move_files', checked ? '1' : '0')
   }, [])
 
   useEffect(() => {
@@ -750,6 +757,18 @@ export default function SettingsView() {
                 </SelectContent>
               </Select>
             </div>
+          )}
+
+          {!isRemoteClient && (
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-text-primary font-medium">Move files when dragging them in</div>
+                <div className="text-[11px] text-text-tertiary mt-0.5">
+                  Drag-and-drop moves packages into your library instead of copying them, so the originals are removed.
+                </div>
+              </div>
+              <Switch checked={moveOnImport} onCheckedChange={handleToggleMoveOnImport} />
+            </label>
           )}
 
           <div className="space-y-3 border-t border-border pt-3">

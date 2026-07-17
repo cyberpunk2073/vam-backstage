@@ -42,7 +42,8 @@ const api = {
     // is gone). Empty string when there's no backing path — caller falls back to
     // the streamed upload. Local only; a remote head's paths mean nothing here.
     getPathForFile: (file) => webUtils.getPathForFile(file),
-    importLocalCopy: (filename, sourcePath) => invoke('packages:import-local-copy', { filename, sourcePath }),
+    importLocalCopy: (filename, sourcePath, move) =>
+      invoke('packages:import-local-copy', { filename, sourcePath, move }),
     importLocalBegin: (filename) => invoke('packages:import-local-begin', { filename }),
     importLocalChunk: (uploadId, chunk) => invoke('packages:import-local-chunk', { uploadId, chunk }),
     importLocalFinish: (uploadId) => invoke('packages:import-local-finish', { uploadId }),

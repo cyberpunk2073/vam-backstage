@@ -88,15 +88,17 @@ async function importFileChunked(name, file, onProgress) {
 
 /**
  * Import one dropped file. Locally (main can see the file), take the fast path:
- * hand main the source path so it copies the bytes directly (reflink where
- * supported) — nothing is read into the renderer or crossed over IPC. Remotely,
- * or when the file has no resolvable path, fall back to the chunked upload.
+ * hand main the source path so it relocates/copies the bytes directly — nothing
+ * is read into the renderer or crossed over IPC. `move` asks main to remove the
+ * source once the package lands (a same-filesystem rename when possible, else a
+ * copy + delete). Remotely, or when the file has no resolvable path, fall back
+ * to the chunked upload, which always copies.
  */
-async function importOneFile(name, file, onProgress) {
+async function importOneFile(name, file, move, onProgress) {
   if (!window.api.remote.isRemote) {
     const sourcePath = window.api.packages.getPathForFile?.(file) || ''
     if (sourcePath) {
-      const res = await window.api.packages.importLocalCopy(name, sourcePath)
+      const res = await window.api.packages.importLocalCopy(name, sourcePath, move)
       onProgress?.(1)
       return res
     }
@@ -155,7 +157,7 @@ async function walkEntry(entry, out) {
 export default function DropImport() {
   const [dragging, setDragging] = useState(false)
   const [scanning, setScanning] = useState(false) // enumerating dropped folders
-  const [pending, setPending] = useState(null) // { items:[{file,name}], skipped, invalid, totalBytes } awaiting confirm
+  const [pending, setPending] = useState(null) // { items, skipped, invalid, totalBytes, willMove }
   const [importing, setImporting] = useState(false)
   const [progress, setProgress] = useState(null) // { current, total }
   // dragenter/dragleave fire per element as the cursor crosses children; a depth
@@ -192,7 +194,10 @@ export default function DropImport() {
       }
 
       const totalBytes = items.reduce((sum, m) => sum + (m.file.size || 0), 0)
-      setPending({ items, skipped, invalid, totalBytes })
+      // Move applies to the local fast path only — a remote client head has no
+      // source file to remove and always streams a copy to the server.
+      const willMove = !window.api.remote.isRemote && (await window.api.settings.get('import_move_files')) === '1'
+      setPending({ items, skipped, invalid, totalBytes, willMove })
     } finally {
       setScanning(false)
     }
@@ -264,6 +269,7 @@ export default function DropImport() {
   const runImport = useCallback(async () => {
     if (!pending) return
     const items = pending.items
+    const move = pending.willMove
     setImporting(true)
     setProgress({ current: 0, total: items.length })
     let added = 0
@@ -273,7 +279,9 @@ export default function DropImport() {
       setProgress({ current: i, total: items.length })
       const { file, name } = items[i]
       try {
-        const res = await importOneFile(name, file, (frac) => setProgress({ current: i + frac, total: items.length }))
+        const res = await importOneFile(name, file, move, (frac) =>
+          setProgress({ current: i + frac, total: items.length }),
+        )
         if (res?.already) already += 1
         else added += 1
       } catch (err) {
@@ -284,7 +292,14 @@ export default function DropImport() {
     setImporting(false)
     setPending(null)
 
-    if (added > 0) toast(`Added ${added} package${added === 1 ? '' : 's'} to your library.`, 'success')
+    if (added > 0) {
+      toast(
+        move
+          ? `Moved ${added} package${added === 1 ? '' : 's'} into your library.`
+          : `Added ${added} package${added === 1 ? '' : 's'} to your library.`,
+        'success',
+      )
+    }
     if (already > 0) toast(`${already} package${already === 1 ? '' : 's'} already in your library.`, 'info')
     if (failed.length > 0) {
       toast(`${failed.length} file${failed.length === 1 ? '' : 's'} failed: ${failed[0]}`, 'error')
@@ -300,6 +315,7 @@ export default function DropImport() {
   const count = pending?.items.length ?? 0
   const open = scanning || !!pending
   const pct = progress && progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0
+  const willMove = !!pending?.willMove
 
   return (
     <>
@@ -330,13 +346,14 @@ export default function DropImport() {
                   <PackagePlus className="text-accent-blue" />
                 </AlertDialogMedia>
                 <AlertDialogTitle>
-                  Add {count} package{count === 1 ? '' : 's'} to your library?
+                  {willMove ? 'Move' : 'Add'} {count} package{count === 1 ? '' : 's'} to your library?
                 </AlertDialogTitle>
                 <AlertDialogDescription asChild>
                   <div>
                     <p>
-                      {formatBytes(pending?.totalBytes ?? 0)} copied into your VaM library and scanned as direct
-                      installs.
+                      {willMove
+                        ? `${formatBytes(pending?.totalBytes ?? 0)} moved into your VaM library and scanned as direct installs. The original files are removed.`
+                        : `${formatBytes(pending?.totalBytes ?? 0)} copied into your VaM library and scanned as direct installs.`}
                     </p>
                     <ul className="mt-2 max-h-40 overflow-y-auto space-y-0.5">
                       {pending?.items.map((m, i) => (
@@ -364,7 +381,8 @@ export default function DropImport() {
                       <div className="mt-3">
                         <div className="flex justify-between text-xs text-text-secondary">
                           <span>
-                            Copying {Math.min(Math.floor(progress?.current ?? 0) + 1, count)} / {count}…
+                            {willMove ? 'Moving' : 'Copying'} {Math.min(Math.floor(progress?.current ?? 0) + 1, count)}{' '}
+                            / {count}…
                           </span>
                           <span>{pct}%</span>
                         </div>
@@ -398,8 +416,10 @@ export default function DropImport() {
                 >
                   {importing ? (
                     <>
-                      <Loader2 size={14} className="animate-spin" /> Copying…
+                      <Loader2 size={14} className="animate-spin" /> {willMove ? 'Moving…' : 'Copying…'}
                     </>
+                  ) : willMove ? (
+                    'Move to Library'
                   ) : (
                     'Add to Library'
                   )}

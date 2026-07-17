@@ -615,8 +615,8 @@ export function registerPackageHandlers() {
   // Local fast path: main copies the dropped file straight from its source path
   // (reflink where supported), skipping the renderer/IPC byte streaming. Only
   // valid when main can see the file — i.e. not a remote head.
-  ipcMain.handle('packages:import-local-copy', async (_, { filename, sourcePath }) => {
-    return await importLocalFromPath({ filename, sourcePath })
+  ipcMain.handle('packages:import-local-copy', async (_, { filename, sourcePath, move }) => {
+    return await importLocalFromPath({ filename, sourcePath, move: !!move })
   })
 
   // Chunked import: begin → chunk* → finish (or abort). The file is streamed to
