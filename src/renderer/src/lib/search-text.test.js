@@ -27,6 +27,11 @@ describe('packageSearchExtras', () => {
     expect(packageSearchExtras({ favoriteContentCount: 0 })).toEqual([])
   })
 
+  it('includes wishlist when the package is on the Hub wishlist', () => {
+    expect(packageSearchExtras({ wishlisted: true })).toEqual(['wishlist'])
+    expect(packageSearchExtras({ wishlisted: false })).toEqual([])
+  })
+
   it('returns nothing for an ordinary package', () => {
     expect(packageSearchExtras({})).toEqual([])
   })

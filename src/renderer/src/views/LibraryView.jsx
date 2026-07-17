@@ -69,6 +69,7 @@ import { useLibraryStore, FILTER_DEFAULTS } from '@/stores/useLibraryStore'
 import { useLabelsStore } from '@/stores/useLabelsStore'
 import { useContentStore } from '@/stores/useContentStore'
 import { useDownloadStore } from '@/stores/useDownloadStore'
+import { useWishlistStore } from '@/stores/useWishlistStore'
 import FilterPanel, { sectionActive } from '@/components/FilterPanel'
 import { SearchOnHubButton } from '@/components/SearchOnHubButton'
 import ResizeHandle from '@/components/ResizeHandle'
@@ -239,6 +240,8 @@ export default function LibraryView({ onNavigate, navContext }) {
     const getLibraryStore = () => useLibraryStore.getState()
     getLibraryStore().fetchPackages()
     getLibraryStore().fetchBackendCounts()
+    // Wishlist pin badges on library cards need membership ids even if Hub was never opened.
+    useWishlistStore.getState().loadIds()
     window.api.packages
       .tagCounts()
       .then(setTagCounts)
@@ -269,8 +272,14 @@ export default function LibraryView({ onNavigate, navContext }) {
         .then(setAuthorCounts)
         .catch(() => {})
     })
+    // Keep pin badges in sync when Hub never loaded the full wishlist (peer pin/unpin).
+    const cleanupWishlist = window.api.onWishlistUpdated((data) => {
+      const s = useWishlistStore.getState()
+      if (!s.loaded && data?.membership) s.loadIds()
+    })
     return () => {
       cleanup1()
+      cleanupWishlist()
     }
   }, [])
 
@@ -293,13 +302,23 @@ export default function LibraryView({ onNavigate, navContext }) {
     if (!store.missingDeps && !store.missingDepsLoading) store.fetchMissingDeps()
   }, [statusFilter])
 
+  const wishlistIds = useWishlistStore((s) => s.ids)
+
   const baseFiltered = useMemo(() => {
     let result = packages
     if (search?.trim()) {
       const { tokens } = parseSmartQuery(search)
       result = result.filter((p) =>
         matchesSmartQuery(tokens, {
-          text: () => [p.title, p.packageName, p.filename, ...packageSearchExtras(p)],
+          text: () => {
+            const rid = p.hubResourceId != null ? String(p.hubResourceId) : ''
+            return [
+              p.title,
+              p.packageName,
+              p.filename,
+              ...packageSearchExtras({ ...p, wishlisted: !!rid && wishlistIds.has(rid) }),
+            ]
+          },
           author: () => p.creator || '',
           tags: () => packageHubTags(p),
           labels: () => (p.labelIds || []).map((id) => labelNameById.get(id)).filter(Boolean),
@@ -313,7 +332,7 @@ export default function LibraryView({ onNavigate, navContext }) {
       result = result.filter((p) => matchesLicenseFilter(p.license, license))
     }
     return result
-  }, [packages, search, authorSearch, excludedAuthors, license, labelNameById])
+  }, [packages, search, authorSearch, excludedAuthors, license, labelNameById, wishlistIds])
 
   const statusCounts = useMemo(() => {
     if (!packagesLoaded) return { direct: '…', dependency: '…', broken: '…', orphan: '…', local: '…' }

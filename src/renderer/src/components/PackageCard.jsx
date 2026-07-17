@@ -538,6 +538,8 @@ export function LibraryCard({
   const versionStr = pkg.version != null && pkg.version !== '' ? String(pkg.version) : null
   const showBulk = bulkMode || bulkSelected
   const labelObjs = useLabelObjects(pkg.labelIds)
+  const hubRid = pkg.hubResourceId != null ? String(pkg.hubResourceId) : ''
+  const wishlisted = useWishlistStore((s) => !!hubRid && s.ids.has(hubRid))
 
   return (
     <button
@@ -631,6 +633,14 @@ export function LibraryCard({
             >
               CORRUPTED
             </div>
+          )}
+          {wishlisted && (
+            <span
+              title="On Hub wishlist"
+              className={`${LIB_CARD_CORNER_ICON} text-accent-blue ${THUMB_FILLED_ICON_SHADOW}`}
+            >
+              <Pin size={11} fill="currentColor" />
+            </span>
           )}
           {pkg.favoriteContentCount > 0 && (
             <span
@@ -745,6 +755,8 @@ export function LibraryTableRow({
   const name = displayName(pkg)
   const versionStr = pkg.version != null && pkg.version !== '' ? String(pkg.version) : null
   const thumbUrl = useThumbnail(`pkg:${pkg.filename}`)
+  const hubRid = pkg.hubResourceId != null ? String(pkg.hubResourceId) : ''
+  const wishlisted = useWishlistStore((s) => !!hubRid && s.ids.has(hubRid))
 
   return (
     <div
@@ -838,13 +850,19 @@ export function LibraryTableRow({
       <div
         className="w-16 py-2 px-3 text-[11px] text-text-tertiary flex items-center gap-1 min-w-0"
         title={
-          pkg.favoriteContentCount > 0
-            ? pkg.favoriteContentCount === 1
-              ? '1 favorited item'
-              : `${pkg.favoriteContentCount} favorited items`
-            : undefined
+          [
+            wishlisted ? 'On Hub wishlist' : null,
+            pkg.favoriteContentCount > 0
+              ? pkg.favoriteContentCount === 1
+                ? '1 favorited item'
+                : `${pkg.favoriteContentCount} favorited items`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined
         }
       >
+        {wishlisted && <Pin size={12} className="text-accent-blue shrink-0" fill="currentColor" />}
         {pkg.favoriteContentCount > 0 && <Star size={12} className="text-warning shrink-0" fill="currentColor" />}
         <span className="tabular-nums">{pkg.contentCount}</span>
       </div>
