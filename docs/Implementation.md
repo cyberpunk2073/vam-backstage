@@ -1580,12 +1580,19 @@ Always registered, but destructive handlers (`dev:nuke-database`) are gated behi
 
 When developer options are unlocked, **F12** (and Ctrl+Shift+I / Cmd+Alt+I) toggle Chromium DevTools on the main window — the hotkeys are gated in `attachDevToolsHotkeys` (`src/main/index.js`) so they work in packaged builds, not just `npm run dev`. All main-process `console.*` output is also mirrored into the renderer DevTools console with a `[main]` prefix via `src/main/log-forward.js` and a preload-side `main:log` listener; messages emitted before the renderer finishes loading are buffered (last 500) and flushed on `did-finish-load`.
 
-| Channel                         | Purpose                                    |
-| ------------------------------- | ------------------------------------------ |
-| `dev:is-dev`                    | Whether the app is running in dev mode     |
-| `dev:browser-assist-dir-exists` | Probe for the browser-assist resources dir |
-| `dev:sync-browser-assist`       | Copy browser-assist resources              |
-| `dev:nuke-database`             | Delete `backstage.db` and restart          |
+| Channel             | Purpose                                |
+| ------------------- | -------------------------------------- |
+| `dev:is-dev`        | Whether the app is running in dev mode |
+| `dev:nuke-database` | Delete `backstage.db` and restart      |
+
+#### BrowserAssist (`src/main/ipc/browser-assist.js`)
+
+Allowed over the remote bridge (unlike `dev:*`) so a client can probe/sync the host's JayJayWon BrowserAssist settings.
+
+| Channel                     | Purpose                                    |
+| --------------------------- | ------------------------------------------ |
+| `browser-assist:dir-exists` | Probe for the browser-assist resources dir |
+| `browser-assist:sync`       | Write labels/tags into BrowserAssist       |
 
 ### Event channels (Main → Renderer)
 

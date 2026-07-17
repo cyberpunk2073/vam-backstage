@@ -10,7 +10,7 @@ describe('isRemoteChannelDenied', () => {
     expect(isRemoteChannelDenied('updater:install')).toBe(true)
     expect(isRemoteChannelDenied('updater:check')).toBe(true)
     expect(isRemoteChannelDenied('dev:nuke-database')).toBe(true)
-    expect(isRemoteChannelDenied('dev:sync-browser-assist')).toBe(true)
+    expect(isRemoteChannelDenied('dev:forget-deleted-data')).toBe(true)
   })
 
   it('denies exact machine-local channels', () => {
@@ -43,6 +43,9 @@ describe('isRemoteChannelDenied', () => {
     expect(isRemoteChannelDenied('settings:set')).toBe(false)
     expect(isRemoteChannelDenied('labels:list')).toBe(false)
     expect(isRemoteChannelDenied('scan:start')).toBe(false)
+    // Host-side BrowserAssist settings — remote clients manage the same library.
+    expect(isRemoteChannelDenied('browser-assist:dir-exists')).toBe(false)
+    expect(isRemoteChannelDenied('browser-assist:sync')).toBe(false)
   })
 
   it('denies empty / non-string channels', () => {

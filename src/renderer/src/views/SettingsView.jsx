@@ -251,9 +251,14 @@ export default function SettingsView() {
     if (!vamDir) {
       setBaDirPresent(false)
     } else {
-      window.api.dev.browserAssistDirExists().then((r) => {
-        if (!cancelled) setBaDirPresent(!!r?.exists)
-      })
+      window.api.browserAssist
+        .dirExists()
+        .then((r) => {
+          if (!cancelled) setBaDirPresent(!!r?.exists)
+        })
+        .catch(() => {
+          if (!cancelled) setBaDirPresent(false)
+        })
     }
     return () => {
       cancelled = true
@@ -407,7 +412,7 @@ export default function SettingsView() {
     setBaSyncing(true)
     setBaSyncResult(null)
     try {
-      const res = await window.api.dev.syncBrowserAssist()
+      const res = await window.api.browserAssist.sync()
       if (!res?.ok) {
         setBaSyncResult({ error: res?.error || 'Sync failed' })
         return

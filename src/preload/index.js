@@ -156,13 +156,15 @@ const api = {
     remove: (id, opts) => invoke('library-dirs:remove', id, opts),
     setBrowserAssist: (id, enabled) => invoke('library-dirs:set-browser-assist', id, enabled),
   },
+  browserAssist: {
+    dirExists: () => invoke('browser-assist:dir-exists'),
+    sync: () => invoke('browser-assist:sync'),
+  },
   dev: {
     isDev: () => invoke('dev:is-dev'),
     nukeDatabase: () => invoke('dev:nuke-database'),
     countDeletedData: () => invoke('dev:count-deleted-data'),
     forgetDeletedData: () => invoke('dev:forget-deleted-data'),
-    browserAssistDirExists: () => invoke('dev:browser-assist-dir-exists'),
-    syncBrowserAssist: () => invoke('dev:sync-browser-assist'),
   },
   extract: {
     probeScene: (p) => invoke('extract:probe-scene', p),

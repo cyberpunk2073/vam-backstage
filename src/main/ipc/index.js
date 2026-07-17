@@ -9,6 +9,7 @@ import { registerHubHandlers } from './hub.js'
 import { registerWishlistHandlers } from './wishlist.js'
 import { registerDownloadHandlers } from './downloads.js'
 import { registerDevHandlers } from './dev.js'
+import { registerBrowserAssistHandlers } from './browser-assist.js'
 import { registerShellHandlers } from './shell.js'
 import { registerExtractHandlers } from './extract.js'
 import { registerLabelHandlers } from './labels.js'
@@ -43,6 +44,7 @@ export function registerAllHandlers() {
   registerWishlistHandlers()
   registerDownloadHandlers()
   registerDevHandlers()
+  registerBrowserAssistHandlers()
   registerExtractHandlers()
   registerLabelHandlers()
   registerLibraryDirHandlers()
