@@ -2281,7 +2281,7 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                   onClick={() => onNavigate?.('content', { filterByPackage: pkg.packageName || pkg.filename })}
                   className="text-[10px] text-accent-blue hover:brightness-125 transition-[filter] cursor-pointer flex items-center gap-1"
                 >
-                  <LayoutGrid size={11} /> View in gallery
+                  <LayoutGrid size={11} /> Browse content
                 </button>
               )}
             </div>

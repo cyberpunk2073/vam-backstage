@@ -174,11 +174,17 @@ export default function HubView({ onNavigate }) {
     fetchNextPage,
     openDetail,
     closeDetail,
-    popDetailHistory,
   } = useHubStore()
 
   const wishlistMode = galleryMode === 'wishlist'
   const detailBackLabel = detailHistory.length > 0 ? detailHistory[detailHistory.length - 1].title : null
+
+  // Back peels dep history; a view-root entry (arrived from Library/Content) closes
+  // detail and returns to that tab. X / Hub-tab re-click still close to the Hub gallery.
+  const handleDetailBack = useCallback(() => {
+    const result = useHubStore.getState().popDetailHistory()
+    if (result?.navigateTo) onNavigate?.(result.navigateTo)
+  }, [onNavigate])
 
   const [searchDraft, setSearchDraft] = useState(search)
   const searchDraftRef = useRef(search)
@@ -964,7 +970,7 @@ export default function HubView({ onNavigate }) {
         <HubDetail
           key={detailNonce}
           resource={detailResource}
-          onBack={popDetailHistory}
+          onBack={handleDetailBack}
           onClose={closeDetail}
           onNavigate={onNavigate}
           onInstall={handleInstall}

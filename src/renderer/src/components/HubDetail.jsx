@@ -732,7 +732,7 @@ export default function HubDetail({
             className="text-text-secondary hover:text-text-primary min-w-0 max-w-[min(280px,40vw)]"
           >
             <ArrowLeft size={14} className="shrink-0" />
-            <span className="truncate">{backLabel || 'Back'}</span>
+            <span className="truncate">{backLabel ? `Back to ${backLabel}` : 'Back'}</span>
           </Button>
           {position && (
             <div className="flex items-center gap-0.5 ml-1 pl-1.5 border-l border-border/60">
@@ -776,7 +776,7 @@ export default function HubDetail({
           size="icon-xs"
           onClick={handleClose}
           aria-label="Close detail"
-          className="shrink-0 text-text-tertiary/70 hover:text-text-tertiary hover:bg-muted/35"
+          className="shrink-0 text-text-tertiary hover:text-text-secondary hover:bg-muted/35"
         >
           <X size={12} strokeWidth={1.75} />
         </Button>

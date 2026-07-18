@@ -110,9 +110,12 @@ export const useHubStore = create(
       // NOT changed by followDetail, which must keep the webview mounted while the user
       // browses inside the guest page.
       detailNonce: 0,
-      // Stack of prior packages when drilling via Hub-available deps. Each entry is
-      // `{ resource, title }` — Back pops this instead of closing to the gallery.
-      // Cleared on gallery/pager opens and on closeDetail.
+      // Stack for HubDetail Back. Two entry kinds:
+      //   `{ kind: 'resource', resource, title }` — prior package (dep drill); pop reopens it
+      //   `{ kind: 'view', view, title }` — origin tab (library/content); pop closes detail
+      //     and returns `{ navigateTo: view }` so the caller can switch tabs
+      // Resource entries may omit `kind` (treated as resource). Cleared on gallery/pager
+      // opens and on closeDetail. Not persisted.
       detailHistory: [],
       // Resource id whose detail followDetail is fetching in the background; dedupes
       // concurrent follows and lets stale responses be discarded after a newer
@@ -216,6 +219,8 @@ export const useHubStore = create(
        * Open a package detail overlay.
        * @param opts.pushHistory  Push the current package onto `detailHistory` (dep drill).
        * @param opts.history      Replace the stack (used by popDetailHistory). Cleared when neither is set.
+       * @param opts.origin       Seed a view-root entry (`{ view: 'library'|'content' }`) so Back
+       *                          returns to that tab. Ignored when history/pushHistory is set.
        */
       openDetail: async (resource, opts) => {
         const rid = String(resource.resource_id)
@@ -229,11 +234,23 @@ export const useHubStore = create(
             if (cur?.resource_id != null && String(cur.resource_id) !== rid) {
               detailHistory = [
                 ...s.detailHistory,
-                { resource: cur, title: s.detailData?.title || cur.title || 'Package' },
+                {
+                  kind: 'resource',
+                  resource: cur,
+                  title: s.detailData?.title || cur.title || 'Package',
+                },
               ]
             } else {
               detailHistory = s.detailHistory
             }
+          } else if (opts?.origin?.view === 'library' || opts?.origin?.view === 'content') {
+            detailHistory = [
+              {
+                kind: 'view',
+                view: opts.origin.view,
+                title: opts.origin.view === 'library' ? 'Library' : 'Content',
+              },
+            ]
           }
           return {
             detailResource: resource,
@@ -268,7 +285,10 @@ export const useHubStore = create(
         }
       },
 
-      /** Pop the dep-drill stack and reopen the previous package, or close if empty. */
+      /**
+       * Pop the detail back-stack. Resource entry → reopen that package. View entry →
+       * close detail and return `{ navigateTo }` for the caller. Empty → close to gallery.
+       */
       popDetailHistory: () => {
         const { detailHistory } = get()
         if (!detailHistory.length) {
@@ -276,7 +296,12 @@ export const useHubStore = create(
           return
         }
         const prev = detailHistory[detailHistory.length - 1]
-        return get().openDetail(prev.resource, { history: detailHistory.slice(0, -1) })
+        const rest = detailHistory.slice(0, -1)
+        if (prev.kind === 'view') {
+          get().closeDetail()
+          return { navigateTo: prev.view }
+        }
+        return get().openDetail(prev.resource, { history: rest })
       },
 
       /** Warm the detail cache for a resource without touching visible state. */

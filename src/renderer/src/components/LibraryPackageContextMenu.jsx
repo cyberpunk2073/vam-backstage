@@ -640,7 +640,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                   }}
                 >
                   <LayoutGrid size={12} className="shrink-0" />
-                  View in gallery
+                  Browse content
                 </ContextMenuItem>
               )}
               <ContextMenuItem onSelect={() => setFileTreeOpen(true)}>
