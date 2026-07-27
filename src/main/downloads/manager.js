@@ -33,7 +33,7 @@ import { scanAndUpsert } from '../scanner/ingest.js'
 import { computeAutoHidePathsForNewPackage } from '../scanner/index.js'
 import { inheritFromOlderVersion } from '../scanner/inherit.js'
 import { refreshExtractedPresetsForUpdates } from '../scenes/extract-refresh.js'
-import { computeCascadeEnable, parseDepRef, isFlexibleRef } from '../scanner/graph.js'
+import { computeCascadeEnable, parseDepRef, isFlexibleRef, resolveRef } from '../scanner/graph.js'
 import {
   buildFromDb,
   buildGraphOnly,
@@ -41,6 +41,7 @@ import {
   getForwardDeps,
   getReverseDeps,
   getPackageIndex,
+  getGroupIndex,
   getTransitiveMissingRefs,
   findLocalByFilename,
   resolveHubDownloadUrl,
@@ -156,6 +157,35 @@ export function concreteDepFilename(file) {
   const ver = file?.latest_version
   if (!name || !/^\d+$/.test(String(ver))) return null
   return name + '.' + ver + '.var'
+}
+
+/**
+ * True when a Hub dep ref (or bare package name) is already satisfied by any
+ * local package. Used to suppress "unavailable" toasts for built-ins that ship
+ * with VaM and are intentionally absent from the Hub.
+ *
+ * Accepts either a full dep-ref (`Author.Pkg.latest` / `.minN` / exact) or a
+ * bare package name (`Author.Pkg`) — Hub findPackages failures often surface the
+ * latter, which `resolveRef` alone cannot parse.
+ */
+export function isDepRefPresentLocally(ref, packageIndex, groupIndex) {
+  if (!ref || !packageIndex || !groupIndex) return false
+  const stem = String(ref).replace(/\.var$/i, '')
+  if (!stem) return false
+  const { resolved } = resolveRef(stem, packageIndex, groupIndex)
+  if (resolved) return true
+  // Bare package name (creator.name) — any local version counts.
+  const candidates = groupIndex.get(stem)
+  return !!(candidates && candidates.length > 0)
+}
+
+/** Hub detail dep entry → local satisfaction (same resolveRef path as hub:detail). */
+function isHubDepPresentLocally(file, group, packageIndex, groupIndex) {
+  const ref = file?.filename?.replace(/\.var$/i, '') || ''
+  if (ref && isDepRefPresentLocally(ref, packageIndex, groupIndex)) return true
+  // packageName / group key are bare names when filename is missing or unparseable.
+  const bare = file?.packageName || group
+  return !!(bare && isDepRefPresentLocally(bare, packageIndex, groupIndex))
 }
 
 // --- Public API (called by IPC handlers) ---
@@ -685,20 +715,18 @@ export async function abortImportLocalVar({ uploadId }) {
 async function enqueueMissingDeps(detail, parentRef, autoQueueDeps = true) {
   if (!detail.dependencies) return []
 
+  const packageIndex = getPackageIndex()
+  const groupIndex = getGroupIndex()
   const needsLookup = new Set()
   for (const [group, files] of Object.entries(detail.dependencies)) {
     for (const file of files) {
       // file.filename is the dep-ref verbatim (e.g. ".latest", ".min5") — not a concrete filename.
       // Always derive the stored filename from packageName + latest_version.
       const depFn = concreteDepFilename(file)
-      if (!depFn) {
-        const depKey = file.packageName || file.filename || group
-        if (depKey) needsLookup.add(depKey)
-        continue
-      }
-      if (findLocalByFilename(depFn)) continue
-      const url = resolveDownloadUrl(file)
-      if (url) {
+      if (depFn && findLocalByFilename(depFn)) continue
+
+      const url = depFn ? resolveDownloadUrl(file) : null
+      if (depFn && url) {
         const existingDep = getDownloadByRef(depFn)
         if (existingDep && (existingDep.status === 'queued' || existingDep.status === 'active')) {
           // already in progress
@@ -715,10 +743,14 @@ async function enqueueMissingDeps(detail, parentRef, autoQueueDeps = true) {
             autoQueueDeps: autoQueueDeps ? 1 : 0,
           })
         }
-      } else {
-        const depKey = file.packageName || file.filename || group
-        if (depKey) needsLookup.add(depKey)
+        continue
       }
+
+      // No downloadable exact target on the detail (typical for Hub-unavailable
+      // built-ins). Skip if any local version already satisfies the dep.
+      if (isHubDepPresentLocally(file, group, packageIndex, groupIndex)) continue
+      const depKey = file.packageName || file.filename || group
+      if (depKey) needsLookup.add(depKey)
     }
   }
 
@@ -730,7 +762,7 @@ async function enqueueMissingDeps(detail, parentRef, autoQueueDeps = true) {
     hubResults = await findPackages(refs)
   } catch (err) {
     console.warn('Failed to resolve some dependency URLs:', err.message)
-    return refs
+    return refs.filter((ref) => !isDepRefPresentLocally(ref, packageIndex, groupIndex))
   }
 
   // find_json auto-persisted by findPackages
@@ -739,14 +771,14 @@ async function enqueueMissingDeps(detail, parentRef, autoQueueDeps = true) {
   for (const ref of refs) {
     const hubFile = hubResults[ref]
     if (!hubFile) {
-      unresolved.push(ref)
+      if (!isDepRefPresentLocally(ref, packageIndex, groupIndex)) unresolved.push(ref)
       continue
     }
     // findPackages returns concrete filenames; reject flexible ones defensively so they
     // can never land in downloads.package_ref.
     const depFn = ensureVarExt(hubFile.filename)
     if (!depFn || isFlexibleFilename(depFn)) {
-      unresolved.push(ref)
+      if (!isDepRefPresentLocally(ref, packageIndex, groupIndex)) unresolved.push(ref)
       continue
     }
     if (findLocalByFilename(depFn)) continue
@@ -754,7 +786,7 @@ async function enqueueMissingDeps(detail, parentRef, autoQueueDeps = true) {
     if (existingDep && (existingDep.status === 'queued' || existingDep.status === 'active')) continue
     const url = resolveDownloadUrl(hubFile)
     if (!url) {
-      unresolved.push(ref)
+      if (!isDepRefPresentLocally(ref, packageIndex, groupIndex)) unresolved.push(ref)
       continue
     }
     if (existingDep) deleteDownload(existingDep.id)
