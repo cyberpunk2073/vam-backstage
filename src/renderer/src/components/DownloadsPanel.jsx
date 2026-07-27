@@ -13,7 +13,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { useDownloadStore } from '@/stores/useDownloadStore'
-import { formatBytes, displayName as pkgDisplayName } from '@/lib/utils'
+import { formatBytes, formatTimeAgo, displayName as pkgDisplayName } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import {
@@ -32,15 +32,6 @@ import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
 function formatSpeed(bytesPerSec) {
   if (!bytesPerSec || bytesPerSec <= 0) return ''
   return formatBytes(bytesPerSec) + '/s'
-}
-
-function formatTimeAgo(unixTs) {
-  if (!unixTs) return ''
-  const diff = Math.floor(Date.now() / 1000) - unixTs
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  return `${Math.floor(diff / 86400)}d ago`
 }
 
 function downloadLabel(item) {
@@ -290,7 +281,9 @@ export default function DownloadsPanel({ onClose }) {
                       {downloadLabel(item)}
                     </div>
                   </div>
-                  <span className="text-[10px] text-text-tertiary shrink-0">{formatTimeAgo(item.completed_at)}</span>
+                  <span className="text-[10px] text-text-tertiary shrink-0">
+                    {formatTimeAgo(item.completed_at ? item.completed_at * 1000 : 0)}
+                  </span>
                 </div>
               )}
             />

@@ -4,6 +4,7 @@ import {
   formatStarRating,
   formatNumber,
   formatDate,
+  formatTimeAgo,
   compareContentTypes,
   compareLibraryPackageTypes,
   displayName,
@@ -128,6 +129,22 @@ describe('formatDate', () => {
     const result = formatDate(1704110400)
     expect(result).toMatch(/Jan/)
     expect(result).toMatch(/2024/)
+  })
+})
+
+describe('formatTimeAgo', () => {
+  it('returns empty for falsy input', () => {
+    expect(formatTimeAgo(0)).toBe('')
+    expect(formatTimeAgo(null)).toBe('')
+    expect(formatTimeAgo(undefined)).toBe('')
+  })
+
+  it('formats relative buckets from ms timestamps', () => {
+    const now = Date.now()
+    expect(formatTimeAgo(now - 10_000)).toBe('just now')
+    expect(formatTimeAgo(now - 5 * 60_000)).toBe('5m ago')
+    expect(formatTimeAgo(now - 3 * 3600_000)).toBe('3h ago')
+    expect(formatTimeAgo(now - 2 * 86400_000)).toBe('2d ago')
   })
 })
 

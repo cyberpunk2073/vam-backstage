@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, Activity } from 'react'
 import { Grid2x2, Grid3x3, Loader2, RefreshCw, Pin } from 'lucide-react'
 import { dismissTransientOverlays } from '@/lib/dismissOverlays'
-import { CONTENT_TYPES, compareContentTypes, getTypeColor } from '@/lib/utils'
+import { CONTENT_TYPES, compareContentTypes, getTypeColor, formatTimeAgo } from '@/lib/utils'
 import { useHubStore, hubFilterSignature, HUB_FILTER_DEFAULTS, WISHLIST_FILTER_DEFAULTS } from '@/stores/useHubStore'
 import { useWishlistStore } from '@/stores/useWishlistStore'
 import { useDownloadStore } from '@/stores/useDownloadStore'
@@ -151,6 +151,7 @@ export default function HubView({ onNavigate }) {
     galleryMode,
     setGalleryMode,
     filterOptions,
+    lastFetchedAt,
     setSearch,
     setSelectedType,
     setPaidFilter,
@@ -830,7 +831,7 @@ export default function HubView({ onNavigate }) {
               type="button"
               onClick={() => fetchResources(true, { forceRefresh: true })}
               disabled={refreshBusy}
-              title="Refresh"
+              title={lastFetchedAt ? `Refresh (${formatTimeAgo(lastFetchedAt)})` : 'Refresh'}
               className="p-1 rounded text-text-tertiary hover:text-text-secondary disabled:opacity-30 cursor-pointer disabled:cursor-default"
             >
               <RefreshCw size={13} className={refreshBusy ? 'animate-spin' : ''} />

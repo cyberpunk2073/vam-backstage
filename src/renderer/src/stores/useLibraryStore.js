@@ -127,6 +127,7 @@ export const useLibraryStore = create(
       // Missing deps (lazy loaded when missing filter activates)
       missingDeps: null,
       missingDepsLoading: false,
+      missingDepsLastChecked: null,
       hubDetailsLoading: false,
 
       // Update check results
@@ -252,7 +253,7 @@ export const useLibraryStore = create(
             }
           }
 
-          set({ missingDeps: data, missingDepsLoading: false })
+          set({ missingDeps: data, missingDepsLoading: false, missingDepsLastChecked: Date.now() })
         } catch (err) {
           if (nonce !== missingDepsNonce) return
           console.error('Failed to fetch missing deps:', err)

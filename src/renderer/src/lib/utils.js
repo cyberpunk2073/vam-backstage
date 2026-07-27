@@ -215,6 +215,16 @@ export function formatDate(timestamp) {
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
+/** Relative time from a `Date.now()`-style ms timestamp (e.g. "5m ago"). */
+export function formatTimeAgo(ms) {
+  if (!ms) return ''
+  const diff = Math.floor((Date.now() - ms) / 1000)
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  return `${Math.floor(diff / 86400)}d ago`
+}
+
 const NBSP = '\u00A0'
 
 /** Binary (1024) size; picks the largest unit so the value is in [1, 1024). */

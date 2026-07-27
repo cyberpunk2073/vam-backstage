@@ -43,6 +43,7 @@ import {
   compareLibraryPackageTypes,
   getGradient,
   formatBytes,
+  formatTimeAgo,
   displayName,
   isCoreLibraryCategory,
   libraryTypeBadgeLabel,
@@ -191,6 +192,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     compactCards,
     missingDeps,
     missingDepsLoading,
+    missingDepsLastChecked,
     hubDetailsLoading,
     updateCheckResults,
     updateCheckLoading,
@@ -1055,6 +1057,7 @@ export default function LibraryView({ onNavigate, navContext }) {
               updateCheckLastChecked={updateCheckLastChecked}
               missingDeps={missingDeps}
               missingDepsLoading={missingDepsLoading}
+              missingDepsLastChecked={missingDepsLastChecked}
               hubDetailsLoading={hubDetailsLoading}
               onRefreshMissing={fetchMissingDeps}
               onRefreshUpdates={refreshUpdateCheck}
@@ -1299,6 +1302,7 @@ function ToolbarActions({
   updateCheckLastChecked,
   missingDeps,
   missingDepsLoading,
+  missingDepsLastChecked,
   hubDetailsLoading,
   onRefreshMissing,
   onRefreshUpdates,
@@ -1358,13 +1362,14 @@ function ToolbarActions({
     }
   }
 
-  const lastCheckedText = useMemo(() => {
-    if (!updateCheckLastChecked) return null
-    const mins = Math.round((Date.now() - updateCheckLastChecked) / 60000)
-    if (mins < 1) return 'just now'
-    if (mins < 60) return `${mins}m ago`
-    return `${Math.round(mins / 60)}h ago`
-  }, [updateCheckLastChecked])
+  const lastCheckedText = useMemo(
+    () => (updateCheckLastChecked ? formatTimeAgo(updateCheckLastChecked) : null),
+    [updateCheckLastChecked],
+  )
+  const missingLastCheckedText = useMemo(
+    () => (missingDepsLastChecked ? formatTimeAgo(missingDepsLastChecked) : null),
+    [missingDepsLastChecked],
+  )
 
   if (statusFilter === 'broken' && statusCounts.broken > 0) {
     return (
@@ -1392,7 +1397,11 @@ function ToolbarActions({
           type="button"
           onClick={onRefreshMissing}
           disabled={missingDepsLoading}
-          title="Re-check Hub availability"
+          title={
+            missingLastCheckedText
+              ? `Re-check Hub availability (${missingLastCheckedText})`
+              : 'Re-check Hub availability'
+          }
           className="text-text-tertiary hover:text-text-secondary cursor-pointer p-1 transition-colors"
         >
           {anyLoading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
@@ -1454,7 +1463,7 @@ function ToolbarActions({
           type="button"
           onClick={onRefreshUpdates}
           disabled={updateCheckLoading}
-          title="Re-check for updates"
+          title={lastCheckedText ? `Re-check for updates (${lastCheckedText})` : 'Re-check for updates'}
           className="text-text-tertiary hover:text-text-secondary cursor-pointer p-1 transition-colors"
         >
           {updateCheckLoading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
