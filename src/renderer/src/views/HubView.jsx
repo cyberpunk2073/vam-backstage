@@ -458,6 +458,7 @@ export default function HubView({ onNavigate }) {
       : { n: detailIdx + 1, total: wishlistMode ? detailList.length : totalFound || resources.length }
 
   const handleDetailPrev = useCallback(() => {
+    detailPrefetchRef.current = true
     const { galleryMode, resources, detailResource, detailData } = useHubStore.getState()
     const list = galleryMode === 'wishlist' ? wishlistViewRef.current : resources
     const cur = detailResource ? String(detailData?.resource_id ?? detailResource.resource_id ?? '') : ''
@@ -465,8 +466,8 @@ export default function HubView({ onNavigate }) {
     if (idx > 0) openDetail(list[idx - 1])
   }, [openDetail])
 
-  // Enabled after the first Next within a panel-open session; gates neighbor detail
-  // prefetch so users who never step through don't pay extra `hub:detail` requests.
+  // Enabled after the first Prev/Next within a panel-open session; gates neighbor
+  // detail prefetch so users who never step through don't pay extra `hub:detail` requests.
   const detailPrefetchRef = useRef(false)
   useEffect(() => {
     if (!detailResource) detailPrefetchRef.current = false
@@ -512,13 +513,16 @@ export default function HubView({ onNavigate }) {
     if (detailIdx >= resources.length - 2 && page < totalPages) fetchNextPage()
   }, [wishlistMode, detailIdx, resources.length, page, totalPages, loading, fetchNextPage])
 
-  // Once stepping through, warm the next item's detail into the main-process LRU
-  // cache so the upcoming Next resolves without a network round-trip. The previous
-  // item is already cached from having been viewed.
+  // Once stepping through, warm neighbor details into the main-process LRU cache
+  // so Prev/Next resolve without a network round-trip (LRU may have evicted a
+  // previously viewed item; Prev neighbors were never warmed until now).
   useEffect(() => {
     if (wishlistMode || !detailPrefetchRef.current || detailIdx < 0) return
+    const { prefetchDetail } = useHubStore.getState()
     const next = resources[detailIdx + 1]
-    if (next?.resource_id) useHubStore.getState().prefetchDetail(next.resource_id)
+    const prev = resources[detailIdx - 1]
+    if (next?.resource_id) prefetchDetail(next.resource_id)
+    if (prev?.resource_id) prefetchDetail(prev.resource_id)
   }, [wishlistMode, detailIdx, resources])
 
   const sections = useMemo(
