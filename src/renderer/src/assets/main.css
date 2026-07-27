@@ -203,6 +203,15 @@ html[data-nav-dismiss]
         0 4px 16px -4px rgba(0, 0, 0, 0.4);
 }
 
+/* Post-refresh "new since your last look" hint. Animating `outline` rather than the border or
+   box-shadow keeps `.card-glow:hover` alive — a running animation outranks author-normal
+   declarations. The inset offset lays the ring over the 1px border, so nothing shifts. */
+.card-new {
+    outline: 1px solid transparent;
+    outline-offset: -1px;
+    animation: card-new-flash 3s linear;
+}
+
 /* Animations */
 @keyframes slideInRight {
     from {
@@ -233,6 +242,22 @@ html[data-nav-dismiss]
 @keyframes spin-slow {
     to {
         transform: rotate(360deg);
+    }
+}
+/* Fade in, hold, then a short ease-in exit — a slow decay leaves a thin low-alpha edge
+   lingering, which reads as an unfinished process rather than a steady state. */
+@keyframes card-new-flash {
+    0% {
+        outline-color: rgba(74, 145, 241, 0);
+        animation-timing-function: ease-out;
+    }
+    8%,
+    80% {
+        outline-color: rgba(74, 145, 241, 0.5);
+        animation-timing-function: ease-in;
+    }
+    100% {
+        outline-color: rgba(74, 145, 241, 0);
     }
 }
 

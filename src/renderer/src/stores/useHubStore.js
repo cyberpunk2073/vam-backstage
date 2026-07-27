@@ -50,6 +50,16 @@ export const WISHLIST_FILTER_DEFAULTS = {
 
 let fetchSeq = 0
 
+/** The only sort that reads as a feed you scan for new things, so the only one where flagging
+ *  "updated since your last look" helps: the ranking sorts hardly move page 1, and the trending
+ *  ones surface *old* resources having a moment. Label comes from `getInfo`'s sort list. */
+const LATEST_UPDATE_SORT = 'Latest Update'
+
+/** Outlives `card-new-flash` in main.css, after which `flashSince` is cleared so cards
+ *  recycled by the virtual grid don't replay the animation. */
+const FLASH_MS = 3200
+let flashTimer = null
+
 function syncInstalledFromResources(resources) {
   useInstalledStore.getState().applyBatch(
     resources.map((r) => ({
@@ -93,6 +103,11 @@ export const useHubStore = create(
       // Hub filter signature at the last reset-fetch; lets HubView skip a redundant
       // reset+fetch on reveal. Not persisted (nor are resources), so launch refetches.
       lastFetchedKey: null,
+      // Wall-clock of the last successful page-1 fetch (for the refresh-button tooltip).
+      lastFetchedAt: null,
+      // Cards whose `last_update` (unix seconds) is past this cutoff flash briefly after a
+      // refresh; Infinity = nothing flashes. Transient hint, so never persisted.
+      flashSince: Infinity,
 
       ...HUB_FILTER_DEFAULTS,
       sort: '',
@@ -175,7 +190,14 @@ export const useHubStore = create(
         const page = resetPage ? 1 : state.page
         const replaceResources = resetPage || page === 1
         if (resetPage && state.page !== 1) set({ page: 1 })
-        set({ loading: true, error: null, ...(replaceResources ? { resources: [] } : {}) })
+        // Cutoff is the previous fetch of this same query — the value already behind the refresh
+        // tooltip, in local ms against `last_update`'s unix seconds. Without one (cold start,
+        // filter change) all 30 rows are unfamiliar and none should flash.
+        const sameQuery = state.lastFetchedAt && hubFilterSignature(state) === state.lastFetchedKey
+        const flashSince =
+          opts?.forceRefresh && sameQuery && state.sort === LATEST_UPDATE_SORT ? state.lastFetchedAt / 1000 : Infinity
+        clearTimeout(flashTimer)
+        set({ loading: true, error: null, flashSince: Infinity, ...(replaceResources ? { resources: [] } : {}) })
         try {
           if (opts?.forceRefresh) {
             await window.api.hub.invalidateCaches()
@@ -196,12 +218,15 @@ export const useHubStore = create(
           if (seq !== fetchSeq) return
           const incoming = result.resources || []
           syncInstalledFromResources(incoming)
+
+          if (Number.isFinite(flashSince)) flashTimer = setTimeout(() => set({ flashSince: Infinity }), FLASH_MS)
           set({
             resources: replaceResources ? incoming : [...q.resources, ...incoming],
             totalFound: result.totalFound || 0,
             totalPages: result.totalPages || 0,
             loading: false,
-            ...(replaceResources ? { lastFetchedKey: hubFilterSignature(q) } : {}),
+            flashSince,
+            ...(replaceResources ? { lastFetchedKey: hubFilterSignature(q), lastFetchedAt: Date.now() } : {}),
           })
         } catch (err) {
           if (seq !== fetchSeq) return

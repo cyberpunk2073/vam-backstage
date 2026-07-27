@@ -198,6 +198,8 @@ export function HubCard({
   linkAction,
   /** Wishlist gallery card: render from the disk-cached hub thumbnail and show an "unavailable" chip. */
   wishlist = false,
+  /** Flash the "new since your last look" accent ring (see `flashSince` in useHubStore). */
+  flash = false,
 }) {
   const minimal = mode === 'minimal'
   const isPaid = resource.category === 'Paid'
@@ -386,7 +388,7 @@ export function HubCard({
     <div
       className={`@container group w-full min-w-0 bg-surface border rounded-lg overflow-hidden text-left transition-all duration-150 flex flex-col border-border ${
         linkAction ? '' : 'card-glow cursor-pointer hover:bg-elevated'
-      }`}
+      } ${flash ? 'card-new' : ''}`}
     >
       <div onClick={linkAction ? undefined : () => onClick?.(resource)} className="flex-1">
         <div className="relative aspect-square">

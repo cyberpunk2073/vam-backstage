@@ -152,6 +152,7 @@ export default function HubView({ onNavigate }) {
     setGalleryMode,
     filterOptions,
     lastFetchedAt,
+    flashSince,
     setSearch,
     setSelectedType,
     setPaidFilter,
@@ -911,6 +912,7 @@ export default function HubView({ onNavigate }) {
                         onFilterAuthor={handleFilterAuthor}
                         mode={cardMode}
                         hideType={selectedType !== 'All'}
+                        flash={r.last_update > flashSince}
                       />
                     )}
                   />
