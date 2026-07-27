@@ -267,7 +267,10 @@ function createWindow() {
   })
   if (!IS_CLIENT) attachMainWindowStatePersistence(mainWindow)
 
-  mainWindow.on('ready-to-show', () => {
+  // once: ready-to-show re-fires on every navigation/reload first paint. Client
+  // mode reloads the renderer on reconnect (remote-transport.js); a repeated
+  // show() would activate the app on macOS and steal focus from other windows.
+  mainWindow.once('ready-to-show', () => {
     if (saved?.isMaximized) mainWindow.maximize()
     mainWindow.show()
   })
