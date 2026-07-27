@@ -256,9 +256,12 @@ export default function StatusBar() {
   const completed = dlItems.filter((d) => d.status === 'completed')
   const hasDownloads = active.length > 0 || queued.length > 0
 
+  // Session boundary: when a new wave starts (idle → in-flight), ignore anything
+  // already completed from prior waves. Resetting on session *start* (not end) so we
+  // still get a clean 0/N if StatusBar missed the idle frame (remount, batched updates).
   const prevHadDownloads = useRef(false)
   const excludedIds = useRef(new Set())
-  if (prevHadDownloads.current && !hasDownloads) {
+  if (!prevHadDownloads.current && hasDownloads) {
     for (const d of completed) excludedIds.current.add(d.id)
   }
   prevHadDownloads.current = hasDownloads

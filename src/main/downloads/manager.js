@@ -87,6 +87,10 @@ function persistPaused(value) {
 }
 
 export async function initDownloadManager() {
+  // Drop prior-session completions first (before any await) so the UI never
+  // briefly loads them and folds them into a new status-bar download wave.
+  clearCompleted()
+
   const wasPaused = getSetting(PAUSED_SETTING) === '1'
   if (wasPaused) {
     // User left downloads paused — keep the queue and partial .tmp files
@@ -104,7 +108,6 @@ export async function initDownloadManager() {
     }
     failUnfinishedDownloads()
   }
-  clearCompleted()
 }
 
 function emitUpdated() {
