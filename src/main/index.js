@@ -23,8 +23,9 @@ import { initAutoUpdater } from './updater.js'
 import { installRegistry } from './remote/registry.js'
 import { startServer, stopServer } from './remote/server.js'
 import { getServePort, getConnectUrl } from './remote/cli.js'
-import { initAutostart, readAutostartUrl } from './remote/autostart.js'
-import { DEFAULT_REMOTE_PORT } from '@shared/remote-config.js'
+import { readAutostartUrl } from './remote/autostart.js'
+import { installPrefs, instancePrefs } from './prefs.js'
+import { foldLegacyClientAutostart } from './prefs-migrate.js'
 import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
 import {
   attachMainWindowStatePersistence,
@@ -81,14 +82,19 @@ const HUB_ORIGIN = new URL('https://hub.virtamate.com').origin
 
 // `npm run dev` sets VAM_DEV_USERDATA to isolate dev in a `-dev` userData;
 // `dev:installed` leaves it unset to attach to the installed data. Must run
-// before initAutostart and the `-client` swap so both inherit the dev root.
+// before the prefs stores and the `-client` swap so both inherit the dev root.
 if (process.env.VAM_DEV_USERDATA) {
   app.setPath('userData', app.getPath('userData') + '-dev')
 }
 
-// Bind the client-autostart file to the BASE userData dir now, before the
-// `-client` swap below — both instances must resolve the same path.
-initAutostart(app.getPath('userData'))
+// Installation-scoped prefs (update channel, remote config, developer unlock)
+// bind to the BASE userData dir now, before the `-client` swap below — one
+// installed binary, one set of values, whichever mode it's launched in.
+installPrefs.init(app.getPath('userData'))
+// One-time legacy fold (see prefs-migrate.js). Ordering matters: it has to land
+// before the connect URL is resolved just below, which is why this one step can't
+// live in runStartupMigrations with its DB-backed sibling.
+foldLegacyClientAutostart(app.getPath('userData'))
 
 // Remote-mode switches, resolved once at startup from argv. `CONNECT_URL` set =
 // this instance is a pure client head (backend suppressed, UI points at a
@@ -111,6 +117,10 @@ const HEADLESS_SERVE = SERVE_PORT != null && !IS_CLIENT
 if (IS_CLIENT) {
   app.setPath('userData', app.getPath('userData') + '-client')
 }
+
+// Instance-scoped prefs (window geometry) bind AFTER the swap: a client head and
+// the host each own a window, so they must not share one saved rect.
+instancePrefs.init(app.getPath('userData'))
 
 // Single-instance guard. After the client userData swap on purpose: the lock is
 // keyed on the userData dir, so a client head and the normal/serve backend (which
@@ -166,15 +176,10 @@ function isDevToolsInspectorHotkey(input) {
   return false
 }
 
-/** DevTools hotkeys are live in dev, after the 7-tap unlock, or on a client head
- *  (no local DB to store the unlock flag — gating on getSetting always fails). */
+/** DevTools hotkeys are live in dev or after the 7-tap unlock. The unlock is
+ *  machine-scoped, so a client head stores its own (it has no DB). */
 function devHotkeysEnabled() {
-  if (is.dev || IS_CLIENT) return true
-  try {
-    return getSetting('developer_options_unlocked') === '1'
-  } catch {
-    return false
-  }
+  return is.dev || installPrefs.get('devUnlocked')
 }
 
 /**
@@ -243,9 +248,7 @@ function attachDevToolsHotkeys(window) {
 }
 
 function createWindow() {
-  // Client head has no DB, so window-state read/persist (both go through the
-  // settings table) is skipped — fall back to default geometry.
-  const saved = IS_CLIENT ? null : loadMainWindowState()
+  const saved = loadMainWindowState()
   mainWindow = new BrowserWindow({
     title: 'VaM Backstage',
     width: saved?.width ?? DEFAULT_WIDTH,
@@ -267,7 +270,7 @@ function createWindow() {
       ...(CONNECT_URL ? { additionalArguments: [`--connect=${CONNECT_URL}`] } : {}),
     },
   })
-  if (!IS_CLIENT) attachMainWindowStatePersistence(mainWindow)
+  attachMainWindowStatePersistence(mainWindow)
 
   // once: ready-to-show re-fires on every navigation/reload first paint. Client
   // mode reloads the renderer on reconnect (remote-transport.js); a repeated
@@ -501,15 +504,13 @@ app.whenReady().then(async () => {
 
   // Auto-start the LAN server when requested via CLI/env (headless, handled
   // above via HEADLESS_SERVE) or via the persisted "start on launch" preference
-  // (windowed). CLI/env wins on port; the setting falls back to the last-used
-  // port. Client heads never host. The setting lives in the local DB, so it is
-  // never read in client mode (no DB there) — another reason client auto-connect
-  // isn't a persisted flag.
+  // (windowed). CLI/env wins on port; the pref falls back to the last-used port.
+  // Client heads never host.
   if (!IS_CLIENT) {
     let servePort = SERVE_PORT
-    const autoStart = getSetting('remote_mode_enabled') === '1' && getSetting('remote_serve_on_launch') === '1'
+    const autoStart = installPrefs.get('remoteEnabled') && installPrefs.get('serveOnLaunch')
     if (servePort == null && autoStart) {
-      servePort = parseInt(getSetting('remote_serve_port'), 10) || DEFAULT_REMOTE_PORT
+      servePort = installPrefs.get('servePort')
     }
     if (servePort != null) {
       const res = await startServer(servePort)

@@ -1,5 +1,6 @@
 import { migrateThumbCacheLayout } from './thumb-cache-migrate.js'
 import { migrateLooseSidecarLayout } from './loose-sidecar-migrate.js'
+import { migrateMachinePrefs } from './prefs-migrate.js'
 
 /**
  * Home for one-time, versioned upgrades that run once at boot (after the DB is
@@ -11,4 +12,7 @@ import { migrateLooseSidecarLayout } from './loose-sidecar-migrate.js'
 export function runStartupMigrations() {
   migrateThumbCacheLayout()
   migrateLooseSidecarLayout()
+  // Before the window is created and the updater initialises, both of which read
+  // the prefs this seeds.
+  migrateMachinePrefs()
 }

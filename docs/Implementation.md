@@ -510,6 +510,12 @@ CREATE TABLE settings (
 );
 ```
 
+This table is **workspace scope**: it travels with `backstage.db`, and a remote
+client head reads and writes it _on the server_ (`settings:*` is not a
+client-local channel), which is what makes "set the VaM dir from the laptop"
+change it on the host. Settings that describe a machine's installation instead of
+its library live outside the DB — see "Machine-scoped prefs" below.
+
 **Notable settings keys**:
 
 - `vam_dir` — VaM installation root path
@@ -520,11 +526,60 @@ CREATE TABLE settings (
 - `auto_hide_foreign_hair` / `auto_hide_foreign_poses` / `auto_hide_foreign_clothing` — `'1'` to auto-manage `.hide` files for content of that category bundled inside packages whose own effective type is _not_ that category (e.g. hide a stray hair shipped inside a clothing pack). Looks/Scenes intentionally have no equivalent — they're commonly bundled as demos. All four auto-hide settings flow through one declarative rule table (`AUTO_HIDE_RULES` in `src/main/scanner/index.js`); each rule contributes a `matches(pkgCtx, content)` predicate. **Targeted-sweep + deference invariant**: a remove sweep for rule X unhides only items rule X claims that are currently hidden AND that no other active rule still claims; an apply sweep for rule X hides only items in rule X's claim that aren't already hidden. Rules can stack freely — overlapping claims (e.g. a hair in a dep clothing pack with both `auto_hide_deps` and `auto_hide_foreign_hair` on) stay hidden until the _last_ rule claiming them is turned off and swept.
 - `hub_debug_requests` — `'1'` to log all Hub API requests
 - `hub_filters_json` — cached Hub filter metadata (types, tags, sort options)
-- `update_channel` — `'stable'` | `'dev'`; selects updater feed (see §23)
+- `machine_prefs_migrated` — `'1'` once the machine-scoped keys have been folded into the prefs files (see below); the guard that keeps that one-time move idempotent
 - `disable_behavior` — `'suffix'` (VaM-native: drop an empty `.var.disabled` marker beside the bare `.var` in main; default) or `'move-to:<auxDirId>'` (move to the named aux library directory). Removing the referenced aux dir resets this to `'suffix'`.
 - `import_move_files` — `'1'` to _move_ (rather than copy) a `.var` added via drag-and-drop into the library, removing the source. Only affects the local fast path (`importLocalFromPath`): a same-filesystem `rename` (instant, no bytes copied — the key win on NTFS where reflinks don't apply), falling back to copy + unlink-source across filesystems (`EXDEV`). The same-fs rename verifies the bytes in place and renames back on failure so an invalid package never destroys the source. A remote client head has no local source and always streams a copy, so the option is hidden client-side and ignored server-side there.
-- `remote_mode_enabled` — `'1'` when the Settings remote section is enabled (server UI + optional auto-start).
-- `remote_serve_on_launch` — `'1'` to call `remote:start` automatically on startup when remote mode is enabled.
+
+### Machine-scoped prefs (outside the DB)
+
+Some settings describe _this machine's installation_ rather than the library, so
+the `settings` table is the wrong home for them: a client head has no DB at all,
+and a value shared through the host's DB would be read and written by every
+connected head. [`src/main/prefs.js`](../src/main/prefs.js) holds them in two tiny
+JSON files instead, each with a declared key table (default + parser), which is
+what keeps them migration-free — unknown keys are ignored on read and preserved
+on write, and a corrupt value falls back to its default.
+
+| Store        | File                  | Directory                                  | Keys                                                                                                       |
+| ------------ | --------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| **install**  | `install-prefs.json`  | base userData, bound before `-client` swap | `updateChannel`, `devUnlocked`, `connectUrl`, `autoconnect`, `remoteEnabled`, `serveOnLaunch`, `servePort` |
+| **instance** | `instance-prefs.json` | post-swap userData                         | `windowState`                                                                                              |
+
+The install store binds to the **base** userData dir (before the `-client` swap in
+`index.js`), so a host and a client head on the same machine agree: one installed
+binary means one update channel, and the host's escape hatch
+(`remote:relaunch-disconnect`) must be able to disarm the client's auto-connect.
+The instance store binds **after** the swap, because host and client each own a
+window and must not share one saved rect.
+
+Admission is deliberately narrow — a key belongs here only when (1) main needs it
+before a window or the DB exists, and (2) sharing it with another head would be
+wrong. Everything else stays library data (`settings`) or renderer view state
+(`localStorage`). Two consequences worth knowing: these values survive
+`dev:nuke-database` (they aren't library data), and they must never be reachable
+through `settings:*` — each is exposed only over channels under an already
+client-local, server-denied prefix (`updater:*`, `remote:*`, `dev:*`), so the
+routing is correct by construction rather than by remembering to add a key to
+`LOCAL_CHANNELS`.
+
+**Concurrent writers.** The install file is shared by two OS processes with no
+lock, so each write goes to a **per-pid** scratch file, is `fsync`ed, and is
+published with `rename` — a reader therefore only ever sees one complete version,
+and a crash leaves at most a stray scratch file. (A shared scratch name would be
+an actual corruption path: both processes truncating and filling the same file,
+then publishing whatever bytes it held.) `patch` also re-reads immediately before
+writing, so keys the other process published first survive. What remains is a
+true interleave losing the earlier writer's key — microseconds wide, on values a
+human changes in one window at a time, so it's accepted rather than paid for with
+a lock file whose stale state would be the worse failure.
+
+**Legacy migration** lives entirely in
+[`prefs-migrate.js`](../src/main/prefs-migrate.js) — one module to delete when it
+retires, rather than legacy branches spread through live code. Two halves, because
+their prerequisites differ:
+
+- `migrateMachinePrefs()` runs from `runStartupMigrations()` on the data-side instance, guarded by the `machine_prefs_migrated` flag like every other startup migration. It copies `update_channel`, `developer_options_unlocked`, `main_window_state`, `remote_connect_url`, `remote_mode_enabled`, `remote_serve_on_launch` and `remote_serve_port` into the prefs (existing pref values win, since a client head may already have written its own) and deletes the rows.
+- `foldLegacyClientAutostart()` cannot use that infrastructure: it must land before `index.js` resolves the connect URL at module scope, and it must run on a **client head** too — the instance that owns an armed URL and has no database to migrate from. So it's a file-to-file step called from `index.js`, self-limiting because it deletes the `client-autostart.json` it reads (after the first launch it costs one `existsSync`).
 
 ### Local content sentinel (`__local__`)
 
@@ -1558,15 +1613,15 @@ Dropping `.var` files (local or remote client) uses a batch protocol in `src/mai
 
 #### Remote control (`src/main/ipc/remote.js`)
 
-| Channel                        | Purpose                                                |
-| ------------------------------ | ------------------------------------------------------ |
-| `remote:status`                | `{ running, port, clients }`                           |
-| `remote:local-ips`             | Enumerated LAN IPv4 addresses (+ primary egress guess) |
-| `remote:start` / `remote:stop` | Hot-toggle the WebSocket server                        |
-| `remote:relaunch-connect`      | Relaunch as client with `--connect=<url>`              |
-| `remote:relaunch-disconnect`   | Relaunch as local instance; clear autoconnect file     |
-| `remote:get-autoconnect`       | Read persisted client autoconnect URL                  |
-| `remote:set-autoconnect`       | Arm/disarm client autoconnect (file-backed; no DB)     |
+| Channel                        | Purpose                                                  |
+| ------------------------------ | -------------------------------------------------------- |
+| `remote:status`                | `{ running, port, clients }`                             |
+| `remote:local-ips`             | Enumerated LAN IPv4 addresses (+ primary egress guess)   |
+| `remote:start` / `remote:stop` | Hot-toggle the WebSocket server                          |
+| `remote:relaunch-connect`      | Relaunch as client with `--connect=<url>`                |
+| `remote:relaunch-disconnect`   | Relaunch as local instance; disarm autoconnect           |
+| `remote:get-config`            | Machine-scoped remote config (`autoconnect` = effective) |
+| `remote:set-config`            | Patch that config (address, arm, serve port/on-launch)   |
 
 #### Settings / App / Shell
 
@@ -1597,14 +1652,16 @@ Dropping `.var` files (local or remote client) uses a batch protocol in `src/mai
 
 #### Dev (`src/main/ipc/dev.js`)
 
-Always registered, but destructive handlers (`dev:nuke-database`) are gated behind either `is.dev` or the `developer_options_unlocked` setting (toggled by seven taps on the version string).
+Always registered, but destructive handlers (`dev:nuke-database`) are gated behind either `is.dev` or the machine-scoped `devUnlocked` pref (toggled by seven taps on the version string). Machine-scoped, so a client head unlocks _itself_ — while the flag lived in the DB, a client's seven taps flipped the host's flag, which also relaxes the host's WS version gate.
 
 When developer options are unlocked, **F12** (and Ctrl+Shift+I / Cmd+Alt+I) toggle Chromium DevTools on the main window — the hotkeys are gated in `attachDevToolsHotkeys` (`src/main/index.js`) so they work in packaged builds, not just `npm run dev`. All main-process `console.*` output is also mirrored into the renderer DevTools console with a `[main]` prefix via `src/main/log-forward.js` and a preload-side `main:log` listener; messages emitted before the renderer finishes loading are buffered (last 500) and flushed on `did-finish-load`.
 
-| Channel             | Purpose                                |
-| ------------------- | -------------------------------------- |
-| `dev:is-dev`        | Whether the app is running in dev mode |
-| `dev:nuke-database` | Delete `backstage.db` and restart      |
+| Channel             | Purpose                                     |
+| ------------------- | ------------------------------------------- |
+| `dev:is-dev`        | Whether the app is running in dev mode      |
+| `dev:get-unlocked`  | Read the machine's developer-options unlock |
+| `dev:set-unlocked`  | Set it (seven-tap unlock / the off switch)  |
+| `dev:nuke-database` | Delete `backstage.db` and restart           |
 
 #### BrowserAssist (`src/main/ipc/browser-assist.js`)
 
@@ -1727,13 +1784,13 @@ One Electron instance can host the full main-process backend on the LAN while ot
 
 **Client** (`preload/remote-transport.js`): When launched with `--connect=<ws://host:port>`, all `window.api.*` invokes become WebSocket RPC; event subscriptions receive rebroadcast payloads. `remote:*`, `shell:openExternal`, updater, and Hub session channels still use local IPC (or stubs); the server denylist is the backstop against raw peers bypassing that routing.
 
-**Settings UX**: Enable remote mode, optional serve-on-launch, pick port, copy `ws://<ip>:<port>`. Connecting/disconnecting relaunches the app with/without `--connect=` (hot-switching transport mid-session is intentionally not supported). Client autoconnect URL is stored in a standalone file (`remote/autostart.js`) because a pure client head may have no DB yet.
+**Settings UX**: Enable remote mode, optional serve-on-launch, pick port, copy `ws://<ip>:<port>`. Connecting/disconnecting relaunches the app with/without `--connect=` (hot-switching transport mid-session is intentionally not supported). The whole block — server address, armed auto-connect, serve port / on-launch, section visibility — is machine-scoped prefs read and written over `remote:get-config` / `remote:set-config` (see §7). It cannot go through `settings:*`: those route to the _server_, so a client would show and overwrite the host's remembered address. Arming is `autoconnect` + `connectUrl` rather than the presence of a file, so disconnecting disarms while keeping the address on offer; `readAutostartUrl()` in `remote/autostart.js` is the effective arm (armed **and** parseable), and that's what `autoconnect` reports back to the renderer so there's one boolean rather than two fields to reconcile. The Settings view keeps the returned config as its only copy of these values — the two text fields are local drafts, everything else renders straight off what main persisted.
 
 ---
 
 ## 23. Release Channels
 
-Two GitHub Actions workflows publish to separate channels. The in-app setting `update_channel` (`stable` | `dev`, default `stable`) picks which feed `electron-updater` uses via [`src/main/updater.js`](../src/main/updater.js).
+Two GitHub Actions workflows publish to separate channels. The machine-scoped `updateChannel` pref (`stable` | `dev`, default `stable`, see §7) picks which feed `electron-updater` uses via [`src/main/updater.js`](../src/main/updater.js). It lives outside the DB because it governs which build replaces _this installed binary_: a client head has no database yet still updates itself, and switching channel has to work while the version gate has the socket shut — which is exactly when a client needs to follow a dev-build host.
 
 | Aspect       | Stable                                                           | Dev (`dev-latest`)                                                                                       |
 | ------------ | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -1754,7 +1811,7 @@ Dev builds use `X.Y.(Z+1)-dev.<run_number>` so they sort strictly ahead of the c
 
 ### Channel switching at runtime
 
-`updater:setChannel` persists the new value, reconfigures `setFeedURL`, and kicks off a background `checkForUpdates()` without awaiting it — the IPC returns immediately and no app restart is needed.
+`updater:setChannel` persists the new value, reconfigures `setFeedURL`, and kicks off a background `checkForUpdates()` without awaiting it — the IPC returns immediately and no app restart is needed. `updater:*` is client-local in the transport and denied at the server, so a client always switches its own channel, never the host's.
 
 ### macOS: custom install path (no Apple certificate)
 

@@ -13,6 +13,17 @@ describe('isRemoteChannelDenied', () => {
     expect(isRemoteChannelDenied('dev:forget-deleted-data')).toBe(true)
   })
 
+  // Machine-scoped prefs must never cross the bridge: a client reading or
+  // writing these has to hit its own installation, not the host's.
+  it('denies the machine-scoped pref channels', () => {
+    expect(isRemoteChannelDenied('remote:get-config')).toBe(true)
+    expect(isRemoteChannelDenied('remote:set-config')).toBe(true)
+    expect(isRemoteChannelDenied('updater:getChannel')).toBe(true)
+    expect(isRemoteChannelDenied('updater:setChannel')).toBe(true)
+    expect(isRemoteChannelDenied('dev:get-unlocked')).toBe(true)
+    expect(isRemoteChannelDenied('dev:set-unlocked')).toBe(true)
+  })
+
   it('denies exact machine-local channels', () => {
     expect(isRemoteChannelDenied('packages:import-local-copy')).toBe(true)
     expect(isRemoteChannelDenied('library-dirs:browse')).toBe(true)

@@ -1,7 +1,6 @@
 import { screen } from 'electron'
-import { getSetting, trySetSetting } from './db.js'
+import { instancePrefs } from './prefs.js'
 
-const SETTING_KEY = 'main_window_state'
 const SAVE_DEBOUNCE_MS = 500
 
 export const DEFAULT_WIDTH = 1280
@@ -10,17 +9,14 @@ export const MIN_WIDTH = 800
 export const MIN_HEIGHT = 500
 
 /**
+ * Geometry is instance-scoped (see prefs.js): a host and a client head each own
+ * a window, so they must not share one saved rect — and a client persists its
+ * bounds without needing a database.
  * @returns {{ x: number, y: number, width: number, height: number, isMaximized: boolean } | null}
  */
 export function loadMainWindowState() {
-  const raw = getSetting(SETTING_KEY)
-  if (!raw) return null
-  let parsed
-  try {
-    parsed = JSON.parse(raw)
-  } catch {
-    return null
-  }
+  const parsed = instancePrefs.get('windowState')
+  if (!parsed) return null
   const { x, y, width, height } = parsed
   if (![x, y, width, height].every(Number.isFinite)) return null
   if (width <= 0 || height <= 0) return null
@@ -90,11 +86,9 @@ function centerOnPrimary(rect) {
 /** @param {import('electron').BrowserWindow} win */
 function saveMainWindowState(win) {
   if (win.isDestroyed()) return
-  const state = { ...win.getNormalBounds(), isMaximized: win.isMaximized() }
-  // Best-effort: the dev "nuke database" path closes the DB before app.quit(),
-  // and the resulting window-close still tries to flush. Losing one bounds
-  // write at shutdown is fine; crashing the main process is not.
-  trySetSetting(SETTING_KEY, JSON.stringify(state))
+  // Best-effort by construction: the store swallows and logs write failures, so a
+  // flush during shutdown can lose the bounds but never crash the main process.
+  instancePrefs.set('windowState', { ...win.getNormalBounds(), isMaximized: win.isMaximized() })
 }
 
 /** @param {import('electron').BrowserWindow} win */

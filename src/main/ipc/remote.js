@@ -1,14 +1,23 @@
 import { ipcMain, app } from 'electron'
 import { networkInterfaces } from 'os'
 import { createSocket } from 'dgram'
+import { normalizeConnectUrl } from '@shared/remote-config.js'
 import { startServer, stopServer, getStatus } from '../remote/server.js'
-import { readAutostartUrl, writeAutostartUrl } from '../remote/autostart.js'
+import { disarmAutostart, readAutostartUrl } from '../remote/autostart.js'
+import { installPrefs } from '../prefs.js'
 
 /**
  * Local-mode control surface for the Settings tab. Server start/stop is a true
  * hot toggle; switching a running instance into (or out of) client mode is done
  * by relaunching with the appropriate argv, which sidesteps tearing down an
  * already-initialised backend / renderer.
+ *
+ * The config handlers are also the renderer's only door to the remote prefs,
+ * which are machine-scoped (see prefs.js). Going through `settings:*` would
+ * route a client's reads and writes to the *host's* database — the client would
+ * show the host's remembered address and overwrite it on connect. The `remote:`
+ * prefix is client-local in the preload transport and denied at the server, so
+ * that routing is correct by construction.
  */
 
 function relaunchWithArgs(extra) {
@@ -79,6 +88,16 @@ function primaryLocalIp() {
 let ipCache = null
 const IP_CACHE_TTL_MS = 15000
 
+/** Everything `remote:get-config` reports, and the renderer's write allowlist. */
+const CONFIG_KEYS = ['connectUrl', 'autoconnect', 'remoteEnabled', 'serveOnLaunch', 'servePort']
+
+function readConfig() {
+  // `autoconnect` is reported as the *effective* arm — armed with an address that
+  // parses, the rule autostart.js owns — overriding the raw flag from the file, so
+  // the renderer has one boolean to trust instead of two fields to reconcile.
+  return { ...installPrefs.pick(CONFIG_KEYS), autoconnect: readAutostartUrl() !== null }
+}
+
 export function registerRemoteHandlers() {
   ipcMain.handle('remote:status', () => getStatus())
 
@@ -114,17 +133,31 @@ export function registerRemoteHandlers() {
     // Any deliberate exit to local mode also disarms client auto-connect, so a
     // saved client can't immediately relaunch back into itself (and an offline
     // host can never trap the user in a connect loop).
-    writeAutostartUrl(null)
+    disarmAutostart()
     relaunchWithArgs([])
     return { ok: true }
   })
 
-  // Client auto-connect arm/disarm. Stored in a standalone file (see
-  // remote/autostart.js) because a client head has no DB.
-  ipcMain.handle('remote:get-autoconnect', () => ({ url: readAutostartUrl() }))
+  ipcMain.handle('remote:get-config', () => readConfig())
 
-  ipcMain.handle('remote:set-autoconnect', (_e, url) => {
-    writeAutostartUrl(url || null)
-    return { ok: true, url: readAutostartUrl() }
+  /** Partial patch; unknown keys are ignored. Returns the resulting config. */
+  ipcMain.handle('remote:set-config', (_e, patch) => {
+    if (!patch || typeof patch !== 'object') return readConfig()
+    const next = {}
+    for (const key of CONFIG_KEYS) {
+      if (Object.hasOwn(patch, key)) next[key] = patch[key]
+    }
+    // Arming without a parseable address would produce a head that relaunches
+    // into a connection it can never make, so drop the arm and keep the address.
+    if (next.autoconnect === true) {
+      const address = Object.hasOwn(next, 'connectUrl') ? next.connectUrl : installPrefs.get('connectUrl')
+      if (!normalizeConnectUrl(address)) {
+        console.warn('[remote] refusing to arm auto-connect for unparseable address:', address)
+        delete next.autoconnect
+      }
+    }
+    // Nothing recognised, or the arm was the only key and got refused: no write.
+    if (Object.keys(next).length) installPrefs.patch(next)
+    return readConfig()
   })
 }

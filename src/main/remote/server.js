@@ -5,18 +5,13 @@ import { DEFAULT_REMOTE_PORT } from '@shared/remote-config.js'
 import { getHandler } from './registry.js'
 import { CLIENT_LOCAL_EVENTS, isRemoteChannelDenied } from './channel-policy.js'
 import { getWindow } from '../notify.js'
-import { getSetting } from '../db.js'
+import { installPrefs } from '../prefs.js'
 
 // The version gate on the client relaxes when a peer reports `dev` — true for
 // unpackaged runs and for packaged builds where DevTools/developer options have
 // been unlocked (both signal a user who knowingly runs mixed versions).
 function isDevMode() {
-  if (!app.isPackaged) return true
-  try {
-    return getSetting('developer_options_unlocked') === '1'
-  } catch {
-    return false
-  }
+  return !app.isPackaged || installPrefs.get('devUnlocked')
 }
 
 /**

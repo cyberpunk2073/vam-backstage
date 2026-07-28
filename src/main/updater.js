@@ -2,7 +2,7 @@ import { app, ipcMain } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { autoUpdater } from 'electron-updater'
 import { notify } from './notify.js'
-import { getDb, getSetting, setSetting } from './db.js'
+import { installPrefs } from './prefs.js'
 import { stageMacUpdate, installMacUpdateAndRestart, installMacUpdateOnQuitSync } from './mac-update.js'
 
 const DEV_ROLLING_TAG = 'dev-latest'
@@ -36,17 +36,16 @@ async function applyChannel(channel) {
   autoUpdater.allowDowngrade = false
 }
 
-// A client head runs with no local DB (see initBackend in index.js), yet the
-// updater IPC handlers are still registered. Guard the DB touch so they never
-// hit an undefined `db` (which threw on the client, most visibly on reconnect
-// reloads): with no DB we assume the 'stable' channel and drop the write.
+// The channel picks which build replaces *this* installed binary, so it lives in
+// the machine-scoped install prefs rather than the library DB (see prefs.js).
+// That's what lets a client head — which runs with no DB at all — remember its
+// own choice, and works even while the version gate has the socket shut.
 function readChannel() {
-  if (!getDb()) return 'stable'
-  return getSetting('update_channel') === 'dev' ? 'dev' : 'stable'
+  return installPrefs.get('updateChannel')
 }
 
 function writeChannel(channel) {
-  if (getDb()) setSetting('update_channel', channel)
+  installPrefs.set('updateChannel', channel)
 }
 
 async function runCheck(extra = {}) {

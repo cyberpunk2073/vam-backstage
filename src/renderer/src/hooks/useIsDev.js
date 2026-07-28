@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 /**
  * True when dev-only UI should be shown: either running under Electron dev
  * (`is.dev`), or the user manually unlocked developer options from Settings
- * (seven taps on the version string → `developer_options_unlocked = '1'`).
+ * (seven taps on the version string → the machine-scoped `devUnlocked` pref).
  * Mirrors the main-process gating used by dev/extract IPC handlers.
  *
  * Re-fetches on every mount so a mid-session toggle in Settings takes effect
@@ -14,11 +14,8 @@ import { useEffect, useState } from 'react'
 let cached = null
 
 async function loadDevFlag() {
-  const [isDev, unlocked] = await Promise.all([
-    window.api.dev.isDev(),
-    window.api.settings.get('developer_options_unlocked'),
-  ])
-  return !!isDev || unlocked === '1'
+  const [isDev, unlocked] = await Promise.all([window.api.dev.isDev(), window.api.dev.getUnlocked()])
+  return !!isDev || unlocked === true
 }
 
 export function useIsDev() {
