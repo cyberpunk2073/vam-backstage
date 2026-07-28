@@ -139,6 +139,15 @@ function isUpdateChecking(updateInfo) {
   return updateInfo.downloadUrl === undefined
 }
 
+/** True once enrichment resolved a concrete hub URL. The bulk path needs this
+ *  positive form: "not unavailable" also admits entries still being checked, and
+ *  installing those queues whatever the hub answers with — including resources it
+ *  can't actually serve. */
+function isUpdateDownloadable(updateInfo) {
+  if (!updateInfo || updateInfo.localNewerFilename) return false
+  return typeof updateInfo.downloadUrl === 'string'
+}
+
 /** A package counts as "broken" when it's corrupted, has missing deps, or — while
  *  active — has dependencies that are installed but disabled/offloaded (VaM won't
  *  load them). Inactive packages aren't flagged: their inactive deps are expected. */
@@ -196,6 +205,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     hubDetailsLoading,
     updateCheckResults,
     updateCheckLoading,
+    updateEnrichLoading,
     updateCheckLastChecked,
     backendCounts,
     packagesLoaded,
@@ -486,7 +496,15 @@ export default function LibraryView({ onNavigate, navContext }) {
             count: backendCounts?.missingUnique ?? '…',
             title: 'Dependencies referenced by your packages but not installed locally',
           },
-          { value: 'updates', label: 'Updates', count: updateFacetCount },
+          {
+            value: 'updates',
+            label: 'Updates',
+            count: updateFacetCount,
+            title:
+              updateFacetCount === '?'
+                ? 'Update check unavailable — the hub package index could not be reached'
+                : 'Packages with a newer version listed on the hub',
+          },
         ],
       },
       {
@@ -1054,6 +1072,7 @@ export default function LibraryView({ onNavigate, navContext }) {
               filtered={filtered}
               updateCheckResults={updateCheckResults}
               updateCheckLoading={updateCheckLoading}
+              updateEnrichLoading={updateEnrichLoading}
               updateCheckLastChecked={updateCheckLastChecked}
               missingDeps={missingDeps}
               missingDepsLoading={missingDepsLoading}
@@ -1299,6 +1318,7 @@ function ToolbarActions({
   filtered,
   updateCheckResults,
   updateCheckLoading,
+  updateEnrichLoading,
   updateCheckLastChecked,
   missingDeps,
   missingDepsLoading,
@@ -1341,8 +1361,7 @@ function ToolbarActions({
     let alreadyKnown = 0
     let pausedFlag = false
     for (const update of Object.values(updateCheckResults)) {
-      if (update.localNewerFilename) continue
-      if (isUpdateUnavailable(update)) continue
+      if (!isUpdateDownloadable(update)) continue
       if (!update.hubResourceId && !update.packageName) continue
       try {
         const r = await store.install(update.hubResourceId, null, true, update.packageName, !!update.isDepUpdate)
@@ -1445,16 +1464,16 @@ function ToolbarActions({
 
   if (statusFilter === 'updates') {
     const downloadableCount =
-      updateCheckResults != null
-        ? Object.values(updateCheckResults).filter((u) => !u.localNewerFilename && !isUpdateUnavailable(u)).length
-        : null
+      updateCheckResults != null ? Object.values(updateCheckResults).filter(isUpdateDownloadable).length : null
+    const anyLoading = updateCheckLoading || updateEnrichLoading
     return (
       <>
         <Button
           variant="gradient"
           size="xs"
           onClick={handleUpdateAll}
-          disabled={updateCheckResults == null || updateCheckLoading || downloadableCount === 0}
+          disabled={updateCheckResults == null || anyLoading || downloadableCount === 0}
+          title={updateEnrichLoading ? 'Verifying hub availability…' : undefined}
         >
           <ArrowUpCircle size={12} /> Update All
           {downloadableCount != null && downloadableCount > 0 ? ` (${downloadableCount})` : ''}
@@ -1466,7 +1485,7 @@ function ToolbarActions({
           title={lastCheckedText ? `Re-check for updates (${lastCheckedText})` : 'Re-check for updates'}
           className="text-text-tertiary hover:text-text-secondary cursor-pointer p-1 transition-colors"
         >
-          {updateCheckLoading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+          {anyLoading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
         </button>
         {lastCheckedText && <span className="text-[10px] text-text-tertiary">Checked {lastCheckedText}</span>}
       </>

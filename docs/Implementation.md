@@ -1406,38 +1406,38 @@ Handlers live under `src/main/ipc/` split per domain (`packages.js`, `contents.j
 
 #### Packages (`src/main/ipc/packages.js`)
 
-| Channel                          | Purpose                                                                                          |
-| -------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `packages:list`                  | All packages (filtering done client-side)                                                        |
-| `packages:detail`                | Single package with deps, dependents, contents                                                   |
-| `packages:stats`                 | Aggregate stats (see §8)                                                                         |
-| `packages:status-counts`         | Direct/dependency/broken/orphan counts                                                           |
-| `packages:type-counts`           | Counts grouped by package type                                                                   |
-| `packages:tag-counts`            | Hub tag occurrence counts                                                                        |
-| `packages:author-counts`         | Author occurrence counts                                                                         |
-| `packages:install`               | Install by Hub resource (with optional dep auto-queue)                                           |
-| `packages:install-missing`       | Install a single missing dep of one package                                                      |
-| `packages:install-all-missing`   | Install every missing ref across the library                                                     |
-| `packages:install-deps-batch`    | Install a renderer-supplied list of missing refs                                                 |
-| `packages:install-dep`           | Install a single dep by Hub file record                                                          |
-| `packages:promote`               | Promote dep → direct (single filename or array); auto-enables if disabled/offloaded              |
-| `packages:uninstall`             | Single filename or array; demotes instead of deleting when dependents remain                     |
-| `packages:toggle-enabled`        | Toggle disable/enable/offload via `applyStorageState` (cascade-aware; honors `disable_behavior`) |
-| `packages:set-enabled`           | Set enabled/disabled for an explicit filename list                                               |
-| `packages:force-remove`          | Delete a package regardless of dependents                                                        |
-| `packages:remove-orphans`        | Bulk-remove every package in `orphanSet`                                                         |
-| `packages:set-type-override`     | Override the auto-detected type                                                                  |
-| `packages:setHubResource`        | Manually link a local package to a Hub resource id                                               |
-| `packages:missing-deps`          | Aggregated missing-dep data for Library's "missing" filter                                       |
-| `packages:enrich-from-hub`       | Backfill Hub metadata for a batch of package stems                                               |
-| `packages:file-list`             | Full internal ZIP file list for a `.var`                                                         |
-| `packages:check-updates`         | Run the CDN update check                                                                         |
-| `packages:redownload`            | Re-fetch a `.var` from the Hub to replace a corrupted copy                                       |
-| `packages:import-local-precheck` | Batch import: report already-installed / invalid filenames before streaming                      |
-| `packages:import-local-chunk`    | Batch import: stream one chunk (`{uploadId, filename, bytes, first, last}`)                      |
-| `packages:import-local-commit`   | Batch import: drain integration queue, one graph rebuild + notify, return aggregate              |
-| `packages:import-local-abort`    | Batch import: abort one upload or the whole batch                                                |
-| `packages:import-local-copy`     | Local-only fast path: copy/move from a host path into the same import batch (remote-denied)      |
+| Channel                          | Purpose                                                                                           |
+| -------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `packages:list`                  | All packages (filtering done client-side)                                                         |
+| `packages:detail`                | Single package with deps, dependents, contents                                                    |
+| `packages:stats`                 | Aggregate stats (see §8)                                                                          |
+| `packages:status-counts`         | Direct/dependency/broken/orphan counts                                                            |
+| `packages:type-counts`           | Counts grouped by package type                                                                    |
+| `packages:tag-counts`            | Hub tag occurrence counts                                                                         |
+| `packages:author-counts`         | Author occurrence counts                                                                          |
+| `packages:install`               | Install by Hub resource (with optional dep auto-queue)                                            |
+| `packages:install-missing`       | Install a single missing dep of one package                                                       |
+| `packages:install-all-missing`   | Install every missing ref across the library                                                      |
+| `packages:install-deps-batch`    | Install a renderer-supplied list of missing refs                                                  |
+| `packages:install-dep`           | Install a single dep by Hub file record                                                           |
+| `packages:promote`               | Promote dep → direct (single filename or array); auto-enables if disabled/offloaded               |
+| `packages:uninstall`             | Single filename or array; demotes instead of deleting when dependents remain                      |
+| `packages:toggle-enabled`        | Toggle disable/enable/offload via `applyStorageState` (cascade-aware; honors `disable_behavior`)  |
+| `packages:set-enabled`           | Set enabled/disabled for an explicit filename list                                                |
+| `packages:force-remove`          | Delete a package regardless of dependents                                                         |
+| `packages:remove-orphans`        | Bulk-remove every package in `orphanSet`                                                          |
+| `packages:set-type-override`     | Override the auto-detected type                                                                   |
+| `packages:setHubResource`        | Manually link a local package to a Hub resource id                                                |
+| `packages:missing-deps`          | Aggregated missing-dep data for Library's "missing" filter                                        |
+| `packages:enrich-from-hub`       | Backfill Hub metadata for a batch of package stems                                                |
+| `packages:file-list`             | Full internal ZIP file list for a `.var`                                                          |
+| `packages:check-updates`         | Run the CDN update check (`null` when the index is unreachable — distinct from `{}` = no updates) |
+| `packages:redownload`            | Re-fetch a `.var` from the Hub to replace a corrupted copy                                        |
+| `packages:import-local-precheck` | Batch import: report already-installed / invalid filenames before streaming                       |
+| `packages:import-local-chunk`    | Batch import: stream one chunk (`{uploadId, filename, bytes, first, last}`)                       |
+| `packages:import-local-commit`   | Batch import: drain integration queue, one graph rebuild + notify, return aggregate               |
+| `packages:import-local-abort`    | Batch import: abort one upload or the whole batch                                                 |
+| `packages:import-local-copy`     | Local-only fast path: copy/move from a host path into the same import batch (remote-denied)       |
 
 `packages:install-missing`, `packages:install-all-missing`, and `packages:install-deps-batch` are three distinct entry points; all three are backed by the Hub client's `findPackages`.
 

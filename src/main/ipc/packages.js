@@ -669,6 +669,9 @@ export function registerPackageHandlers() {
     return { fileList, varPath }
   })
 
+  // Returns `null` — not `{}` — when the CDN index is unreachable and nothing is
+  // cached. An empty object is an authoritative "nothing to update", which the
+  // Library facet would render as a confident `0`; `null` lets it stay unknown.
   ipcMain.handle('packages:check-updates', async (_, { forceRefresh } = {}) => {
     // Fetch or refresh the CDN packages index
     const STALE_MS = 5 * 60 * 1000
@@ -677,11 +680,11 @@ export function registerPackageHandlers() {
         await fetchPackagesJson({ force: !!forceRefresh })
       } catch (err) {
         console.warn('[check-updates] Failed to fetch packages.json:', err.message)
-        if (!getPackagesIndex()) return {}
+        if (!getPackagesIndex()) return null
       }
     }
 
-    return checkUpdatesFromIndex(getPackageIndex(), getGroupIndex(), getForwardDeps()) ?? {}
+    return checkUpdatesFromIndex(getPackageIndex(), getGroupIndex(), getForwardDeps())
   })
 
   ipcMain.handle('packages:redownload', async (_, filename) => {

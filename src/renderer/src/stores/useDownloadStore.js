@@ -95,6 +95,8 @@ export const useDownloadStore = create((set, get) => ({
         asDependency,
       })
       if (result?.unresolvedDeps?.length > 0) toastUnresolvableDeps(result.unresolvedDeps)
+      // Callers batching installs (Update All) summarize from the insert counts.
+      return result
     } catch (err) {
       toast(`Install failed: ${err.message}`)
       throw err
