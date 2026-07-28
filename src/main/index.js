@@ -158,9 +158,18 @@ function attachNativeTextContextMenu(webContents, popupHostWindow) {
   })
 }
 
-/** DevTools hotkeys are live whenever a dev build is running or the 7-tap unlock is set. */
+/** Cmd+Option+I (macOS) or Ctrl+Shift+I (Win/Linux) — matches electron-toolkit. */
+function isDevToolsInspectorHotkey(input) {
+  if (input.code !== 'KeyI') return false
+  if (input.meta && input.alt) return true
+  if (input.control && input.shift) return true
+  return false
+}
+
+/** DevTools hotkeys are live in dev, after the 7-tap unlock, or on a client head
+ *  (no local DB to store the unlock flag — gating on getSetting always fails). */
 function devHotkeysEnabled() {
-  if (is.dev) return true
+  if (is.dev || IS_CLIENT) return true
   try {
     return getSetting('developer_options_unlocked') === '1'
   } catch {
@@ -187,9 +196,7 @@ function attachWebviewShortcuts(contents) {
       else contents.reload()
       return
     }
-    const isF12 = input.code === 'F12'
-    const isInspector = input.code === 'KeyI' && input.shift && (input.control || input.meta || input.alt)
-    if ((isF12 || isInspector) && devHotkeysEnabled()) {
+    if ((input.code === 'F12' || isDevToolsInspectorHotkey(input)) && devHotkeysEnabled()) {
       event.preventDefault()
       contents.toggleDevTools()
     }
@@ -226,16 +233,11 @@ function registerWebviewWindowOpenHandler() {
  */
 function attachDevToolsHotkeys(window) {
   if (is.dev) return
-  window.webContents.on('before-input-event', (_event, input) => {
+  window.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return
-    const isF12 = input.code === 'F12'
-    const isInspector = input.code === 'KeyI' && input.shift && (input.control || input.meta || input.alt)
-    if (!isF12 && !isInspector) return
-    let unlocked = false
-    try {
-      unlocked = getSetting('developer_options_unlocked') === '1'
-    } catch {}
-    if (!unlocked) return
+    if (input.code !== 'F12' && !isDevToolsInspectorHotkey(input)) return
+    if (!devHotkeysEnabled()) return
+    event.preventDefault()
     window.webContents.toggleDevTools()
   })
 }
