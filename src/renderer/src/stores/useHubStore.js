@@ -105,7 +105,7 @@ export const useHubStore = create(
       lastFetchedKey: null,
       // Wall-clock of the last successful page-1 fetch (for the refresh-button tooltip).
       lastFetchedAt: null,
-      // Cards whose `last_update` (unix seconds) is past this cutoff flash briefly after a
+      // Cards with a `last_update` newer than this hub timestamp flash briefly after a
       // refresh; Infinity = nothing flashes. Transient hint, so never persisted.
       flashSince: Infinity,
 
@@ -190,12 +190,12 @@ export const useHubStore = create(
         const page = resetPage ? 1 : state.page
         const replaceResources = resetPage || page === 1
         if (resetPage && state.page !== 1) set({ page: 1 })
-        // Cutoff is the previous fetch of this same query — the value already behind the refresh
-        // tooltip, in local ms against `last_update`'s unix seconds. Without one (cold start,
-        // filter change) all 30 rows are unfamiliar and none should flash.
-        const sameQuery = state.lastFetchedAt && hubFilterSignature(state) === state.lastFetchedKey
-        const flashSince =
-          opts?.forceRefresh && sameQuery && state.sort === LATEST_UPDATE_SORT ? state.lastFetchedAt / 1000 : Infinity
+        // Cutoff is the top row's `last_update` (hub server time) — Latest Update is DESC, so
+        // index 0 is the newest. Do not use `lastFetchedAt` (local `Date.now()`; clock skew
+        // makes new cards never flash). Cold start / filter change / empty page: no flash.
+        const sameQuery = hubFilterSignature(state) === state.lastFetchedKey
+        const baseline = sameQuery ? parseInt(state.resources[0]?.last_update, 10) || 0 : 0
+        const flashSince = opts?.forceRefresh && state.sort === LATEST_UPDATE_SORT && baseline > 0 ? baseline : Infinity
         clearTimeout(flashTimer)
         set({ loading: true, error: null, flashSince: Infinity, ...(replaceResources ? { resources: [] } : {}) })
         try {
