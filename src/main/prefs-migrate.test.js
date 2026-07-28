@@ -128,4 +128,18 @@ describe('foldLegacyClientAutostart', () => {
     foldLegacyClientAutostart(userData)
     expect(readAutostartUrl()).toBeNull()
   })
+
+  // Losing both at once — no prefs written and the source deleted — is the one
+  // unrecoverable outcome: the head comes up local with nothing left to retry from.
+  it('keeps the legacy file when the prefs write cannot land', async () => {
+    await writeFile(legacyPath(), JSON.stringify({ url: 'ws://10.0.0.2:42069' }), 'utf8')
+    const blocker = join(userData, 'not-a-dir')
+    await writeFile(blocker, '', 'utf8')
+    installPrefs.init(join(blocker, 'nested'))
+
+    foldLegacyClientAutostart(userData)
+
+    expect(installPrefs.has('autoconnect')).toBe(false)
+    expect(existsSync(legacyPath())).toBe(true)
+  })
 })

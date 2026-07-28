@@ -43,18 +43,40 @@ const MOVED_KEYS = [
 /**
  * Fold the pre-prefs `client-autostart.json` — a standalone `{ url }` file whose
  * mere existence meant "armed" — into `connectUrl` + `autoconnect`. The file is
- * removed afterwards so a downgrade/upgrade round-trip can't resurrect a stale
- * arm, which is the one failure mode worth avoiding here (it would point a head
- * at a host that may be long gone).
+ * removed once its contents are safely in the prefs, so a downgrade/upgrade
+ * round-trip can't resurrect a stale arm pointing at a host that's long gone.
+ *
+ * "Once safely in the prefs" is the load-bearing part: until this runs, that file
+ * is the only copy of the address, and a client head that comes up local with
+ * nothing on disk to explain why is the worst outcome available here. So every
+ * step that can fail leaves the file alone for the next launch to retry.
  */
 export function foldLegacyClientAutostart(baseUserDataDir) {
   const legacyPath = join(baseUserDataDir, LEGACY_AUTOSTART_FILE)
   if (!existsSync(legacyPath)) return
+
+  let raw
   try {
-    const url = normalizeConnectUrl(JSON.parse(readFileSync(legacyPath, 'utf8'))?.url)
-    // An arm already in the prefs is newer than the legacy file by definition.
-    if (url && !installPrefs.get('autoconnect')) installPrefs.patch({ connectUrl: url, autoconnect: true })
+    raw = readFileSync(legacyPath, 'utf8')
+  } catch (err) {
+    console.warn('[prefs] could not read legacy autostart file:', err.message)
+    return
+  }
+
+  let url = null
+  try {
+    url = normalizeConnectUrl(JSON.parse(raw)?.url)
   } catch {}
+
+  // An arm already in the prefs is newer than the legacy file by definition.
+  if (url && !installPrefs.get('autoconnect')) {
+    if (!installPrefs.patch({ connectUrl: url, autoconnect: true })) {
+      console.warn('[prefs] legacy autostart kept, prefs write failed:', installPrefs.path())
+      return
+    }
+    console.log('[prefs] folded legacy client autostart:', url)
+  }
+
   try {
     rmSync(legacyPath, { force: true })
   } catch (err) {
