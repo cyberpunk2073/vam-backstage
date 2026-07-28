@@ -54,12 +54,16 @@ import {
   enqueueInstallAllMissing,
   enqueueInstallRef,
   enqueueInstallBatch,
-  importLocalFromPath,
-  beginImportLocalVar,
-  appendImportLocalVar,
-  finishImportLocalVar,
-  abortImportLocalVar,
 } from '../downloads/manager.js'
+import {
+  importLocalFromPath,
+  importPrecheck,
+  importChunk,
+  importCommit,
+  importAbort,
+  cleanupOwner,
+} from '../downloads/import.js'
+import { onClientClose } from '../remote/server.js'
 import {
   fetchPackagesJson,
   getPackagesIndex,
@@ -624,29 +628,35 @@ export function registerPackageHandlers() {
   // server writes it into its own AddonPackages.
   // Local fast path: main copies the dropped file straight from its source path
   // (reflink where supported), skipping the renderer/IPC byte streaming. Only
-  // valid when main can see the file — i.e. not a remote head.
-  ipcMain.handle('packages:import-local-copy', async (_, { filename, sourcePath, move }) => {
-    return await importLocalFromPath({ filename, sourcePath, move: !!move })
+  // valid when main can see the file — i.e. not a remote head. Joins the
+  // owner's import batch so the graph rebuild waits for commit.
+  ipcMain.handle('packages:import-local-copy', async (event, { filename, sourcePath, move }) => {
+    return await importLocalFromPath({ filename, sourcePath, move: !!move }, event.remoteWs || 'local')
   })
 
-  // Chunked import: begin → chunk* → finish (or abort). The file is streamed to
-  // a temp file in bounded pieces — required over the remote bridge, where the
-  // wire codec base64s each buffer into one string and a whole large .var can't
-  // cross in a single frame.
-  ipcMain.handle('packages:import-local-begin', async (_, { filename }) => {
-    return await beginImportLocalVar({ filename })
+  // Batch import protocol: precheck → chunk* → commit (or abort). Chunks are
+  // windowed on the client; the server integrates completed files on a serial
+  // queue and runs one graph rebuild at commit. See docs/Implementation.md.
+  ipcMain.handle('packages:import-local-precheck', async (_, { filenames }) => {
+    return importPrecheck({ filenames })
   })
 
-  ipcMain.handle('packages:import-local-chunk', async (_, { uploadId, chunk }) => {
-    return await appendImportLocalVar({ uploadId, chunk })
+  ipcMain.handle('packages:import-local-chunk', async (event, { uploadId, filename, bytes, first, last }) => {
+    return await importChunk({ uploadId, filename, bytes, first, last }, event.remoteWs || 'local')
   })
 
-  ipcMain.handle('packages:import-local-finish', async (_, { uploadId }) => {
-    return await finishImportLocalVar({ uploadId })
+  ipcMain.handle('packages:import-local-commit', async (event) => {
+    return await importCommit(event.remoteWs || 'local')
   })
 
-  ipcMain.handle('packages:import-local-abort', async (_, { uploadId }) => {
-    return await abortImportLocalVar({ uploadId })
+  ipcMain.handle('packages:import-local-abort', async (event, { uploadId } = {}) => {
+    return await importAbort({ uploadId }, event.remoteWs || 'local')
+  })
+
+  // Remote client disconnect: destroy open upload streams and finish the graph
+  // phase for anything already integrated so the library isn't left stale.
+  onClientClose((ws) => {
+    void cleanupOwner(ws)
   })
 
   ipcMain.handle('packages:file-list', async (_, filename) => {

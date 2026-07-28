@@ -48,7 +48,11 @@ function encodeVal(v) {
 function decodeVal(v) {
   if (v === null || typeof v !== 'object') return v
   if (Array.isArray(v)) return v.map(decodeVal)
-  if (v.__t === 'buffer') return Uint8Array.from(Buffer.from(v.base64, 'base64'))
+  if (v.__t === 'buffer') {
+    const b = Buffer.from(v.base64, 'base64')
+    // Buffer is already a Uint8Array; wrap its window without copying.
+    return new Uint8Array(b.buffer, b.byteOffset, b.byteLength)
+  }
   if (v.__t === 'bigint') return BigInt(v.value)
   const out = {}
   for (const k of Object.keys(v)) out[k] = decodeVal(v[k])

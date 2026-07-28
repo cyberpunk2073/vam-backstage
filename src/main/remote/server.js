@@ -29,9 +29,31 @@ function isDevMode() {
 let wss = null
 let currentPort = null
 const clients = new Set()
+const clientCloseListeners = new Set()
 
 export function getStatus() {
   return { running: !!wss, port: currentPort, clients: clients.size }
+}
+
+/**
+ * Register a callback for remote client disconnects. Used by the import batch
+ * cleanup path so open upload streams are destroyed when a client drops.
+ * @param {(ws: import('ws').WebSocket) => void} cb
+ * @returns {() => void} unsubscribe
+ */
+export function onClientClose(cb) {
+  clientCloseListeners.add(cb)
+  return () => clientCloseListeners.delete(cb)
+}
+
+function emitClientClose(ws) {
+  for (const cb of clientCloseListeners) {
+    try {
+      cb(ws)
+    } catch (err) {
+      console.warn('[remote] onClientClose listener failed:', err?.message || err)
+    }
+  }
 }
 
 // Push the current status to the local renderer so the Settings tab reflects
@@ -75,6 +97,7 @@ export function startServer(port = DEFAULT_REMOTE_PORT) {
       ws.on('close', () => {
         clients.delete(ws)
         emitStatus()
+        emitClientClose(ws)
       })
       ws.on('error', () => {
         clients.delete(ws)

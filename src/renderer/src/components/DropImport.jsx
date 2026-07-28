@@ -51,59 +51,65 @@ function hasValidVarName(name) {
   return /^\d+$/.test(parts[parts.length - 1])
 }
 
-// Upload chunk size for streaming a .var to the (possibly remote) main process.
-// Usage is overwhelmingly local, where chunks cross as raw bytes (structured
-// clone) and larger chunks just mean fewer round-trips. The ceiling is the
-// remote case: the wire codec base64s each buffer into one JS string, so a
-// chunk must stay under Node's max string length and the WS `maxPayload`
-// (100 MiB). 32 MiB → ~42.7 MiB base64, leaving ample headroom.
-const IMPORT_CHUNK_BYTES = 32 * 1024 * 1024
+// Chunk size for streaming a .var to the (possibly remote) main process.
+// Smaller than the old 32 MiB stop-and-wait size: base64 inflates ~33% on the
+// wire, and large frames stall the host main process on JSON.parse. Pipelining
+// (MAX_INFLIGHT_CHUNKS) keeps the network saturated without huge allocations.
+const IMPORT_CHUNK_BYTES = 4 * 1024 * 1024
+const MAX_INFLIGHT_CHUNKS = 4
 
 /**
- * Stream one dropped file to `packages:import-local-*` in bounded chunks so a
- * large .var never has to cross the IPC/remote boundary as a single buffer.
- * Reads each slice lazily via `Blob.slice` so peak memory stays ~one chunk.
- * `onProgress(fraction)` reports 0..1 completion for the current file.
+ * Stream many files as one flat windowed chunk loop. Never stops at file
+ * boundaries — only the unacked-chunk window blocks. Each frame is still a
+ * single file's bytes (`first`/`last` mark boundaries). Errors are captured
+ * so `Promise.race` on the inflight set never rejects mid-wait.
  */
-async function importFileChunked(name, file, onProgress) {
-  const begin = await window.api.packages.importLocalBegin(name)
-  if (begin?.already) return { already: true }
+async function streamImportBatch(items, onProgress) {
+  const inflight = new Set()
+  let firstError = null
+  let acked = 0
 
-  const { uploadId } = begin
-  try {
-    for (let offset = 0; offset < file.size; offset += IMPORT_CHUNK_BYTES) {
-      const end = Math.min(offset + IMPORT_CHUNK_BYTES, file.size)
-      const chunk = new Uint8Array(await file.slice(offset, end).arrayBuffer())
-      await window.api.packages.importLocalChunk(uploadId, chunk)
-      onProgress?.(end / file.size)
-    }
-    return await window.api.packages.importLocalFinish(uploadId)
-  } catch (err) {
-    try {
-      await window.api.packages.importLocalAbort(uploadId)
-    } catch {}
-    throw err
+  async function push(frame) {
+    while (inflight.size >= MAX_INFLIGHT_CHUNKS) await Promise.race(inflight)
+    if (firstError) throw firstError
+    // The promise resolves either way — a rejecting member would make
+    // Promise.race throw and would surface as an unhandled rejection.
+    const p = window.api.packages
+      .importLocalChunk(frame)
+      .then(
+        () => {
+          acked += frame.bytes.byteLength
+          onProgress?.(acked)
+        },
+        (err) => {
+          firstError ??= err
+        },
+      )
+      .finally(() => inflight.delete(p))
+    inflight.add(p)
   }
-}
 
-/**
- * Import one dropped file. Locally (main can see the file), take the fast path:
- * hand main the source path so it relocates/copies the bytes directly — nothing
- * is read into the renderer or crossed over IPC. `move` asks main to remove the
- * source once the package lands (a same-filesystem rename when possible, else a
- * copy + delete). Remotely, or when the file has no resolvable path, fall back
- * to the chunked upload, which always copies.
- */
-async function importOneFile(name, file, move, onProgress) {
-  if (!window.api.remote.isRemote) {
-    const sourcePath = window.api.packages.getPathForFile?.(file) || ''
-    if (sourcePath) {
-      const res = await window.api.packages.importLocalCopy(name, sourcePath, move)
-      onProgress?.(1)
-      return res
+  for (const { uploadId, name, file } of items) {
+    // Zero-byte files need one first+last frame; a `< size` loop would skip them
+    // entirely and they'd vanish from the batch with no error.
+    if (file.size === 0) {
+      await push({ uploadId, filename: name, bytes: new Uint8Array(0), first: true, last: true })
+      continue
+    }
+    for (let off = 0; off < file.size; off += IMPORT_CHUNK_BYTES) {
+      const end = Math.min(off + IMPORT_CHUNK_BYTES, file.size)
+      const bytes = new Uint8Array(await file.slice(off, end).arrayBuffer())
+      await push({
+        uploadId,
+        filename: name,
+        bytes,
+        first: off === 0,
+        last: end >= file.size,
+      })
     }
   }
-  return importFileChunked(name, file, onProgress)
+  await Promise.all(inflight)
+  if (firstError) throw firstError
 }
 
 /** True when a drag payload carries OS files (not an internal element drag). */
@@ -143,23 +149,19 @@ async function walkEntry(entry, out) {
 /**
  * Window-wide drag-and-drop target: dropping `.var` files (or folders that
  * contain them) anywhere on the app chrome offers to add them to the library.
- * Locally, main copies each file straight from its source path; a remote client
- * head streams the bytes over the socket into the server's own library. Either
- * way the file lands in the main library and is scanned as a direct install.
  *
- * Files are imported sequentially (one RPC at a time): the main-process add
- * pipeline mutates a shared in-memory graph, so overlapping imports could race.
- * Each step awaits, keeping the renderer event loop free so the UI stays
- * responsive and shows live progress even for a batch of large files.
- *
- * Drops onto the Hub <webview> guest go to the page, not here; that's expected.
+ * Protocol: precheck → stream/copy all files into one server-side batch →
+ * commit (one graph rebuild + notify). Remote clients window up to four 4 MiB
+ * chunks in flight so the wire stays saturated across file boundaries; local
+ * drops with a resolvable path use `importLocalCopy` (can move) and still join
+ * the same batch. Drops onto the Hub <webview> guest go to the page, not here.
  */
 export default function DropImport() {
   const [dragging, setDragging] = useState(false)
   const [scanning, setScanning] = useState(false) // enumerating dropped folders
   const [pending, setPending] = useState(null) // { items, skipped, invalid, totalBytes, willMove }
   const [importing, setImporting] = useState(false)
-  const [progress, setProgress] = useState(null) // { current, total }
+  const [progress, setProgress] = useState(null) // { acked, totalBytes, phase: 'transfer' | 'install' }
   // dragenter/dragleave fire per element as the cursor crosses children; a depth
   // counter keeps the overlay stable until the drag truly leaves the window.
   const depth = useRef(0)
@@ -178,8 +180,19 @@ export default function DropImport() {
       // Map each file to the .var name it would import as (null = not a package).
       const varItems = all.map((file) => ({ file, name: targetVarName(file.name) })).filter((m) => m.name)
       const skipped = all.length - varItems.length // non-.var files
-      const items = varItems.filter((m) => hasValidVarName(m.name))
+      const valid = varItems.filter((m) => hasValidVarName(m.name))
       const invalid = varItems.filter((m) => !hasValidVarName(m.name)).map((m) => m.name)
+
+      // Dedupe by canonical name — required now that the in-batch `already`
+      // check is gone, and stops the confirm dialog listing the same package twice.
+      const seen = new Set()
+      const items = []
+      for (const m of valid) {
+        const key = m.name.toLowerCase()
+        if (seen.has(key)) continue
+        seen.add(key)
+        items.push(m)
+      }
 
       if (items.length === 0) {
         if (invalid.length > 0) {
@@ -271,23 +284,107 @@ export default function DropImport() {
     const items = pending.items
     const move = pending.willMove
     setImporting(true)
-    setProgress({ current: 0, total: items.length })
+
     let added = 0
-    let already = 0
+    const alreadySet = new Set()
     const failed = []
-    for (let i = 0; i < items.length; i++) {
-      setProgress({ current: i, total: items.length })
-      const { file, name } = items[i]
-      try {
-        const res = await importOneFile(name, file, move, (frac) =>
-          setProgress({ current: i + frac, total: items.length }),
-        )
-        if (res?.already) already += 1
-        else added += 1
-      } catch (err) {
-        failed.push(`${name}: ${err?.message || 'failed'}`)
+    let finished = false
+
+    const mergeServerResults = (result) => {
+      if (!result) return
+      added += result.added?.length || 0
+      for (const name of result.already || []) alreadySet.add(String(name).toLowerCase())
+      for (const f of result.failed || []) {
+        failed.push(`${f.filename}: ${f.error || 'failed'}`)
       }
     }
+
+    try {
+      const names = items.map((m) => m.name)
+      const pre = await window.api.packages.importLocalPrecheck(names)
+      for (const name of pre?.existing || []) alreadySet.add(String(name).toLowerCase())
+      // Names the server rejects outright (unconfigured VaM dir, a validity rule
+      // the client mirror missed). Report them now rather than sending the bytes
+      // and failing on the first chunk.
+      const rejected = new Set()
+      for (const f of pre?.invalid || []) {
+        rejected.add(String(f.filename).toLowerCase())
+        failed.push(`${f.filename}: ${f.error || 'invalid filename'}`)
+      }
+
+      const toImport = items.filter((m) => !alreadySet.has(m.name.toLowerCase()) && !rejected.has(m.name.toLowerCase()))
+      const localCopies = []
+      const streamItems = []
+
+      for (const m of toImport) {
+        if (!window.api.remote.isRemote) {
+          const sourcePath = window.api.packages.getPathForFile?.(m.file) || ''
+          if (sourcePath) {
+            localCopies.push({ ...m, sourcePath })
+            continue
+          }
+        }
+        streamItems.push({
+          uploadId: crypto.randomUUID(),
+          name: m.name,
+          file: m.file,
+        })
+      }
+
+      const streamTotal = streamItems.reduce((s, m) => s + (m.file.size || 0), 0)
+      const localTotal = localCopies.reduce((s, m) => s + (m.file.size || 0), 0)
+      const transferTotal = localTotal + streamTotal
+      setProgress({ acked: 0, totalBytes: transferTotal, phase: 'transfer' })
+
+      // Local-path files join the batch via copy/move (no byte streaming).
+      let localAcked = 0
+      let localOk = 0
+
+      for (const m of localCopies) {
+        try {
+          const res = await window.api.packages.importLocalCopy(m.name, m.sourcePath, move)
+          if (res?.already) alreadySet.add(m.name.toLowerCase())
+          // A scan failure is recorded on the server batch; commit reports it.
+          else if (res?.ok) localOk += 1
+        } catch (err) {
+          failed.push(`${m.name}: ${err?.message || 'failed'}`)
+        } finally {
+          // Count the file either way so the bar tracks progress, not successes.
+          localAcked += m.file.size || 0
+          setProgress({ acked: localAcked, totalBytes: transferTotal, phase: 'transfer' })
+        }
+      }
+
+      if (streamItems.length > 0) {
+        await streamImportBatch(streamItems, (streamAcked) => {
+          setProgress({
+            acked: localAcked + streamAcked,
+            totalBytes: transferTotal,
+            phase: 'transfer',
+          })
+        })
+      }
+
+      const installCount = localOk + streamItems.length
+      if (installCount > 0) {
+        setProgress({ acked: transferTotal, totalBytes: transferTotal, phase: 'install', installCount })
+      }
+
+      mergeServerResults(await window.api.packages.importLocalCommit())
+      finished = true
+    } catch (err) {
+      // Finalize whatever already scanned (local copies / completed uploads) so
+      // the library isn't left stale, and surface those successes in the toast.
+      if (!finished) {
+        try {
+          mergeServerResults(await window.api.packages.importLocalAbort())
+          finished = true
+        } catch {}
+      }
+      failed.push(err?.message || 'Import failed')
+    }
+
+    const already = alreadySet.size
     setProgress(null)
     setImporting(false)
     setPending(null)
@@ -314,8 +411,11 @@ export default function DropImport() {
 
   const count = pending?.items.length ?? 0
   const open = scanning || !!pending
-  const pct = progress && progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0
   const willMove = !!pending?.willMove
+  const isInstallPhase = progress?.phase === 'install'
+  // The install phase renders an indeterminate full-width bar, so pct only ever
+  // has to describe the transfer.
+  const pct = progress?.totalBytes > 0 ? Math.min(100, Math.round((progress.acked / progress.totalBytes) * 100)) : 0
 
   return (
     <>
@@ -381,15 +481,16 @@ export default function DropImport() {
                       <div className="mt-3">
                         <div className="flex justify-between text-xs text-text-secondary">
                           <span>
-                            {willMove ? 'Moving' : 'Copying'} {Math.min(Math.floor(progress?.current ?? 0) + 1, count)}{' '}
-                            / {count}…
+                            {isInstallPhase
+                              ? `Installing ${progress?.installCount ?? count} package${(progress?.installCount ?? count) === 1 ? '' : 's'}…`
+                              : `${willMove ? 'Moving' : 'Copying'} ${formatBytes(progress?.acked ?? 0)} / ${formatBytes(progress?.totalBytes ?? 0)}…`}
                           </span>
-                          <span>{pct}%</span>
+                          <span>{isInstallPhase ? '' : `${pct}%`}</span>
                         </div>
                         <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-elevated">
                           <div
-                            className="h-full rounded-full bg-accent-blue transition-[width] duration-150"
-                            style={{ width: `${pct}%` }}
+                            className={`h-full rounded-full bg-accent-blue transition-[width] duration-150 ${isInstallPhase ? 'animate-pulse w-full' : ''}`}
+                            style={isInstallPhase ? undefined : { width: `${pct}%` }}
                           />
                         </div>
                       </div>
@@ -416,7 +517,8 @@ export default function DropImport() {
                 >
                   {importing ? (
                     <>
-                      <Loader2 size={14} className="animate-spin" /> {willMove ? 'Moving…' : 'Copying…'}
+                      <Loader2 size={14} className="animate-spin" />{' '}
+                      {isInstallPhase ? 'Installing…' : willMove ? 'Moving…' : 'Copying…'}
                     </>
                   ) : willMove ? (
                     'Move to Library'
