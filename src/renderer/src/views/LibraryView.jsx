@@ -1861,7 +1861,7 @@ function UpdateActions({ pkg, updateInfo }) {
         </>
       ) : updateState.state === 'downloading' ? (
         <>
-          <Loader2 size={11} className="animate-spin" /> Downloading {Math.round((updateState.progress ?? 0) * 100)}%
+          <Loader2 size={11} className="animate-spin" /> Downloading {Math.round(updateState.progress ?? 0)}%
         </>
       ) : (
         <>
