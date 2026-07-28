@@ -1294,52 +1294,50 @@ export default function SettingsView() {
                 <Switch checked={hubDebugRequests} onCheckedChange={handleToggleHubDebug} />
               </label>
 
-              <div className="border-t border-border pt-4 space-y-3">
-                <div>
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="lg"
-                        disabled={deletedData.packages === 0 && deletedData.contentLabels === 0}
-                        className="shrink-0 gap-2 text-xs"
-                      >
-                        <Trash2 size={14} className="shrink-0" />
-                        Forget deleted data{deletedData.packages > 0 ? ` (${deletedData.packages})` : ''}
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle className="select-text cursor-text">Forget deleted data?</AlertDialogTitle>
-                        <AlertDialogDescription asChild>
-                          <div className="text-[11px] text-text-tertiary space-y-2">
-                            <p>
-                              The app keeps the identity and settings (hub link, labels, type override, content
-                              visibility) of {deletedData.packages} package{deletedData.packages === 1 ? '' : 's'} whose
-                              file{deletedData.packages === 1 ? ' is' : 's are'} no longer on disk, so they are restored
-                              if the file reappears (moved back, restored from a backup, or a remounted drive)
-                              {deletedData.contentLabels > 0
-                                ? `, plus ${deletedData.contentLabels} label${deletedData.contentLabels === 1 ? '' : 's'} on content that a package update has since removed`
-                                : ''}
-                              .
-                            </p>
-                            <p>
-                              This permanently discards that remembered data to reclaim database space. Packages and
-                              content still on disk are not affected.
-                            </p>
-                            <p className="font-medium text-warning">This cannot be undone.</p>
-                          </div>
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction variant="destructive" onClick={handleForgetDeleted}>
-                          Forget
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                </div>
+              <div className="border-t border-border pt-4 flex flex-wrap items-center gap-3">
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      disabled={deletedData.packages === 0 && deletedData.contentLabels === 0}
+                      className="shrink-0 gap-2 text-xs"
+                    >
+                      <Trash2 size={14} className="shrink-0" />
+                      Forget deleted data{deletedData.packages > 0 ? ` (${deletedData.packages})` : ''}
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle className="select-text cursor-text">Forget deleted data?</AlertDialogTitle>
+                      <AlertDialogDescription asChild>
+                        <div className="text-[11px] text-text-tertiary space-y-2">
+                          <p>
+                            The app keeps the identity and settings (hub link, labels, type override, content
+                            visibility) of {deletedData.packages} package{deletedData.packages === 1 ? '' : 's'} whose
+                            file{deletedData.packages === 1 ? ' is' : 's are'} no longer on disk, so they are restored
+                            if the file reappears (moved back, restored from a backup, or a remounted drive)
+                            {deletedData.contentLabels > 0
+                              ? `, plus ${deletedData.contentLabels} label${deletedData.contentLabels === 1 ? '' : 's'} on content that a package update has since removed`
+                              : ''}
+                            .
+                          </p>
+                          <p>
+                            This permanently discards that remembered data to reclaim database space. Packages and
+                            content still on disk are not affected.
+                          </p>
+                          <p className="font-medium text-warning">This cannot be undone.</p>
+                        </div>
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction variant="destructive" onClick={handleForgetDeleted}>
+                        Forget
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
 
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
