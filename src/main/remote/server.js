@@ -23,6 +23,7 @@ function isDevMode() {
 
 let wss = null
 let currentPort = null
+let heartbeatTimer = null
 const clients = new Set()
 const clientCloseListeners = new Set()
 
@@ -71,6 +72,17 @@ export function startServer(port = DEFAULT_REMOTE_PORT) {
     server.on('listening', () => {
       wss = server
       currentPort = port
+      // Protocol ping every 30s so idle sockets survive NAT/firewall timeouts.
+      // Chromium auto-replies with pong; no app-level frames needed.
+      heartbeatTimer = setInterval(() => {
+        for (const ws of clients) {
+          if (ws.readyState === ws.OPEN) {
+            try {
+              ws.ping()
+            } catch {}
+          }
+        }
+      }, 30_000)
       console.info(`[remote] serving on ws://0.0.0.0:${port}`)
       emitStatus()
       resolve({ ok: true, port })
@@ -106,6 +118,8 @@ export function startServer(port = DEFAULT_REMOTE_PORT) {
 
 export async function stopServer() {
   if (!wss) return
+  clearInterval(heartbeatTimer)
+  heartbeatTimer = null
   for (const ws of clients) {
     try {
       ws.close()
