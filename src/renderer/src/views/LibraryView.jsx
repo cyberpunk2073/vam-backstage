@@ -89,6 +89,7 @@ import { useLibraryUpdateState } from '@/hooks/useLibraryUpdateState'
 import { LICENSE_FILTER_OPTIONS } from '@/lib/licenses'
 import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
 import { matchesPolarityList, matchesAuthorFilter, matchesLicenseFilter, polarityScrollKey } from '@/lib/filter-match'
+import { parseCommaTags, packageSuggestionCounts } from '@/lib/suggestion-counts'
 import { haystacksMatchAllTerms, LIBRARY_IS_FLAGS, libraryFlags, searchAndTerms } from '@/lib/search-text'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { LicenseTag } from '@/components/LicenseTag'
@@ -112,13 +113,7 @@ import {
 const SORT_OPTIONS = ['Recently installed', 'Type', 'Name', 'Size', 'Content', 'Deps', 'Morphs']
 
 function packageHubTags(p) {
-  return p.hubTags
-    ? p.hubTags
-        .toLowerCase()
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean)
-    : []
+  return parseCommaTags(p.hubTags)
 }
 
 function packageMatchesSelectedTags(p, selectedTags) {
@@ -224,10 +219,10 @@ export default function LibraryView({ onNavigate, navContext }) {
   }, [labels])
 
   const [gridLayout, setGridLayout] = useState({ cols: 1, availableWidth: 0 })
-  const [tagCounts, setTagCounts] = useState({})
-  const [authorCounts, setAuthorCounts] = useState({})
   const [detailPanelWidth] = usePersistedPanelWidth('panel_width_detail', { min: 260, max: 500, defaultWidth: 340 })
   const selectingRef = useRef(false)
+
+  const { authors: authorCounts, tags: tagCounts } = useMemo(() => packageSuggestionCounts(packages), [packages])
 
   useEffect(() => {
     const getLibraryStore = () => useLibraryStore.getState()
@@ -235,14 +230,6 @@ export default function LibraryView({ onNavigate, navContext }) {
     getLibraryStore().fetchBackendCounts()
     // Wishlist pin badges on library cards need membership ids even if Hub was never opened.
     useWishlistStore.getState().loadIds()
-    window.api.packages
-      .tagCounts()
-      .then(setTagCounts)
-      .catch(() => {})
-    window.api.packages
-      .authorCounts()
-      .then(setAuthorCounts)
-      .catch(() => {})
     getLibraryStore().checkForUpdates()
     // Note: selectedDetail refresh + fetchPackages happen at App level so they
     // fire even when LibraryView is unmounted. We only refresh view-scoped
@@ -256,14 +243,6 @@ export default function LibraryView({ onNavigate, navContext }) {
       } else {
         useLibraryStore.setState({ missingDeps: null })
       }
-      window.api.packages
-        .tagCounts()
-        .then(setTagCounts)
-        .catch(() => {})
-      window.api.packages
-        .authorCounts()
-        .then(setAuthorCounts)
-        .catch(() => {})
     })
     // Keep pin badges in sync when Hub never loaded the full wishlist (peer pin/unpin).
     const cleanupWishlist = window.api.onWishlistUpdated((data) => {

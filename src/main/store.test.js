@@ -11,8 +11,6 @@ import {
   getPackageDetail,
   getOrphanSet,
   getOrphanTotalSize,
-  getTagCounts,
-  getAuthorCounts,
   getStats,
   isRealUrl,
   resolveHubDownloadUrl,
@@ -640,29 +638,6 @@ describe('buildFromDb — counts / filters', () => {
       }),
     ).toBe('Plugins')
     expect(effectivePackageType({ type: 'Looks', type_override: null })).toBe('Looks')
-  })
-
-  it('tagCounts and authorCounts exclude __local__ sentinel', async () => {
-    const db = getDb()
-    db.prepare('UPDATE packages SET creator = ?, hub_tags = ? WHERE filename = ?').run(
-      'ShouldNotAppear',
-      'Alpha,Beta',
-      '__local__',
-    )
-    seedPackage(db, {
-      filename: 'Real.U.1.var',
-      package_name: 'Real.U',
-      version: '1',
-      creator: 'Alice',
-      is_direct: 1,
-      hub_tags: 'Gamma',
-    })
-    buildFromDb()
-    const tc = getTagCounts()
-    const ac = getAuthorCounts()
-    expect(ac.Alice).toBe(1)
-    expect(ac.ShouldNotAppear).toBeUndefined()
-    expect(tc.gamma).toBe(1)
   })
 
   it('getStats.contentByType counts gallery-visible content categories', async () => {

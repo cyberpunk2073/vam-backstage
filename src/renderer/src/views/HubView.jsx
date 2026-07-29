@@ -20,6 +20,7 @@ import { LICENSE_FILTER_OPTIONS, getHubResourceLicense } from '@/lib/licenses'
 import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
 import { WISHLIST_IS_FLAGS, wishlistFlags } from '@/lib/search-text'
 import { matchesPolarityList, matchesAuthorFilter, matchesLicenseFilter } from '@/lib/filter-match'
+import { parseCommaTags, suggestionCounts } from '@/lib/suggestion-counts'
 import { SearchOnHubButton } from '@/components/SearchOnHubButton'
 import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
 import { VirtualGrid } from '@/components/VirtualGrid'
@@ -70,16 +71,10 @@ const WISHLIST_SORT_FNS = {
 
 /**
  * Tags on the stored snapshot mirror the hub detail `tags` field: a single
- * comma-separated string (same shape the library persists to `hub_tags`). Parse
- * to a lowercased list, matching the library's `packageMatchesSelectedTags`.
+ * comma-separated string (same shape the library persists to `hub_tags`).
  */
 function parseSnapshotTags(r) {
-  if (!r.tags) return []
-  return String(r.tags)
-    .toLowerCase()
-    .split(',')
-    .map((t) => t.trim())
-    .filter(Boolean)
+  return parseCommaTags(r.tags)
 }
 
 /** All wishlist filter dimensions, in a fixed key order for facet cross-filtering. */
@@ -87,9 +82,8 @@ const WISHLIST_FILTER_KEYS = ['search', 'type', 'tags', 'paid', 'author', 'licen
 
 /**
  * Build one predicate per filter dimension bound to the current filter state.
- * Keeping them separate lets the gallery AND each facet reuse the same logic:
- * the gallery ANDs them all, while a facet's counts AND every dimension *except*
- * its own (standard cross-filtered faceting).
+ * The gallery ANDs them all; Type/Paid facet counts AND every dimension except
+ * their own (standard cross-filtered faceting).
  */
 function wishlistPredicates({ search, type, tags, paid, author, excludedAuthors, license }) {
   const { tokens } = parseSmartQuery(search)
@@ -582,9 +576,8 @@ export default function HubView({ onNavigate }) {
     ],
   )
 
-  // Wishlist facets. The displayed counts are proper cross-filtered facets: each
-  // dimension counts items matching all the OTHER active filters, so they update
-  // as filters toggle (standard filter-panel behaviour).
+  // Type/Paid: cross-filtered facet counts. Author/tag autocomplete uses overall
+  // totals via wishlistSuggestCounts (same model as Library/Content).
   const wishlistFacets = useMemo(() => {
     const preds = wishlistPredicates({
       search: wlSearch,
@@ -602,14 +595,6 @@ export default function HubView({ onNavigate }) {
     }
     const addType = (r, m) => r.type && m.set(r.type, (m.get(r.type) || 0) + 1)
     const typeFacet = bucket(wishlistItemsExcept(wishlistItems, preds, 'type'), addType)
-
-    const tagCounts = {}
-    for (const r of wishlistItemsExcept(wishlistItems, preds, 'tags'))
-      for (const t of parseSnapshotTags(r)) tagCounts[t] = (tagCounts[t] || 0) + 1
-
-    const authorCounts = {}
-    for (const r of wishlistItemsExcept(wishlistItems, preds, 'author'))
-      if (r.username) authorCounts[r.username] = (authorCounts[r.username] || 0) + 1
 
     let free = 0
     let paid = 0
@@ -640,8 +625,17 @@ export default function HubView({ onNavigate }) {
       { value: 'free', label: 'Free', count: free },
       { value: 'paid', label: 'Paid', count: paid },
     ]
-    return { typeItems, paidItems, authorCounts, tagCounts }
+    return { typeItems, paidItems }
   }, [wishlistItems, wlSearch, wlType, wlTags, wlPaid, wlAuthor, wlExcludedAuthors, wlLicense])
+
+  const wishlistSuggestCounts = useMemo(
+    () =>
+      suggestionCounts(wishlistItems, {
+        author: (r) => r.username,
+        tags: (r) => r.tags,
+      }),
+    [wishlistItems],
+  )
 
   const wishlistSections = useMemo(
     () => [
@@ -670,7 +664,7 @@ export default function HubView({ onNavigate }) {
         value: wlTags,
         default: WISHLIST_FILTER_DEFAULTS.wlTags,
         onChange: setWlTags,
-        suggestions: wishlistFacets.tagCounts,
+        suggestions: wishlistSuggestCounts.tags,
         placeholder: 'Filter by tags…',
         allowNegate: true,
       },
@@ -683,7 +677,7 @@ export default function HubView({ onNavigate }) {
         onChange: setWlAuthor,
         excluded: wlExcludedAuthors,
         onExcludedChange: setWlExcludedAuthors,
-        suggestions: wishlistFacets.authorCounts,
+        suggestions: wishlistSuggestCounts.authors,
         placeholder: 'Filter by author…',
         titleAction: wlAuthor ? <SearchOnHubButton author={wlAuthor} /> : null,
       },
@@ -707,6 +701,7 @@ export default function HubView({ onNavigate }) {
       wlLicense,
       wlSort,
       wishlistFacets,
+      wishlistSuggestCounts,
       setWlType,
       setWlTags,
       setWlPaid,
@@ -732,8 +727,8 @@ export default function HubView({ onNavigate }) {
         smartSearch={
           wishlistMode
             ? {
-                authors: wishlistFacets.authorCounts,
-                tags: wishlistFacets.tagCounts,
+                authors: wishlistSuggestCounts.authors,
+                tags: wishlistSuggestCounts.tags,
                 labels: [],
                 types: hubTypes,
                 flags: WISHLIST_IS_FLAGS,

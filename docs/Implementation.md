@@ -628,8 +628,6 @@ All library business logic — filtering, sorting, dependency resolution, conten
 | `removableSizeMap`             | `Map<filename, number>`                        | Bytes freed if package is uninstalled                      |
 | `orphanSet`                    | `Set<filename>`                                | Direct packages with no reverse deps (considering cascade) |
 | `directOrphanSet`              | `Set<filename>`                                | Direct packages with strictly zero reverse deps            |
-| `tagCounts`                    | `{tag: count}`                                 | Hub tag occurrence counts across packages                  |
-| `authorCounts`                 | `{creator: count}`                             | Author occurrence counts                                   |
 | `creatorsNeedingUserId`        | `Map<normalized, filenames[]>`                 | Authors missing Hub user IDs                               |
 | `labelsByPackage`              | `Map<filename, number[]>`                      | Label ids applied directly to each package                 |
 | `labelsByContent`              | `Map<"pkg\0path", number[]>`                   | Label ids applied directly to each content item            |
@@ -665,7 +663,7 @@ All library business logic — filtering, sorting, dependency resolution, conten
 5. Compute `removableSizeMap` for every package
 6. Compute morph counts (own + transitive)
 7. Compute orphan sets
-8. Aggregate `stats`, `tagCounts`, `authorCounts`
+8. Aggregate `stats`
 9. Refresh label junction maps (`refreshLabels`) and extracted-preset ownership indexes
 
 The `skipGraph` fast path is used directly by callers that know the graph is unchanged (e.g. enable/disable toggles, type overrides).
@@ -1485,8 +1483,6 @@ Handlers live under `src/main/ipc/` split per domain (`packages.js`, `contents.j
 | `packages:stats`                 | Aggregate stats (see §8)                                                                          |
 | `packages:status-counts`         | Direct/dependency/broken/orphan counts                                                            |
 | `packages:type-counts`           | Counts grouped by package type                                                                    |
-| `packages:tag-counts`            | Hub tag occurrence counts                                                                         |
-| `packages:author-counts`         | Author occurrence counts                                                                          |
 | `packages:install`               | Install by Hub resource (with optional dep auto-queue)                                            |
 | `packages:install-missing`       | Install a single missing dep of one package                                                       |
 | `packages:install-all-missing`   | Install every missing ref across the library                                                      |

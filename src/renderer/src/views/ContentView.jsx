@@ -58,6 +58,7 @@ import { openLightbox } from '@/components/ThumbnailLightbox'
 import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
 import { CONTENT_IS_FLAGS, contentFlags } from '@/lib/search-text'
 import { matchesPolarityList, matchesAuthorFilter, polarityScrollKey } from '@/lib/filter-match'
+import { parseCommaTags, packageSuggestionCounts } from '@/lib/suggestion-counts'
 import { isLocalPackage } from '@shared/local-package.js'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
@@ -96,14 +97,7 @@ function matchesContentPackageStatus(c, packageStatusFilter) {
 }
 
 function contentHubTags(c) {
-  const hubTags = c.package?.hubTags
-  return hubTags
-    ? hubTags
-        .toLowerCase()
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean)
-    : []
+  return parseCommaTags(c.package?.hubTags)
 }
 
 function contentMatchesSelectedTags(c, selectedTags) {
@@ -219,6 +213,9 @@ export default function ContentView({ onNavigate, navContext }) {
     selectAllBulk,
     clearBulkSelection,
   } = useContentStore()
+  // Same package-level dictionary as Library (not per-content — a large Looks
+  // pack shouldn't dominate ranking over a single-scene author).
+  const packages = useLibraryStore((s) => s.packages)
   const labels = useLabelsStore((s) => s.labels)
   const labelNameById = useMemo(() => {
     const m = new Map()
@@ -227,46 +224,27 @@ export default function ContentView({ onNavigate, navContext }) {
   }, [labels])
 
   const [gridLayout, setGridLayout] = useState({ cols: 1, availableWidth: 0 })
-  const [tagCounts, setTagCounts] = useState({})
-  const [authorCounts, setAuthorCounts] = useState({})
   const [detailPanelWidth] = usePersistedPanelWidth('panel_width_detail', { min: 260, max: 500, defaultWidth: 340 })
   const selectingRef = useRef(false)
+
+  const { authors: authorCounts, tags: tagCounts } = useMemo(() => packageSuggestionCounts(packages), [packages])
 
   useEffect(() => {
     const load = () => {
       useContentStore.getState().fetchContents()
     }
     load()
-    window.api.packages
-      .tagCounts()
-      .then(setTagCounts)
-      .catch(() => {})
-    window.api.packages
-      .authorCounts()
-      .then(setAuthorCounts)
-      .catch(() => {})
     // Selection refresh (selectedItem / selectedPackage) is handled at App
     // level so it fires regardless of which view is mounted; here we only
-    // re-fetch the contents list and view-scoped sidebar facet counts.
+    // re-fetch the contents list.
     const cleanup1 = window.api.onContentsUpdated(() => {
       load()
     })
     // Note: package field changes (storageState, isDirect, type, labels) reach
     // content rows via App-level `onPackagesUpdated` → `fetchPackages` →
     // `useContentStore.relink()`. No `fetchContents` IPC needed.
-    const cleanup2 = window.api.onPackagesUpdated(() => {
-      window.api.packages
-        .tagCounts()
-        .then(setTagCounts)
-        .catch(() => {})
-      window.api.packages
-        .authorCounts()
-        .then(setAuthorCounts)
-        .catch(() => {})
-    })
     return () => {
       cleanup1()
-      cleanup2()
     }
   }, [])
 

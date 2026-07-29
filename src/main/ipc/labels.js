@@ -20,7 +20,7 @@ import { notify } from '../notify.js'
  *   - apply-packages         → +packages:updated, +contents:updated (downward inheritance).
  *   - apply-contents         → +contents:updated only (package's own labelIds didn't change;
  *     LibraryView's `onContentsUpdated` already refetches packages, so there's no need to
- *     also fire packages:updated and pay the tagCounts/authorCounts/update-check cost).
+ *     also fire packages:updated and pay the update-check cost).
  *   - delete                 → all three (cascade FK wipes label_packages + label_contents).
  */
 export function registerLabelHandlers() {

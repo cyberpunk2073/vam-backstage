@@ -24,8 +24,6 @@ import {
   getStats,
   getStatusCounts,
   getTypeCounts,
-  getTagCounts,
-  getAuthorCounts,
   getForwardDeps,
   getReverseDeps,
   getOrphanSet,
@@ -367,14 +365,6 @@ export function registerPackageHandlers() {
 
   ipcMain.handle('packages:type-counts', () => {
     return getTypeCounts()
-  })
-
-  ipcMain.handle('packages:tag-counts', () => {
-    return getTagCounts()
-  })
-
-  ipcMain.handle('packages:author-counts', () => {
-    return getAuthorCounts()
   })
 
   ipcMain.handle(

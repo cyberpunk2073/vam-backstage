@@ -96,8 +96,6 @@ let transitiveInactiveMap = new Map() // filename -> count of resolved-but-inact
 let creatorsNeedingUserId = new Map() // normalized creator → filenames[]
 let orphanSet = new Set() // filenames of all orphan deps (direct + cascade)
 let directOrphanSet = new Set() // filenames of direct orphans only (zero reverse deps)
-let tagCounts = {} // tag (lowercase) → count of packages that have it
-let authorCounts = {} // creator string → count of packages with that creator
 let labelIndex = new Map() // label_id → { id, name, color, packageCount, contentCount }
 let labelsByPackage = new Map() // package_filename → number[] of label ids
 let labelsByContent = new Map() // `${package_filename}\0${internal_path}` → number[] of label ids
@@ -413,21 +411,6 @@ export function buildFromDb({ skipGraph = false } = {}) {
     arr.push(filename)
   }
 
-  tagCounts = {}
-  for (const pkg of userPackageValues()) {
-    if (!pkg.hub_tags) continue
-    for (const raw of pkg.hub_tags.split(',')) {
-      const t = raw.trim().toLowerCase()
-      if (t) tagCounts[t] = (tagCounts[t] || 0) + 1
-    }
-  }
-
-  authorCounts = {}
-  for (const pkg of userPackageValues()) {
-    const a = typeof pkg.creator === 'string' ? pkg.creator.trim() : ''
-    if (a) authorCounts[a] = (authorCounts[a] || 0) + 1
-  }
-
   buildLabels()
 }
 
@@ -672,14 +655,6 @@ export function getStats() {
 export function getCreatorsNeedingUserId() {
   return creatorsNeedingUserId
 }
-export function getTagCounts() {
-  return tagCounts
-}
-
-export function getAuthorCounts() {
-  return authorCounts
-}
-
 export function getLabelList() {
   return [...labelIndex.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
 }
@@ -1214,7 +1189,7 @@ export function patchTypeOverride(filename, typeOverride) {
  *  - `removableSizeMap`, `aggregateMorphCountMap`, `transitiveDepsCountMap`,
  *    `transitiveMissingMap` — derived from `is_direct` and the dep graph.
  *  - `orphanSet` / `directOrphanSet` — derived from `is_direct` + reverse deps.
- *  - `tagCounts`, `authorCounts`, `nonDownloadableRids` — Hub/metadata, state-independent.
+ *  - `nonDownloadableRids` — Hub/metadata, state-independent.
  *
  * State-dependent aggregates ARE storage-state sensitive and must NOT be read stale:
  *  - `transitiveInactiveMap` and `stats.brokenCount` (which now counts active
