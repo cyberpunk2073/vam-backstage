@@ -14,7 +14,7 @@ import {
 } from '../db.js'
 import { scanAndUpsert } from '../scanner/ingest.js'
 import { runLocalScan } from '../scanner/local.js'
-import { readVar } from '../scanner/var-reader.js'
+import { readVar, parseVarFilename } from '../scanner/var-reader.js'
 import { verifyPackageFull } from '../scanner/integrity.js'
 import {
   getFilteredPackages,
@@ -36,6 +36,7 @@ import {
   getFilteredContents,
   isNotDownloadable,
   resolveHubDownloadUrl,
+  findLocalByFilename,
   effectivePackageType,
   recomputeInactiveDeps,
 } from '../store.js'
@@ -54,6 +55,7 @@ import {
   enqueueInstallAllMissing,
   enqueueInstallRef,
   enqueueInstallBatch,
+  ensureVarExt,
 } from '../downloads/manager.js'
 import {
   importLocalFromPath,
@@ -375,9 +377,19 @@ export function registerPackageHandlers() {
     return getAuthorCounts()
   })
 
-  ipcMain.handle('packages:install', async (_, { resourceId, hubDetail, autoQueueDeps, packageName, asDependency }) => {
-    return await enqueueInstall(resourceId, hubDetail, autoQueueDeps !== false, packageName, !!asDependency)
-  })
+  ipcMain.handle(
+    'packages:install',
+    async (_, { resourceId, hubDetail, autoQueueDeps, packageName, asDependency, targetFilename }) => {
+      return await enqueueInstall({
+        resourceId,
+        hubDetail,
+        autoQueueDeps: autoQueueDeps !== false,
+        packageName,
+        asDependency: !!asDependency,
+        targetFilename: targetFilename || null,
+      })
+    },
+  )
 
   ipcMain.handle('packages:install-missing', async (_, { filename, autoQueueDeps }) => {
     return await enqueueInstallMissing(filename, autoQueueDeps !== false)
@@ -571,21 +583,40 @@ export function registerPackageHandlers() {
     return getMissingDeps(getPackagesIndex(), getPackagesFilenameIndex())
   })
 
+  // Resolve what the Hub would *actually* serve for each requested `.var` stem.
+  //
+  // `findPackages` does not fail on a version it doesn't have — it silently falls
+  // back to the nearest one it does (asking for `Creator.Pkg.9999` returns
+  // `Creator.Pkg.6.var`, with a working URL for v6). So the requested stem says
+  // nothing about what a download would produce, and callers must reconcile
+  // against the *returned* filename instead: hence `filename` / `version` /
+  // `installedLocally` alongside the URL. Comparing those is the whole of the
+  // caller-side policy — an update is only an update if the resolved version
+  // beats the installed one, and a missing dep is only installable if the
+  // resolved file isn't already on disk.
+  //
+  // Every requested stem is seeded so callers can distinguish "not on Hub / no
+  // URL" (null) from "enrichment hasn't returned yet" (undefined). Without this,
+  // a stem missing from `results` would leave downloadUrl undefined on the caller
+  // side, causing the UI to offer Install for something the Hub can't actually
+  // serve, and the install IPC then fails with "No download URL".
   ipcMain.handle('packages:enrich-from-hub', async (_, packageStems) => {
     if (!packageStems?.length) return {}
     const results = await findPackages(packageStems)
     const enriched = {}
     const isReal = (v) => v && v !== 'null'
-    // Seed a null placeholder for every requested stem so callers can distinguish
-    // "not on Hub / no URL" (null) from "enrichment hasn't returned yet" (undefined).
-    // Without this, a stem missing from `results` would leave downloadUrl undefined
-    // on the caller side, causing the UI to offer Install for something the Hub
-    // can't actually serve, and the install IPC then fails with "No download URL".
-    for (const stem of packageStems) enriched[stem] = { fileSize: null, downloadUrl: null }
+    for (const stem of packageStems) {
+      enriched[stem] = { fileSize: null, downloadUrl: null, filename: null, version: null, installedLocally: false }
+    }
     for (const [stem, hubFile] of Object.entries(results)) {
+      const filename = isReal(hubFile.filename) ? ensureVarExt(hubFile.filename) : null
+      const parsed = filename ? parseVarFilename(filename) : null
       enriched[stem] = {
         fileSize: isReal(hubFile.file_size) ? parseInt(hubFile.file_size, 10) || null : null,
-        downloadUrl: resolveHubDownloadUrl(hubFile),
+        downloadUrl: filename ? resolveHubDownloadUrl(hubFile) : null,
+        filename,
+        version: parsed ? Number(parsed.version) : null,
+        installedLocally: !!(filename && findLocalByFilename(filename)),
       }
     }
     return enriched

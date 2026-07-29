@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { toast } from '@/components/Toast'
+import { updateTargetVersion, updateTargetFilename } from '@/lib/hub-availability'
 
 function buildIndexes(items) {
   const byHubResourceId = new Map()
@@ -79,7 +80,7 @@ export const useDownloadStore = create((set, get) => ({
     }
   },
 
-  install: async (resourceId, hubDetailData, autoQueueDeps = true, packageName, asDependency = false) => {
+  install: async ({ resourceId, hubDetail, autoQueueDeps = true, packageName, asDependency, targetFilename } = {}) => {
     const rid = String(resourceId)
     set((s) => {
       const next = new Set(s.pendingInstalls)
@@ -89,10 +90,11 @@ export const useDownloadStore = create((set, get) => ({
     try {
       const result = await window.api.packages.install({
         resourceId,
-        hubDetail: hubDetailData || null,
+        hubDetail: hubDetail || null,
         autoQueueDeps,
         packageName,
-        asDependency,
+        asDependency: !!asDependency,
+        targetFilename: targetFilename || null,
       })
       if (result?.unresolvedDeps?.length > 0) toastUnresolvableDeps(result.unresolvedDeps)
       // Callers batching installs (Update All) summarize from the insert counts.
@@ -128,6 +130,9 @@ export const useDownloadStore = create((set, get) => ({
         autoQueueDeps: false,
         packageName: updateInfo.packageName,
         asDependency: !!updateInfo.isDepUpdate,
+        // Install exactly the file availability resolved to, not everything the
+        // resource page happens to list.
+        targetFilename: updateTargetFilename(updateInfo),
       })
       if (result?.unresolvedDeps?.length > 0) toastUnresolvableDeps(result.unresolvedDeps)
       // Successful inserts get visual feedback via the button state (Queuing/Queued/Downloading),
@@ -135,10 +140,13 @@ export const useDownloadStore = create((set, get) => ({
       const inserted = result?.inserted ?? 0
       const alreadyLocal = result?.alreadyLocal ?? 0
       const alreadyQueued = result?.alreadyQueued ?? 0
-      const ver = updateInfo.hubVersion ? `v${updateInfo.hubVersion}` : 'update'
+      const target = updateTargetVersion(updateInfo)
+      const ver = target ? `v${target}` : 'update'
       if (inserted === 0 && alreadyQueued > 0) {
         toast(`${ver} is already queued`, 'info', 3000)
       } else if (inserted === 0 && alreadyLocal > 0) {
+        // The target is pinned now, so this really is the version we meant, and a
+        // re-scan is the right advice again — the library index disagrees with disk.
         toast(`${ver} is already on disk — try a re-scan`, 'info', 3500)
       } else if (inserted > 0 && result?.paused) {
         toast(`${ver} queued — downloads are paused`, 'info', 4000)

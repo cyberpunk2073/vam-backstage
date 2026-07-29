@@ -1,17 +1,19 @@
 import { useDownloadStore } from '@/stores/useDownloadStore'
+import { updateTargetFilename } from '@/lib/hub-availability'
 
 /**
  * Resolves the current state of a Library "Update to vX" action for one package.
  * Reads optimistic `pendingUpdates` (set synchronously on click), the queue
- * indexed by hub-target filename, and the live progress for active transfers.
+ * indexed by the hub file the install would actually fetch, and the live progress
+ * for active transfers.
  *
  * @param {{ filename: string }} pkg - the locally-installed package the button is rendered for
- * @param {{ hubFilename?: string, hubVersion?: number, hubResourceId?: string, packageName?: string }} updateInfo
+ * @param {{ hubFilename?: string, availableFilename?: string, hubVersion?: number, availableVersion?: number, hubResourceId?: string, packageName?: string }} updateInfo
  * @returns {{ state: 'available'|'pending'|'queued'|'downloading'|'failed', progress: number|null, dl: object|null }}
  */
 export function useLibraryUpdateState(pkg, updateInfo) {
   const filename = pkg?.filename || null
-  const hubFilename = updateInfo?.hubFilename || null
+  const hubFilename = updateTargetFilename(updateInfo)
 
   const pending = useDownloadStore((s) => (filename ? s.pendingUpdates.has(filename) : false))
 

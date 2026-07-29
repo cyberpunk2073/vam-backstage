@@ -46,6 +46,7 @@ import {
 } from '@/lib/utils'
 import { toastIfBulkToggleFailures, toastIfSingleToggleFailed } from '@/lib/packageStorageToggleResults'
 import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
+import { isUpdateUnavailable, isUpdateCheckFailed, isUpdateChecking, updateTargetVersion } from '@/lib/hub-availability'
 import { isPackageActive } from '@shared/storage-state-predicates.js'
 import { useDownloadStore } from '@/stores/useDownloadStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
@@ -616,11 +617,18 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                     Go to v{updateInfo.hubVersion}
                   </ContextMenuItem>
                 </>
-              ) : updateInfo && updateInfo.downloadUrl === null ? (
-                <ContextMenuItem disabled title="Listed on the hub but not directly downloadable (paid or external)">
+              ) : isUpdateCheckFailed(updateInfo) ? (
+                <ContextMenuItem disabled title="The hub could not be reached — re-check to try again">
+                  <ArrowUpCircle size={12} className="shrink-0" />v{updateInfo.hubVersion} unchecked
+                </ContextMenuItem>
+              ) : isUpdateUnavailable(updateInfo) ? (
+                <ContextMenuItem
+                  disabled
+                  title="Listed on the hub but not downloadable — paid, externally hosted, or no longer served"
+                >
                   <ArrowUpCircle size={12} className="shrink-0" />v{updateInfo.hubVersion} unavailable
                 </ContextMenuItem>
-              ) : updateInfo && updateInfo.downloadUrl === undefined ? (
+              ) : isUpdateChecking(updateInfo) ? (
                 <ContextMenuItem disabled title="Verifying availability with the hub…">
                   <ArrowUpCircle size={12} className="shrink-0" />
                   Checking v{updateInfo.hubVersion}…
@@ -633,7 +641,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                     }}
                   >
                     <ArrowUpCircle size={12} className="shrink-0 text-accent-blue" />
-                    Update to v{updateInfo.hubVersion}
+                    Update to v{updateTargetVersion(updateInfo)}
                   </ContextMenuItem>
                 )
               )}

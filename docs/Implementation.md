@@ -958,7 +958,7 @@ The download manager (`src/main/downloads/manager.js`) handles concurrent packag
 
 ### Download Lifecycle
 
-1. **Enqueue**: `enqueueInstall(resourceId, hubDetailData, autoQueueDeps)` creates a download entry. If `autoQueueDeps`, all missing transitive dependencies are also queued.
+1. **Enqueue**: `enqueueInstall({ resourceId, hubDetail, autoQueueDeps, packageName, asDependency, targetFilename })` creates a download entry. If `autoQueueDeps`, all missing transitive dependencies are also queued. `targetFilename` pins the enqueue to one concrete `.var` instead of everything the resource page lists, and lets a dead `resource_id` fall back to resolving that file through `findPackages` — both required by the update path, which offers a specific version.
 2. **Process queue**: `processQueue()` picks the next queued item (direct priority first) and starts up to `MAX_CONCURRENT` transfers.
 3. **Transfer**: Downloads to a `.var.tmp` file with resume support (HTTP Range headers). Validates the ZIP after completion (size check + integrity verification on mismatch).
 4. **Integration**: `postDownloadIntegrate()` runs on success — scans/classifies the package, stores Hub metadata, optionally hides dep content, rebuilds the graph, cascade-enables disabled deps, queues newly discovered transitive deps, and fires invalidation events. See §16 "Download → Library Cascade" for the full step-by-step.
@@ -990,7 +990,7 @@ The Hub API is a single POST endpoint (`https://hub.virtamate.com/citizenx/api.p
 - **`searchResources(params)`**: Paginated full-text search with type, pricing, author, tag, license, and sort filters
 - **`getResourceDetail(resourceId)`**: Full resource detail including `hubFiles` array (one entry per `.var` version)
 - **`getResourceDetailByName(packageName)`**: Lookup by package group name
-- **`findPackages(refs)`**: Batch lookup of package references — returns `{ref: hubFileData}` for available packages
+- **`findPackages(refs)`**: Batch lookup of package references — returns `{ref: hubFileData}` for available packages. A version the Hub doesn't have resolves to the nearest one it does (`Creator.Pkg.9999` → `Creator.Pkg.6.var`) rather than failing, so callers that asked about a _specific_ version must compare `hubFileData.filename` against what they requested. Only an unknown package **name** yields the string-`"null"` placeholder.
 
 ### Caching
 
@@ -1484,7 +1484,7 @@ Handlers live under `src/main/ipc/` split per domain (`packages.js`, `contents.j
 | `packages:set-type-override`     | Override the auto-detected type                                                                   |
 | `packages:setHubResource`        | Manually link a local package to a Hub resource id                                                |
 | `packages:missing-deps`          | Aggregated missing-dep data for Library's "missing" filter                                        |
-| `packages:enrich-from-hub`       | Backfill Hub metadata for a batch of package stems                                                |
+| `packages:enrich-from-hub`       | Resolve what the Hub would actually serve for a batch of stems (see below)                        |
 | `packages:file-list`             | Full internal ZIP file list for a `.var`                                                          |
 | `packages:check-updates`         | Run the CDN update check (`null` when the index is unreachable — distinct from `{}` = no updates) |
 | `packages:redownload`            | Re-fetch a `.var` from the Hub to replace a corrupted copy                                        |
@@ -1495,6 +1495,17 @@ Handlers live under `src/main/ipc/` split per domain (`packages.js`, `contents.j
 | `packages:import-local-copy`     | Local-only fast path: copy/move from a host path into the same import batch (remote-denied)       |
 
 `packages:install-missing`, `packages:install-all-missing`, and `packages:install-deps-batch` are three distinct entry points; all three are backed by the Hub client's `findPackages`.
+
+##### Hub availability enrichment
+
+`packages:enrich-from-hub` answers "what would a download of this stem actually produce?" and returns `{ filename, version, fileSize, downloadUrl, installedLocally }` per stem. Because `findPackages` substitutes the nearest version it has for one it doesn't, the returned `filename` is often _not_ the stem that was asked about, and callers reconcile against it rather than against their request:
+
+Both policies live in `src/renderer/src/lib/hub-availability.js`:
+
+- **Updates** (`applyUpdateEnrichment`) require the resolved file to be downloadable, absent from disk, and newer than what's installed; anything else is `downloadUrl: null` and renders as unavailable. A resolved version between the installed one and the CDN-advertised one is still a valid update and becomes the install target (`availableFilename` / `availableVersion`).
+- **Missing deps** (`applyDepEnrichment`) accept any version the Hub can serve — some fallback beats none — and disqualify only on `installedLocally`, which means the dep is already satisfied by a different version on disk.
+
+Without that reconciliation the CDN index advertising a version the Hub has retracted produces an Update button carrying an older version's URL, which then dead-ends in the install path.
 
 ##### Drag-drop import batch protocol
 

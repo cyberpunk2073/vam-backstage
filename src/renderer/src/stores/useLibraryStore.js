@@ -4,6 +4,7 @@ import { toast } from '@/components/Toast'
 import { typeFilterSlice } from './typeFilterSlice'
 import { useContentStore } from './useContentStore'
 import { persistViewState, oneOf, asArray, asPolarityList, asString, asBool, asCardWidth } from './persistViewState'
+import { applyUpdateEnrichment, applyDepEnrichment } from '@/lib/hub-availability'
 
 let missingDepsNonce = 0
 let updateCheckNonce = 0
@@ -43,6 +44,9 @@ function _mergeUpdateEnrichment(prev, next) {
     if (prevEntry?.downloadUrl !== undefined && prevEntry.hubFilename === entry.hubFilename) {
       entry.downloadUrl = prevEntry.downloadUrl
       entry.fileSize = prevEntry.fileSize
+      entry.availableFilename = prevEntry.availableFilename
+      entry.availableVersion = prevEntry.availableVersion
+      entry.hubCheckFailed = prevEntry.hubCheckFailed
     }
   }
 }
@@ -79,7 +83,10 @@ async function _enrichUpdateCheck(nonce, set, get, { onlyUnresolved = false } = 
   const requested = new Set()
   for (const [filename, entry] of Object.entries(results)) {
     if (entry.localNewerFilename) continue
-    if (onlyUnresolved && entry.downloadUrl !== undefined) continue
+    // A `hubCheckFailed` entry has a value, but it's ours rather than the hub's —
+    // re-ask on the next pass instead of letting one dropped connection stick until
+    // the view remounts.
+    if (onlyUnresolved && entry.downloadUrl !== undefined && !entry.hubCheckFailed) continue
     stems.push(entry.hubFilename.replace(/\.var$/i, ''))
     requested.add(filename)
   }
@@ -94,7 +101,7 @@ async function _enrichUpdateCheck(nonce, set, get, { onlyUnresolved = false } = 
     for (const [filename, entry] of Object.entries(current)) {
       const stem = entry.hubFilename.replace(/\.var$/i, '')
       const detail = details[stem]
-      updated[filename] = detail ? { ...entry, downloadUrl: detail.downloadUrl, fileSize: detail.fileSize } : entry
+      updated[filename] = detail ? applyUpdateEnrichment(entry, detail) : entry
     }
     set({ updateCheckResults: updated })
   } catch (err) {
@@ -102,16 +109,19 @@ async function _enrichUpdateCheck(nonce, set, get, { onlyUnresolved = false } = 
     console.warn('Update details enrichment failed:', err)
     // Hub round-trip failed wholesale (server outage, network down, etc.).
     // Mark every still-unknown entry this pass asked about as `downloadUrl: null`
-    // so the UI lands on a definitive "unavailable" state instead of leaving the
-    // button stuck in its "checking" rendering. Entries that arrived mid-pass were
-    // never asked about, so they stay unknown for the next pass to retry.
+    // so the UI lands on a definitive state instead of leaving the button stuck in
+    // its "checking" rendering. `hubCheckFailed` keeps that distinct from an answer
+    // the Hub actually gave: nothing becomes clickable either way, but the copy says
+    // "couldn't check" rather than claiming the version doesn't exist. Entries that
+    // arrived mid-pass were never asked about, so they stay unknown for the next
+    // pass to retry.
     const current = get().updateCheckResults
     if (!current) return
     const updated = {}
     let dirty = false
     for (const [filename, entry] of Object.entries(current)) {
       if (entry.downloadUrl === undefined && requested.has(filename)) {
-        updated[filename] = { ...entry, downloadUrl: null }
+        updated[filename] = { ...entry, downloadUrl: null, hubCheckFailed: true }
         dirty = true
       } else {
         updated[filename] = entry
@@ -326,7 +336,7 @@ export const useLibraryStore = create(
               const stem = dep.hub.filename.replace(/\.var$/i, '')
               const detail = details[stem]
               if (!detail) return dep
-              return { ...dep, hub: { ...dep.hub, fileSize: detail.fileSize, downloadUrl: detail.downloadUrl } }
+              return { ...dep, hub: applyDepEnrichment(dep.hub, detail) }
             }),
             hubDetailsLoading: false,
           })

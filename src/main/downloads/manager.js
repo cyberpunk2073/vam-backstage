@@ -122,7 +122,7 @@ function emitProgress(id, data) {
   notify('download:progress', { id, ...data })
 }
 
-function ensureVarExt(filename) {
+export function ensureVarExt(filename) {
   if (!filename) return filename
   return /\.var$/i.test(filename) ? filename : filename + '.var'
 }
@@ -188,13 +188,41 @@ function isHubDepPresentLocally(file, group, packageIndex, groupIndex) {
 
 // --- Public API (called by IPC handlers) ---
 
-export async function enqueueInstall(
+/** The Hub's authoritative "this id is gone", as opposed to a transport failure
+ *  (`Hub API 503`, socket errors) that says nothing about the resource. */
+function isResourceGoneError(err) {
+  return /resource not found/i.test(err?.message || '')
+}
+
+/**
+ * Resolve one concrete `.var` through findPackages, for when the resource detail
+ * can't serve it. The exact-filename guard is load-bearing: findPackages answers
+ * a version it doesn't have with the nearest one it does, so an unguarded result
+ * would happily download some other version under the caller's target name.
+ *
+ * Transport failures propagate rather than reading as "no such file" — the caller
+ * turns a null into a permanent-sounding "no longer available on the Hub".
+ */
+async function findExactFile(filename) {
+  const stem = filename.replace(/\.var$/i, '')
+  const file = (await findPackages([stem]))[stem]
+  if (!file || ensureVarExt(file.filename)?.toLowerCase() !== filename.toLowerCase()) return null
+  return resolveDownloadUrl(file) ? file : null
+}
+
+export async function enqueueInstall({
   resourceId,
-  hubDetailData,
+  hubDetail = null,
   autoQueueDeps = true,
   packageName,
   asDependency = false,
-) {
+  targetFilename = null,
+} = {}) {
+  // A concrete target means the caller wants exactly one file (the update path,
+  // which knows which version it's offering). Without one we install whatever the
+  // resource page lists, as before.
+  const target = targetFilename ? ensureVarExt(targetFilename) : null
+
   // Prefer resourceId. A package can be split across Hub resource pages — e.g.
   // LO.[Hair]PonyTail v1 → res 566, v2 → res 1726 — and getResourceDetailByName
   // (`.latest` lookup) returns whichever single resource the Hub mapped that
@@ -205,13 +233,25 @@ export async function enqueueInstall(
   // (rare); in that case picking up an older resource is acceptable — the
   // next update check will surface the newer version and the update path
   // will route through the correct resource id.
-  const detail =
-    hubDetailData || (resourceId ? await getResourceDetail(resourceId) : await getResourceDetailByName(packageName))
-  if (!detail) throw new Error('Resource not found on Hub')
+  //
+  // packages.json can also point at an id the Hub has since deleted, which is
+  // fatal here but not to the download itself — findPackages reaches the file by
+  // name through a live path. So with a concrete target a dead id is demoted to a
+  // failed detail lookup and handled below; every other error still propagates.
+  let detail = hubDetail
+  if (!detail) {
+    try {
+      detail = resourceId ? await getResourceDetail(resourceId) : await getResourceDetailByName(packageName)
+    } catch (err) {
+      if (!target || !isResourceGoneError(err)) throw err
+      console.warn(`enqueueInstall: resource ${resourceId} is gone, resolving ${target} by name`)
+    }
+  }
+  if (!detail && !target) throw new Error('Resource not found on Hub')
 
   // hub_json auto-persisted by getResourceDetail/getResourceDetailByName
   try {
-    if (detail.user_id) {
+    if (detail?.user_id) {
       upsertHubUser(String(detail.user_id), detail.username, {
         user_id: detail.user_id,
         username: detail.username,
@@ -220,13 +260,24 @@ export async function enqueueInstall(
     }
   } catch {}
 
-  const hubFiles = detail.hubFiles || []
-  if (hubFiles.length === 0) throw new Error('No downloadable files')
+  // Downloadability is decided per file by whether the Hub actually gave us a URL
+  // (`resolveDownloadUrl` below), not inferred from the `category` / `hubDownloadable`
+  // labels on the listing — a Paid resource that does serve a file installs fine.
+  let hubFiles = detail?.hubFiles || []
+  if (target) {
+    // The resource page routinely lacks the version packages.json advertised (a
+    // retracted release), and lists unrelated files the caller never asked for.
+    // Narrowing to the target keeps `alreadyLocal` about the file being installed
+    // — otherwise an older sibling already on disk reads as "nothing to do".
+    let file = hubFiles.find((f) => ensureVarExt(f.filename)?.toLowerCase() === target.toLowerCase())
+    if (!file || !resolveDownloadUrl(file)) file = await findExactFile(target)
+    if (!file) throw new Error(`${target} is no longer available on the Hub`)
+    hubFiles = [file]
+  } else if (hubFiles.length === 0) {
+    throw new Error('No downloadable files')
+  }
 
-  const isPaid = detail.category === 'Paid'
-  if (isPaid) throw new Error('Cannot download paid packages')
-
-  const hubTitle = detail.title || null
+  const hubTitle = detail?.title || null
   let inserted = 0
   let alreadyLocal = 0
   let alreadyQueued = 0
@@ -248,7 +299,9 @@ export async function enqueueInstall(
     }
     insertDownload({
       packageRef: fn,
-      hubResourceId: String(detail.resource_id || ''),
+      // findPackages entries carry their own resource_id; hubFiles entries don't
+      // and inherit the detail's.
+      hubResourceId: String(file.resource_id || detail?.resource_id || ''),
       downloadUrl: url,
       fileSize: parseInt(file.file_size || '0', 10) || null,
       priority: asDependency ? 'dependency' : 'direct',
@@ -264,7 +317,9 @@ export async function enqueueInstall(
   processQueue()
 
   const mainRef = ensureVarExt(hubFiles[0].filename)
-  const unresolvedDeps = await enqueueMissingDeps(detail, mainRef, autoQueueDeps)
+  // No detail means we reached the file by name alone, so there's no dependency
+  // list to walk; postDownloadIntegrate picks up missing deps after the download.
+  const unresolvedDeps = detail ? await enqueueMissingDeps(detail, mainRef, autoQueueDeps) : []
 
   emitUpdated()
   processQueue()

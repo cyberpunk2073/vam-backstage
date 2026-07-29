@@ -404,7 +404,7 @@ export default function HubView({ onNavigate }) {
 
   const handleInstall = useCallback(
     (resource, hubDetail) => {
-      dlInstall(resource.resource_id, hubDetail).catch(() => {})
+      dlInstall({ resourceId: resource.resource_id, hubDetail }).catch(() => {})
     },
     [dlInstall],
   )

@@ -100,6 +100,14 @@ import {
   ForceRemoveDialogContent,
 } from '@/components/package-action-dialogs'
 import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
+import {
+  isUpdateUnavailable,
+  isUpdateCheckFailed,
+  isUpdateChecking,
+  isUpdateDownloadable,
+  updateTargetVersion,
+  updateTargetFilename,
+} from '@/lib/hub-availability'
 
 const SORT_OPTIONS = ['Recently installed', 'Type', 'Name', 'Size', 'Content', 'Deps', 'Morphs']
 
@@ -119,33 +127,6 @@ function packageMatchesSelectedTags(p, selectedTags) {
 
 function packageMatchesSelectedLabels(p, selectedLabelIds) {
   return matchesPolarityList(selectedLabelIds, p.labelIds || [])
-}
-
-/** True when an update entry has been definitively marked as not directly
- *  downloadable — paid/external, or hub couldn't be reached and enrichment
- *  marked it null as the fallback state. `downloadUrl === undefined` means
- *  enrichment hasn't completed yet and is treated as "checking" by the UI
- *  (separate state, not unavailable). */
-function isUpdateUnavailable(updateInfo) {
-  if (!updateInfo || updateInfo.localNewerFilename) return false
-  return updateInfo.downloadUrl === null
-}
-
-/** True when the update entry hasn't been enriched yet — only happens on the
- *  first check before findPackages returns, since later checks merge prior
- *  enrichment forward. */
-function isUpdateChecking(updateInfo) {
-  if (!updateInfo || updateInfo.localNewerFilename) return false
-  return updateInfo.downloadUrl === undefined
-}
-
-/** True once enrichment resolved a concrete hub URL. The bulk path needs this
- *  positive form: "not unavailable" also admits entries still being checked, and
- *  installing those queues whatever the hub answers with — including resources it
- *  can't actually serve. */
-function isUpdateDownloadable(updateInfo) {
-  if (!updateInfo || updateInfo.localNewerFilename) return false
-  return typeof updateInfo.downloadUrl === 'string'
 }
 
 /** A package counts as "broken" when it's corrupted, has missing deps, or — while
@@ -1364,7 +1345,12 @@ function ToolbarActions({
       if (!isUpdateDownloadable(update)) continue
       if (!update.hubResourceId && !update.packageName) continue
       try {
-        const r = await store.install(update.hubResourceId, null, true, update.packageName, !!update.isDepUpdate)
+        const r = await store.install({
+          resourceId: update.hubResourceId,
+          packageName: update.packageName,
+          asDependency: update.isDepUpdate,
+          targetFilename: updateTargetFilename(update),
+        })
         const ins = r?.inserted ?? 0
         if (ins > 0) queued += ins
         else if ((r?.alreadyLocal ?? 0) + (r?.alreadyQueued ?? 0) > 0) alreadyKnown++
@@ -1825,14 +1811,17 @@ function UpdateActions({ pkg, updateInfo }) {
   }
 
   if (isUpdateUnavailable(updateInfo)) {
+    const checkFailed = isUpdateCheckFailed(updateInfo)
     return (
       <div className="rounded border border-border bg-elevated/40 px-2.5 py-2">
         <div className="flex items-center gap-1.5 text-[11px] font-medium text-text-secondary">
-          <ArrowUpCircle size={11} className="shrink-0" /> v{updateInfo.hubVersion} unavailable
+          <ArrowUpCircle size={11} className="shrink-0" />
+          {checkFailed ? `v${updateInfo.hubVersion} unchecked` : `v${updateInfo.hubVersion} unavailable`}
         </div>
         <p className="text-[10px] text-text-tertiary mt-1 leading-relaxed">
-          A newer version is listed on the hub but is not directly downloadable — typically because it is a paid
-          resource or hosted externally.
+          {checkFailed
+            ? 'The hub could not be reached, so this version’s availability is unknown. Re-check to try again.'
+            : 'A newer version is listed on the hub but can’t be downloaded — it is a paid or externally hosted resource, or the hub no longer serves that version.'}
         </p>
       </div>
     )
@@ -1865,7 +1854,7 @@ function UpdateActions({ pkg, updateInfo }) {
         </>
       ) : (
         <>
-          <ArrowUpCircle size={11} /> Update to v{updateInfo.hubVersion}
+          <ArrowUpCircle size={11} /> Update to v{updateTargetVersion(updateInfo)}
         </>
       )}
     </Button>
