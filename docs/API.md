@@ -274,6 +274,13 @@ All fields are strings. Filter slots (`location`/`category`/`type`/`username`/`t
 - `hub_hosted` (`"0"`/`"1"`) and `hubHosted` (`"true"`/`"false"`) are redundant siblings meaning the same thing.
 - `hubDownloadable: "true"` + non-empty `hubFiles[]` ⇒ downloadable from Hub. The example above is not hub-hosted yet downloadable (common).
 
+**Known traps** (measured against live Hub; Backstage compensates in the windowed gallery):
+
+- **`total_found` overcounts.** The count query includes resources the row query will never return. Unfiltered claims ~50.6k while the list ends around page 775 of 60 (~46.5k actual); filtered types show the same 3–8% gap. Treat `total_found` as an upper bound. Interior pages are always dense (`perpage` rows); the shortfall sits entirely at the tail. Backstage keeps the scrollbar sized to `total_found` and renders confirmed-empty placeholder cards for slots on short/empty pages (tooltip blames the Hub mismatch).
+- **Hard date floor ~2020-05-11.** Nothing with `last_update` before that date is returned, regardless of sort or type filter (even small types like Guides bottom out on that day). Pre-2020 packages are unreachable through `getResources`.
+- **`license` is ignored by the server.** Sending `license: "CC BY"` (or any other value) leaves `total_found` and the mix of `licenseType` values unchanged. Backstage still sends the param and filters client-side as a stopgap (**bug** — should be fixed server-side or by dropping the dead param and documenting client-only filtering). Client-side filtering shortens pages; the windowed list fills the remainder of each page with the same empty placeholders used for the overcount tail.
+- **`perpage` scales well.** Latency is dominated by the round trip: 30 / 100 / 250 rows cost ~2.4–2.75s. Backstage defaults to 60.
+
 ---
 
 ### `getResourceDetail` — single resource

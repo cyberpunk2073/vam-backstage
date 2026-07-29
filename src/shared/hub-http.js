@@ -5,6 +5,9 @@
  */
 export const HUB_HTTP_USER_AGENT = 'VaMBackstage/1.0'
 
+/** Default `getResources` page size. */
+export const HUB_PER_PAGE = 60
+
 /** Hub resource-icon CDN base. Icons are sharded into folders by floor(id/1000). */
 const HUB_RESOURCE_ICON_CDN = 'https://1424104733.rsc.cdn77.org/data/resource_icons'
 

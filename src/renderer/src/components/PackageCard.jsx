@@ -127,6 +127,34 @@ const THUMB_ACTION_BTN_SHADOW = 'shadow-[0_1px_2px_rgba(0,0,0,0.55),0_2px_6px_rg
 /** Lift + inset white edge for borderless (gradient) action buttons that would otherwise blend into bright thumbnails. */
 const THUMB_ACTION_BTN_POP = `${THUMB_ACTION_BTN_SHADOW} ring-1 ring-inset ring-white/15`
 
+/**
+ * Hub thumbnails that have painted at least once this session, each held by a detached
+ * `Image` so the renderer keeps the decoded bitmap rather than re-reading the CDN cache.
+ * Two jobs, both about not undoing work already done: the scrub gate never withholds an
+ * image we already showed, and a card that scrolls out of the virtual window and back
+ * repaints from memory instead of loading again.
+ *
+ * Insertion-order LRU (same shape as the main-process caches) — a deep browse touches far
+ * too many cards to hold them all, and the useful window is the last few screens.
+ */
+const MAX_RETAINED_THUMBS = 400
+const retainedThumbs = new Map()
+
+function retainThumb(url) {
+  if (!url) return
+  const existing = retainedThumbs.get(url)
+  retainedThumbs.delete(url)
+  if (existing) {
+    retainedThumbs.set(url, existing)
+    return
+  }
+  // Issued right after the card's own load, so this resolves from the memory cache.
+  const img = new Image()
+  img.src = url
+  retainedThumbs.set(url, img)
+  if (retainedThumbs.size > MAX_RETAINED_THUMBS) retainedThumbs.delete(retainedThumbs.keys().next().value)
+}
+
 /** Non-interactive bulk-selection marker; whole card handles clicks */
 function BulkSelectChip({ checked }) {
   return (
@@ -200,6 +228,9 @@ export function HubCard({
   wishlist = false,
   /** Flash the "new since your last look" accent ring (see `flashSince` in useHubStore). */
   flash = false,
+  /** The gallery is scrubbing past: hold back the CDN thumbnail request until it settles.
+   *  Wishlist cards read a local disk cache, so they never defer. */
+  deferThumb = false,
 }) {
   const minimal = mode === 'minimal'
   const isPaid = resource.category === 'Paid'
@@ -381,7 +412,11 @@ export function HubCard({
   // still render after the resource disappears from the Hub; hub search cards
   // hotlink image_url with a gradient fallback on load error.
   const hubResThumb = useThumbnail(wishlist ? `hub-icon:${rid}` : null)
-  const shownThumb = wishlist ? hubResThumb : imgUrl && !thumbFailed ? imgUrl : null
+  // Deferring only ever withholds a thumbnail we have never fetched. Once one has
+  // loaded, dropping it again on the next fast scroll would flash the card back to its
+  // gradient for no saved traffic — and revisiting a region would flash it a third time.
+  const deferred = deferThumb && !retainedThumbs.has(imgUrl)
+  const shownThumb = wishlist ? hubResThumb : imgUrl && !thumbFailed && !deferred ? imgUrl : null
   const unavailable = wishlist && !!resource._unavailable
 
   return (
@@ -399,7 +434,10 @@ export function HubCard({
               src={shownThumb}
               className={`thumb absolute inset-0 w-full h-full object-cover ${unavailable ? 'grayscale opacity-60' : ''}`}
               alt=""
-              loading="lazy"
+              // Deliberately not `loading="lazy"`: the grid is virtualised, so every
+              // rendered card is already at or next to the viewport, and the intersection
+              // check only delays a load that is about to be needed anyway.
+              onLoad={wishlist ? undefined : () => retainThumb(imgUrl)}
               onError={wishlist ? undefined : () => setThumbFailed(true)}
             />
           ) : null}

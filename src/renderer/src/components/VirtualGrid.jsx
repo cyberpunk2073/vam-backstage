@@ -8,9 +8,19 @@ import { ScrollToTopButton } from '@/components/ScrollToTopButton'
  *
  * On reflow the row containing the anchor item (top-left of the viewport at last
  * user scroll) is kept at the top so toggling column counts never drifts.
+ *
+ * Dense mode (`items`) is used by Library / Content / Wishlist. Sparse mode (`itemCount` +
+ * `getItem`) sizes the scrollbar to the full result set and renders missing slots
+ * via `renderSkeleton` (whole-row gated: any hole → entire row is skeletons).
+ * Confirmed-empty slots (e.g. Hub overcount dummies) are non-null and count as
+ * loaded for gating — same as real cards.
  */
 export function VirtualGrid({
   items,
+  /** Sparse mode: total logical item count (scrollbar height). */
+  itemCount: itemCountProp,
+  /** Sparse mode: resolve item at global index; return null/undefined if unloaded. */
+  getItem,
   itemWidth,
   itemHeight,
   fixedHeight = 0,
@@ -18,6 +28,8 @@ export function VirtualGrid({
   /** Space between rows (virtual stride). Defaults to `gap`; use a larger value if row height is tight vs column gap. */
   gapY,
   renderItem,
+  /** Sparse mode: render a placeholder for an unloaded index (and for whole-row gating). */
+  renderSkeleton,
   className = '',
   overscan = 3,
   padding = 16,
@@ -27,16 +39,17 @@ export function VirtualGrid({
   onEmptyAreaPointerDown,
   /** Flat index of the selected item; keeps keyboard selection visible in the viewport. */
   selectedIndex,
-  /** Fired when the last visible row is within `endReachedThreshold` rows of the end (infinite scroll). */
-  onEndReached,
-  /** How many rows from the bottom trigger `onEndReached`. `range.endIndex` already includes `overscan`,
-   *  so a small value fires roughly a viewport-plus before the end (matches the old ~1600px prefetch margin). */
-  endReachedThreshold = 4,
-  /** Rendered below the virtualised rows, inside the scroll container (e.g. "Loading more…"). */
-  footer,
+  /** Sparse/windowed mode: fired with inclusive item-index range of the virtual window (incl. overscan). */
+  onRangeChange,
   /** When true, suppress the default "No items found" message (caller renders its own empty state). */
   hideEmptyMessage = false,
+  /** Optional callback receiving the scroll element (e.g. seek-gated rail overlays). */
+  onScrollRef,
 }) {
+  const sparse = typeof itemCountProp === 'number' && typeof getItem === 'function'
+  const itemCount = sparse ? itemCountProp : items?.length || 0
+  const resolveItem = (index) => (sparse ? getItem(index) : items[index])
+
   const rowGap = gapY ?? gap
   const scrollRef = useRef(null)
   const [layout, setLayout] = useState({ cols: 1, cellWidth: itemWidth })
@@ -52,6 +65,11 @@ export function VirtualGrid({
     (cw) => Math.round(scalingHeight * (cw / itemWidth) + fixedHeight),
     [scalingHeight, itemWidth, fixedHeight],
   )
+
+  useEffect(() => {
+    onScrollRef?.(scrollRef.current)
+    return () => onScrollRef?.(null)
+  }, [onScrollRef])
 
   // Keep anchor in sync with user-initiated scrolls only.
   useEffect(() => {
@@ -111,7 +129,7 @@ export function VirtualGrid({
 
   const { cols, cellWidth } = layout
   const rowHeight = calcRowHeight(cellWidth)
-  const rowCount = Math.ceil(items.length / cols)
+  const rowCount = Math.ceil(itemCount / cols)
 
   const virtualizer = useVirtualizer({
     count: rowCount,
@@ -120,14 +138,18 @@ export function VirtualGrid({
     overscan,
   })
 
-  const onEndReachedRef = useRef(onEndReached)
-  onEndReachedRef.current = onEndReached
+  const onRangeChangeRef = useRef(onRangeChange)
+  onRangeChangeRef.current = onRangeChange
+  const rangeStartIndex = virtualizer.range?.startIndex ?? -1
   const rangeEndIndex = virtualizer.range?.endIndex ?? -1
+
   useEffect(() => {
-    if (!onEndReachedRef.current || rowCount === 0) return
-    if (rangeEndIndex < 0) return
-    if (rangeEndIndex >= rowCount - 1 - endReachedThreshold) onEndReachedRef.current()
-  }, [rangeEndIndex, rowCount, endReachedThreshold, items.length])
+    if (!onRangeChangeRef.current || rowCount === 0 || rangeStartIndex < 0 || rangeEndIndex < 0) return
+    const start = rangeStartIndex * cols
+    const end = Math.min(itemCount - 1, (rangeEndIndex + 1) * cols - 1)
+    if (end < start) return
+    onRangeChangeRef.current(start, end)
+  }, [rangeStartIndex, rangeEndIndex, cols, itemCount, rowCount])
 
   // Scroll to the selection only when it actually changes. <Activity> re-runs all
   // effects on reveal regardless of deps, and right after reveal the virtualizer's
@@ -136,12 +158,12 @@ export function VirtualGrid({
   // reset/restore effect below just restored.
   const lastScrolledSelectionRef = useRef(null)
   useEffect(() => {
-    if (selectedIndex == null || selectedIndex < 0 || !items.length) return
+    if (selectedIndex == null || selectedIndex < 0 || !itemCount) return
     if (lastScrolledSelectionRef.current === selectedIndex) return
     lastScrolledSelectionRef.current = selectedIndex
     const row = Math.floor(selectedIndex / cols)
     virtualizer.scrollToIndex(row, { align: 'auto' })
-  }, [selectedIndex, cols, items.length, virtualizer])
+  }, [selectedIndex, cols, itemCount, virtualizer])
 
   useLayoutEffect(() => {
     virtualizer.measure()
@@ -217,7 +239,12 @@ export function VirtualGrid({
         <div style={{ height: virtualizer.getTotalSize() + padding * 2, position: 'relative' }}>
           {virtualizer.getVirtualItems().map((vRow) => {
             const startIdx = vRow.index * cols
-            const rowItems = items.slice(startIdx, startIdx + cols)
+            const rowItems = []
+            for (let idx = startIdx; idx < Math.min(startIdx + cols, itemCount); idx++) {
+              rowItems.push({ idx, item: resolveItem(idx) })
+            }
+            // Whole-row gate (sparse): any missing item → entire row draws as skeletons.
+            const rowIncomplete = sparse && rowItems.some(({ item }) => item == null)
             return (
               <div
                 key={vRow.key}
@@ -230,17 +257,16 @@ export function VirtualGrid({
                   gap,
                 }}
               >
-                {rowItems.map((item, colIdx) => (
-                  <div key={startIdx + colIdx} style={{ width: cellWidth, flexShrink: 0, minWidth: 0 }}>
-                    {renderItem(item, startIdx + colIdx)}
+                {rowItems.map(({ idx, item }) => (
+                  <div key={idx} style={{ width: cellWidth, flexShrink: 0, minWidth: 0 }}>
+                    {rowIncomplete ? (renderSkeleton?.(idx) ?? null) : renderItem(item, idx)}
                   </div>
                 ))}
               </div>
             )
           })}
         </div>
-        {footer}
-        {items.length === 0 && !hideEmptyMessage && (
+        {itemCount === 0 && !hideEmptyMessage && (
           <div className="text-center py-16 text-text-tertiary text-sm">No items found</div>
         )}
       </div>

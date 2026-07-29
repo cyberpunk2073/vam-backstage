@@ -18,6 +18,7 @@ import {
   isCommercialUseAllowed,
   isNonCommercialUseAllowed,
 } from '@shared/licenses.js'
+import { HUB_PER_PAGE } from '@shared/hub-http.js'
 
 const API_URL = 'https://hub.virtamate.com/citizenx/api.php'
 
@@ -140,7 +141,7 @@ export async function searchResources(params = {}) {
   const body = {
     action: 'getResources',
     latest_image: 'Y',
-    perpage: String(params.perpage || 30),
+    perpage: String(params.perpage || HUB_PER_PAGE),
     page: String(params.page || 1),
   }
   if (params.sort) body.sort = params.sort
@@ -158,12 +159,17 @@ export async function searchResources(params = {}) {
     params.license !== COMMERCIAL_USE_ALLOWED_LICENSE_FILTER &&
     params.license !== NONCOMMERCIAL_USE_ALLOWED_LICENSE_FILTER
   ) {
+    // BUG: Hub's getResources ignores the `license` param entirely (unchanged total_found,
+    // every licenseType still present). We still send it and filter client-side below so the
+    // UI behaves correctly, but that means license-filtered pages can be sparse — tracked
+    // separately from the windowed-list work. See docs/API.md.
     body.license = params.license
   }
 
   const data = await hubPost(body)
 
   let resources = data.resources || []
+  // Client-side license filter — see BUG note above; remove once the Hub honors `license`.
   if (params.license && params.license !== 'Any') {
     if (params.license === COMMERCIAL_USE_ALLOWED_LICENSE_FILTER) {
       resources = resources.filter((r) => isCommercialUseAllowed(getHubResourceLicense(r)) === true)

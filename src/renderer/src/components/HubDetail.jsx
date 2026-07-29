@@ -40,7 +40,6 @@ import { useHubStore } from '@/stores/useHubStore'
 import { useWishlistStore } from '@/stores/useWishlistStore'
 import { useDownloadStore } from '@/stores/useDownloadStore'
 import { useViewStore } from '@/stores/useViewStore'
-import { useInstalledStore } from '@/stores/useInstalledStore'
 import { useHubInstallState } from '@/hooks/useHubInstallState'
 import { useHubInteractions } from '@/hooks/useHubInteractions'
 import { AuthorAvatar, DepRow } from '@/components/PackageCard'
@@ -422,7 +421,7 @@ export default function HubDetail({
           // Reuse the gallery row as the stub when the target is already in the
           // results; otherwise a bare id, filled by hub:detail. followDetail
           // self-dedupes concurrent calls for the same in-flight resource.
-          const known = store.resources?.find((r) => String(r.resource_id) === navId)
+          const known = store.findResourceById(navId)
           store.followDetail(known || { resource_id: navId })
         }
       }
@@ -688,7 +687,7 @@ export default function HubDetail({
       const rid = String(targetId)
       if (!rid || rid === String(resourceId)) return
       const store = useHubStore.getState()
-      const known = store.resources?.find((r) => String(r.resource_id) === rid)
+      const known = store.findResourceById(rid)
       store.openDetail(known || { resource_id: rid }, { pushHistory: true })
     },
     [resourceId],
@@ -982,17 +981,7 @@ export default function HubDetail({
                   size="lg"
                   onClick={() => {
                     if (!installStatus.filename) return
-                    window.api.packages.promote(installStatus.filename, resourceId)
-                    useInstalledStore.getState().update(rid, true, true, installStatus.filename)
-                    useHubStore.setState((s) => ({
-                      resources: s.resources.map((r) =>
-                        String(r.resource_id) === rid ? { ...r, _isDirect: true } : r,
-                      ),
-                      detailData:
-                        s.detailData && String(s.detailData.resource_id) === rid
-                          ? { ...s.detailData, _isDirect: true }
-                          : s.detailData,
-                    }))
+                    useHubStore.getState().promoteResource(installStatus.filename, resourceId)
                   }}
                   className="w-full text-xs"
                 >

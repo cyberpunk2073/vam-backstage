@@ -135,7 +135,7 @@ App.jsx
 │   ├── HubView
 │   │   ├── FilterPanel (resizable left; includes labels-autocomplete)
 │   │   ├── Toolbar (count + card size toggle + Hub/Wishlist mode)
-│   │   ├── HubCard gallery (infinite scroll in hub mode; wishlist loads all at once)
+│   │   ├── HubCard gallery (windowed list over full result set in hub mode; wishlist loads all at once)
 │   │   └── HubDetail (replaces gallery on card click)
 │   │       ├── BackBar (breadcrumb)
 │   │       ├── PackageInfoPanel (320px left, scrollable)
@@ -987,10 +987,27 @@ If a `.tmp` file exists from a previous attempt, the manager tries a `Range: byt
 The Hub API is a single POST endpoint (`https://hub.virtamate.com/citizenx/api.php`) with an `action` parameter:
 
 - **`getFilters()`**: Returns filter metadata (categories, tags, sort options, etc.)
-- **`searchResources(params)`**: Paginated full-text search with type, pricing, author, tag, license, and sort filters
+- **`searchResources(params)`**: Paginated full-text search with type, pricing, author, tag, license, and sort filters. Default `perpage` is 60 (`HUB_PER_PAGE`).
 - **`getResourceDetail(resourceId)`**: Full resource detail including `hubFiles` array (one entry per `.var` version)
 - **`getResourceDetailByName(packageName)`**: Lookup by package group name
 - **`findPackages(refs)`**: Batch lookup of package references — returns `{ref: hubFileData}` for available packages. A version the Hub doesn't have resolves to the nearest one it does (`Creator.Pkg.9999` → `Creator.Pkg.6.var`) rather than failing, so callers that asked about a _specific_ version must compare `hubFileData.filename` against what they requested. Only an unknown package **name** yields the string-`"null"` placeholder.
+
+### Windowed Hub gallery
+
+Hub browse is a **window over the full result set**, not an append-only infinite scroll. After the first `getResources` response, the grid is sized to `total_found`, unloaded slots render as skeletons, and dragging the scrollbar jumps to any depth. Position is the coordinate, so every sort works the same way.
+
+- **`useHubStore`**: sparse `resourcesByIndex` map plus a single `itemCount` (the Hub's `total_found`), and `loadRange(start, end)`. Requests are tagged with the reset-fetch sequence that owns them, so a response outliving its query is dropped; a page already in flight is awaited rather than re-issued (the detail pager depends on that); a failed page backs off for 5s so the range sampler can't turn one failure into a retry storm, and reports via toast rather than the query-level `error` banner. Short/empty API pages fill the rest of that page with `HUB_EMPTY_SLOT` dummies (Hub's `total_found` overcount — no list clipping). `loadedPages` is kept until the next filter reset / refresh and doubles as the "already browsed" record for the scrollbar rail.
+- **`VirtualGrid`**: optional sparse mode (`itemCount` + `getItem`); `onRangeChange` drives loading; whole-row gating draws a row as skeletons until every cell in it is present (empty dummies count as present, same as real cards).
+- **Empty dummies**: muted placeholder cards with a tooltip explaining Hub returned nothing for a claimed slot; detail pager skips them.
+- **Request discipline** (`useHubRangeLoader`). Deliberately no central rate limiter around `hubPost`: every caller already bounds itself (this sampler for the gallery, `pLimit(10)` for the hub scanner, sequential batches for `findPackages`), and a shared limiter can only queue — which turns a burst into the same number of requests arriving too late to be useful, behind which interactive ones wait.
+  - Sample the desired range on a fixed cadence (`SAMPLE_MS`), not per scroll event; stale unissued candidates are simply overwritten when the window moves.
+  - Request a few rows beyond the virtual window; the window itself bounds how much can be queued.
+  - Skip fetches while the viewport crosses more than a page per ~2.5s round trip (thumb drag / fling suppressed; steady scroll continues).
+  - That same velocity judgement is returned as `scrubbing` and holds back CDN thumbnail requests for the cards flying past, releasing them when motion settles. Hysteresis (release at half the threshold) keeps images from flickering when scrolling near it. Deliberately not a per-card dwell timer: the browser's own cache is invisible to us, so anything time-based re-pays the delay on images Chromium would have served instantly.
+  - The gate spares any thumbnail that has already painted (`retainedThumbs` in `PackageCard`, a 400-entry LRU of detached `Image` objects). Withholding one saves no traffic and costs a visible flash back to the card's gradient; holding the `Image` also means a card that scrolls out of the virtual window and back repaints from memory rather than reloading. Hub cards deliberately skip `loading="lazy"` for the same reason — in a virtualised grid it only delays a load that is already needed.
+  - Scrollbar track marks `loadedPages` only while dragging the scroll thumb, and only when the result set is longer than 10 pages. Chromium handles scrollbar presses natively, so the rail arms from window-level pointer tracking: grabbing the thumb arms on `pointerdown` (exact grab offset, measured before the thumb moves), while a press on the track arms on the scroll the resulting jump produces. Marks key off thumb-center scroll position and shift by that grab offset (cursor − thumb center) so the cursor stays over the matching loaded stretch. Positioned against the scroll element's own box at the measured scrollbar width.
+
+Filter changes still reset to the top. Wishlist mode is unchanged (local, fully loaded). Detail prev/next uses the global index against `itemCount`.
 
 ### Caching
 
