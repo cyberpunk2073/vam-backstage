@@ -26,6 +26,7 @@ import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
 import { VirtualGrid } from '@/components/VirtualGrid'
 import { HubBrowsedRail } from '@/components/HubBrowsedRail'
 import { useHubRangeLoader } from '@/hooks/useHubRangeLoader'
+import { useHubNavGestures } from '@/hooks/useHubNavGestures'
 
 /** Hub text search: avoid a network request on every keystroke */
 const HUB_SEARCH_DEBOUNCE_MS = 320
@@ -185,6 +186,11 @@ export default function HubView({ onNavigate }) {
 
   const wishlistMode = galleryMode === 'wishlist'
   const detailBackLabel = detailHistory.length > 0 ? detailHistory[detailHistory.length - 1].title : null
+  const detailNavRef = useRef(null)
+
+  // Mouse Back / Alt+← / app-command → same stack as the Back button.
+  // Prefer the webview whenever it has guest history.
+  useHubNavGestures({ onNavigate, detailNavRef })
 
   // Back peels dep history; a view-root entry (arrived from Library/Content) closes
   // detail and returns to that tab. X / Hub-tab re-click still close to the Hub gallery.
@@ -949,6 +955,7 @@ export default function HubView({ onNavigate }) {
       {detailResource && (
         <HubDetail
           key={detailNonce}
+          ref={detailNavRef}
           resource={detailResource}
           onBack={handleDetailBack}
           onClose={closeDetail}

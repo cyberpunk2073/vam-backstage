@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, useImperativeHandle } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -35,7 +35,9 @@ import {
   extractDomainLabel,
   isPromotionalLink,
   openExternalLink,
+  IS_MAC,
 } from '@/lib/utils'
+import { matchNavShortcut, navShortcutFromKeyboardEvent } from '@shared/nav-keys.js'
 import { useHubStore } from '@/stores/useHubStore'
 import { useWishlistStore } from '@/stores/useWishlistStore'
 import { useDownloadStore } from '@/stores/useDownloadStore'
@@ -52,6 +54,9 @@ import { Tag } from '@/components/ui/tag'
 import { toFullHubUrl } from '@/lib/hub-panel-url'
 
 const HUB_INTERACTIONS_ENABLED = true
+
+/** Tooltip hint for the back shortcut — must track `matchNavShortcut`'s platform split. */
+const BACK_HINT = IS_MAC ? '⌘[' : 'Alt+←'
 
 function normalizeHubUrlForTabMatch(urlString) {
   try {
@@ -245,6 +250,7 @@ function BookmarkStat({ loggedIn, bookmarked, busy, onBookmark }) {
 // --- Hub Detail ---
 
 export default function HubDetail({
+  ref,
   resource,
   onBack,
   onClose,
@@ -268,6 +274,24 @@ export default function HubDetail({
   const webviewRef = useRef(null)
   const [canGoBack, setCanGoBack] = useState(false)
   const [canGoForward, setCanGoForward] = useState(false)
+
+  // Prefer guest history whenever the webview can go back/forward. Focus is a
+  // poor gate: when the guest holds input, host listeners never fire, and
+  // `document.activeElement === webview` is unreliable across Electron builds.
+  useImperativeHandle(ref, () => ({
+    tryGuestBack: () => {
+      const wv = webviewRef.current
+      if (!wv?.canGoBack?.()) return false
+      wv.goBack()
+      return true
+    },
+    tryGuestForward: () => {
+      const wv = webviewRef.current
+      if (!wv?.canGoForward?.()) return false
+      wv.goForward()
+      return true
+    },
+  }))
   const [isLoading, setIsLoading] = useState(false)
   const [urlCopied, setUrlCopied] = useState(false)
 
@@ -366,28 +390,48 @@ export default function HubDetail({
     [tabUrls],
   )
 
-  // Left/Right arrow keys step through results when the pager is active. Ignored
-  // while typing in a field, with modifiers, or when focus is inside the webview
-  // (guest keystrokes don't reach the host document anyway).
+  // Pager hotkeys when the pager is active: ←/→ and Ctrl(+Shift)+Tab.
+  // Guest keystrokes don't reach the host — main re-sends Ctrl+Tab as
+  // navigate:pager-* (see attachWebviewShortcuts). Ignored while typing in a field.
   const hasPager = !!position
+  const pagerRef = useRef({ canPrev, canNext, onPrev, onNext })
+  pagerRef.current = { canPrev, canNext, onPrev, onNext }
   useEffect(() => {
     if (!hasPager) return
+    const step = (dir) => {
+      const p = pagerRef.current
+      if (dir < 0 && p.canPrev) p.onPrev?.()
+      else if (dir > 0 && p.canNext) p.onNext?.()
+    }
     const onKey = (e) => {
-      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.defaultPrevented) return
       const t = e.target
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable))
         return
-      if (e.key === 'ArrowLeft' && canPrev) {
+      const action = matchNavShortcut(navShortcutFromKeyboardEvent(e), IS_MAC)
+      if (action === 'pager-prev' || action === 'pager-next') {
         e.preventDefault()
-        onPrev?.()
-      } else if (e.key === 'ArrowRight' && canNext) {
+        step(action === 'pager-prev' ? -1 : 1)
+        return
+      }
+      if (e.metaKey || e.altKey || e.ctrlKey) return
+      if (e.key === 'ArrowLeft') {
         e.preventDefault()
-        onNext?.()
+        step(-1)
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        step(1)
       }
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [hasPager, canPrev, canNext, onPrev, onNext])
+    const offPrev = window.api?.on?.('navigate:pager-prev', () => step(-1))
+    const offNext = window.api?.on?.('navigate:pager-next', () => step(1))
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      offPrev?.()
+      offNext?.()
+    }
+  }, [hasPager])
 
   // When navigation swaps the displayed resource, reset the panel's tab highlight
   // to Overview (highlight only — `setBrowserTab` no longer drives the webview).
@@ -727,7 +771,7 @@ export default function HubDetail({
             variant="ghost"
             size="sm"
             onClick={onBack}
-            title={backLabel ? `Back to ${backLabel}` : 'Back to gallery'}
+            title={backLabel ? `Back to ${backLabel} (${BACK_HINT})` : `Back to gallery (${BACK_HINT})`}
             className="text-text-secondary hover:text-text-primary min-w-0 max-w-[min(280px,40vw)]"
           >
             <ArrowLeft size={14} className="shrink-0" />
@@ -741,7 +785,7 @@ export default function HubDetail({
                 onClick={onPrev}
                 disabled={!canPrev}
                 aria-label="Previous package"
-                title="Previous package (←)"
+                title="Previous package (← / Ctrl+Shift+Tab)"
                 className="text-text-secondary hover:text-text-primary"
               >
                 <ChevronLeft size={14} />
@@ -755,7 +799,7 @@ export default function HubDetail({
                 onClick={onNext}
                 disabled={!canNext}
                 aria-label="Next package"
-                title="Next package (→)"
+                title="Next package (→ / Ctrl+Tab)"
                 className="text-text-secondary hover:text-text-primary"
               >
                 <ChevronRight size={14} />

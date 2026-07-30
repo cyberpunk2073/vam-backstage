@@ -27,6 +27,7 @@ import { readAutostartUrl } from './remote/autostart.js'
 import { installPrefs, instancePrefs } from './prefs.js'
 import { foldLegacyClientAutostart } from './prefs-migrate.js'
 import { HUB_HTTP_USER_AGENT } from '@shared/hub-http.js'
+import { matchNavShortcut } from '@shared/nav-keys.js'
 import {
   attachMainWindowStatePersistence,
   loadMainWindowState,
@@ -191,6 +192,9 @@ function devHotkeysEnabled() {
  * the menu shortcut (per Electron's before-input-event contract), so these act on
  * just the guest. Host-focused presses keep the default behavior. DevTools runs in
  * dev too since `optimizer.watchWindowShortcuts` only wires the host window.
+ *
+ * Back/forward and pager keys are relayed to the renderer instead (it owns the
+ * detail back-stack and decides between guest history and the app stack).
  */
 function attachWebviewShortcuts(contents) {
   contents.on('before-input-event', (event, input) => {
@@ -204,6 +208,13 @@ function attachWebviewShortcuts(contents) {
     if ((input.code === 'F12' || isDevToolsInspectorHotkey(input)) && devHotkeysEnabled()) {
       event.preventDefault()
       contents.toggleDevTools()
+      return
+    }
+    const action = matchNavShortcut(input, process.platform === 'darwin')
+    if (!action) return
+    event.preventDefault()
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send(`navigate:${action}`)
     }
   })
 }
@@ -297,6 +308,20 @@ function createWindow() {
 
   attachNativeTextContextMenu(mainWindow.webContents, mainWindow)
   attachDevToolsHotkeys(mainWindow)
+
+  // Mouse / keyboard "Browser Back|Forward" (Win/Linux app-command) and macOS
+  // 3-finger swipe. Relayed to the renderer as navigate:back / navigate:forward.
+  mainWindow.on('app-command', (_event, cmd) => {
+    if (cmd === 'browser-backward') mainWindow.webContents.send('navigate:back')
+    else if (cmd === 'browser-forward') mainWindow.webContents.send('navigate:forward')
+  })
+  if (process.platform === 'darwin') {
+    mainWindow.on('swipe', (_event, direction) => {
+      // Fingers move right → go back (same as Safari).
+      if (direction === 'right') mainWindow.webContents.send('navigate:back')
+      else if (direction === 'left') mainWindow.webContents.send('navigate:forward')
+    })
+  }
 
   mainWindow.webContents.on('did-finish-load', () => flushBufferedLogs())
 

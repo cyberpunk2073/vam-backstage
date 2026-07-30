@@ -137,7 +137,7 @@ App.jsx
 │   │   ├── Toolbar (count + card size toggle + Hub/Wishlist mode)
 │   │   ├── HubCard gallery (windowed list over full result set in hub mode; wishlist loads all at once)
 │   │   └── HubDetail (replaces gallery on card click)
-│   │       ├── BackBar (breadcrumb)
+│   │       ├── BackBar (breadcrumb; always peels the app stack, never the guest)
 │   │       ├── PackageInfoPanel (320px left, scrollable)
 │   │       │   ├── Hero image, name, author card, badges
 │   │       │   ├── Stats, dates, description
@@ -1020,6 +1020,12 @@ When search results return from the Hub, the client enriches each resource with 
 ### Hub account interactions
 
 `hub/interactions.js` manages Hub session cookies and authenticated actions (favorite, bookmark, rate, like). `hub:isLoggedIn` probes cookie presence; `hub:resourceUserState` reads per-resource state. Toggle handlers return `{ ok, reason? }` and emit `hub:auth-changed` when the session is invalid. These channels stay **local-only** in remote client mode (not proxied over WebSocket) because the session lives in the local Electron partition.
+
+### Hub back navigation
+
+Hub detail Back is an in-app stack (`detailHistory` in `useHubStore`, peeled by `popDetailHistory`). The BackBar button always peels that stack. Discrete inputs map onto the same path via `useHubNavGestures`: mouse buttons 3/4, the platform back/forward keys, `BrowserBack`/`BrowserForward`, and Electron `app-command` / macOS 3-finger `swipe` (relayed as `navigate:back` / `navigate:forward`). Unlike the button, these prefer guest history whenever the embedded webview `canGoBack` / `canGoForward`, browser-style; otherwise the app stack peels.
+
+`@shared/nav-keys.js` (`matchNavShortcut`) is the single source of truth for the key map, used by both the host document and main: Alt+←/→ on Windows/Linux, Cmd+[ / Cmd+] on macOS. macOS Cmd+←/→ and Option+←/→ are deliberately not used — they are line/word text-editing keys, and `before-input-event` can't tell whether a guest text field has focus, so stealing them would break typing on the Hub page. Keys typed into the webview never reach the host document, so main intercepts them in `attachWebviewShortcuts` (alongside the guest reload / DevTools hotkeys) and relays `navigate:<action>` — no page injection. The detail pager also accepts ←/→ and Ctrl(+Shift)+Tab (`navigate:pager-*` from the guest). Two-finger trackpad "swipe between pages" is not implemented — Electron has no HistorySwiper equivalent, and faking it is more complexity than it's worth.
 
 ### Wishlist maintenance
 

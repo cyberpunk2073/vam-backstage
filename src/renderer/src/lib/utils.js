@@ -9,6 +9,10 @@ export function cn(...inputs) {
   return twMerge(clsx(inputs))
 }
 
+/** Host platform — drives platform-specific shortcuts and their hints. In client
+ *  mode this is the machine the user is typing on, same as main's `process.platform`. */
+export const IS_MAC = /mac/i.test(navigator.userAgentData?.platform || navigator.platform || '')
+
 // --- Procedural gradients ---
 
 function hashStr(str) {
