@@ -880,36 +880,63 @@ export default function SettingsView() {
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              <Button
-                variant="gradient"
-                size="lg"
-                onClick={handleRescan}
-                disabled={scanning || verifying || hubScanning || !vamDir}
-                className="text-xs"
-              >
-                {scanning ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                {scanning ? 'Scanning…' : 'Rescan Library'}
-              </Button>
-              <Button
-                variant="outline"
-                size="lg"
-                onClick={handleVerifyIntegrity}
-                disabled={verifying || scanning || hubScanning || !vamDir}
-                className="text-xs"
-              >
-                {verifying ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
-                {verifying ? 'Verifying…' : 'Verify Integrity'}
-              </Button>
-              <Button
-                variant="outline"
-                size="lg"
-                onClick={handleHubScan}
-                disabled={hubScanning || scanning || verifying || !vamDir}
-                className="text-xs"
-              >
-                {hubScanning ? <Loader2 size={14} className="animate-spin" /> : <Compass size={14} />}
-                {hubScanning ? 'Scanning Hub…' : 'Scan Hub Details'}
-              </Button>
+              <Tooltip delayDuration={350}>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <Button
+                      variant="gradient"
+                      size="lg"
+                      onClick={handleRescan}
+                      disabled={scanning || verifying || hubScanning || !vamDir}
+                      className="text-xs"
+                    >
+                      {scanning ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                      {scanning ? 'Scanning…' : 'Rescan Library'}
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="block w-72 py-2 text-left leading-relaxed">
+                  {RESCAN_LIBRARY_HINT}
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip delayDuration={350}>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      onClick={handleVerifyIntegrity}
+                      disabled={verifying || scanning || hubScanning || !vamDir}
+                      className="text-xs"
+                    >
+                      {verifying ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                      {verifying ? 'Verifying…' : 'Verify Integrity'}
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="block w-72 py-2 text-left leading-relaxed">
+                  {VERIFY_INTEGRITY_HINT}
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip delayDuration={350}>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      onClick={handleHubScan}
+                      disabled={hubScanning || scanning || verifying || !vamDir}
+                      className="text-xs"
+                    >
+                      {hubScanning ? <Loader2 size={14} className="animate-spin" /> : <Compass size={14} />}
+                      {hubScanning ? 'Scanning Hub…' : 'Scan Hub Details'}
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="block w-72 py-2 text-left leading-relaxed">
+                  {SCAN_HUB_DETAILS_HINT}
+                </TooltipContent>
+              </Tooltip>
               <Button variant="outline" size="lg" onClick={handleOpenApplicationFolder} className="text-xs">
                 <FolderOpen size={14} /> Show in folder
               </Button>
@@ -1921,6 +1948,15 @@ const BROWSER_ASSIST_HINT =
   'Shares this folder with BrowserAssist, so either tool can restore a package the other moved out. Each ' +
   'package offloaded here also gets the small .var.json file BrowserAssist reads. Backstage does not need ' +
   'that file; it tracks its own moves either way.'
+
+const RESCAN_LIBRARY_HINT =
+  'Walk every library folder and refresh the package index from what is on disk. Unchanged files are skipped.'
+
+const VERIFY_INTEGRITY_HINT =
+  'Open every .var and check its contents against the archive checksums. Flags corrupted packages; does not modify files.'
+
+const SCAN_HUB_DETAILS_HINT =
+  'Match your packages to the Hub catalog and pull titles, descriptions, tags, and download metadata into the local library.'
 
 /**
  * Show an offload path that lives inside the VaM dir as `<VaM base dir name>/<relative>`
