@@ -62,7 +62,15 @@ import { matchesPolarityList, matchesAuthorFilter, polarityScrollKey } from '@/l
 import { parseCommaTags, packageSuggestionCounts } from '@/lib/suggestion-counts'
 import { isLocalPackage } from '@shared/local-package.js'
 import { isPackageActive, isPackageArchived } from '@shared/storage-state-predicates.js'
+import {
+  contentBulkFavoriteState,
+  contentBulkVisibilityState,
+  resolveContentBulkItems,
+  runContentBulkToggleFavorite,
+  runContentBulkToggleVisibility,
+} from '@/lib/bulk-targets'
 import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
+import { useSortSnapshot } from '@/hooks/useSortSnapshot'
 import { StorageStateChip } from '@/components/StorageStateChip'
 
 const SORT_OPTIONS = ['Recently installed', 'Name A-Z', 'Package', 'Type']
@@ -217,11 +225,13 @@ export default function ContentView({ onNavigate, navContext }) {
     cardWidth,
     setCardWidth,
     selectItem,
+    clearSelection,
     bulkSelectedIds,
     toggleBulkSelect,
     rangeBulkSelect,
     selectAllBulk,
     clearBulkSelection,
+    pruneBulkSelection,
   } = useContentStore()
   // Same package-level dictionary as Library (not per-content — a large Looks
   // pack shouldn't dominate ranking over a single-scene author).
@@ -474,8 +484,14 @@ export default function ContentView({ onNavigate, navContext }) {
     selectedLabelIds,
   ])
 
-  const filtered = useMemo(() => {
-    let result = applyContentSidebarFilters(baseFiltered, {
+  // User-initiated query inputs — also the flush trigger for selection prune / sticky pins.
+  const scrollResetKey = `${search}\0${authorSearch}\0${excludedAuthors.join(',')}\0${selectedTypes.join(',')}\0${selectedPackageTypes.join(',')}\0${polarityScrollKey(selectedTags)}\0${polarityScrollKey(selectedLabelIds)}\0${packageFilter}\0${packageStatusFilter}\0${visibilityFilter}\0${primarySort}\0${secondarySort}`
+
+  const sortSnapshot = useSortSnapshot()
+
+  // Visible rows = filter matches ∪ current selection (so actions don't yank rows out mid-task).
+  const { filtered, matchIds } = useMemo(() => {
+    let matches = applyContentSidebarFilters(baseFiltered, {
       selectedTypes,
       selectedPackageTypes,
       packageFilter,
@@ -484,6 +500,18 @@ export default function ContentView({ onNavigate, navContext }) {
       selectedTags,
       selectedLabelIds,
     })
+    const matchIds = matches.map((c) => c.id)
+    const matched = new Set(matchIds)
+    const pinned = new Set(bulkSelectedIds)
+    if (selectedItem) pinned.add(selectedItem.id)
+    const byId = new Map(contents.map((c) => [c.id, c]))
+    const extras = []
+    for (const id of pinned) {
+      if (matched.has(id)) continue
+      const c = byId.get(id)
+      if (c) extras.push(c)
+    }
+    let result = extras.length ? [...matches, ...extras] : matches
     const sortFns = {
       // Loose rows carry their own fileMtime (matches VaM's on-disk order). Packaged
       // rows fall back to the owning package's install / file timestamps.
@@ -496,10 +524,16 @@ export default function ContentView({ onNavigate, navContext }) {
     }
     const primary = sortFns[primarySort] || sortFns['Type']
     const secondary = sortFns[secondarySort] || sortFns['Recently installed']
-    result.sort((a, b) => primary(a, b) || secondary(a, b))
-    return result
+    const forSort = sortSnapshot({ frozenIds: pinned, key: scrollResetKey, getId: (c) => c.id })
+    result.sort((a, b) => {
+      const x = forSort(a)
+      const y = forSort(b)
+      return primary(x, y) || secondary(x, y)
+    })
+    return { filtered: result, matchIds }
   }, [
     baseFiltered,
+    contents,
     selectedTypes,
     selectedPackageTypes,
     selectedTags,
@@ -509,6 +543,10 @@ export default function ContentView({ onNavigate, navContext }) {
     visibilityFilter,
     primarySort,
     secondarySort,
+    bulkSelectedIds,
+    selectedItem,
+    scrollResetKey,
+    sortSnapshot,
   ])
 
   const sections = useMemo(
@@ -720,11 +758,14 @@ export default function ContentView({ onNavigate, navContext }) {
   const orderedContentIds = useMemo(() => filtered.map((c) => c.id), [filtered])
 
   const bulkActive = bulkSelectedIds.length > 0
-
-  const scrollResetKey = `${search}\0${authorSearch}\0${excludedAuthors.join(',')}\0${selectedTypes.join(',')}\0${selectedPackageTypes.join(',')}\0${polarityScrollKey(selectedTags)}\0${polarityScrollKey(selectedLabelIds)}\0${packageFilter}\0${packageStatusFilter}\0${visibilityFilter}\0${primarySort}\0${secondarySort}`
+  const bulkSelectedItems = useMemo(
+    () => resolveContentBulkItems({ bulkSelectedIds, contents }),
+    [bulkSelectedIds, contents],
+  )
 
   const lastSelectedIdxRef = useRef(0)
   const prevScrollResetKeyRef = useRef(scrollResetKey)
+  const prevPruneKeyRef = useRef(scrollResetKey)
   const selectedIdx = selectedItem ? filtered.findIndex((c) => c.id === selectedItem.id) : -1
   if (selectedIdx >= 0) lastSelectedIdxRef.current = selectedIdx
 
@@ -756,6 +797,21 @@ export default function ContentView({ onNavigate, navContext }) {
     if (!target) return
     void runSelectItem(target)
   }, [bulkActive, filtered, selectedItem, scrollResetKey, runSelectItem])
+
+  // On filter/search/sort change: keep only matching bulk picks; drop detail if it no longer matches.
+  // Declared after the auto-select effect so that effect still sees a consistent selection this pass;
+  // invalidating its key then makes the follow-up pass treat the pruned list as fresh (select the top row).
+  useEffect(() => {
+    if (prevPruneKeyRef.current === scrollResetKey) return
+    prevPruneKeyRef.current = scrollResetKey
+    const { bulkSelectedIds: picks, selectedItem: detail } = useContentStore.getState()
+    const matched = new Set(matchIds)
+    const staleDetail = detail && !matched.has(detail.id)
+    if (!staleDetail && picks.every((id) => matched.has(id))) return
+    pruneBulkSelection(matchIds)
+    if (staleDetail) clearSelection()
+    prevScrollResetKeyRef.current = null
+  }, [scrollResetKey, matchIds, pruneBulkSelection, clearSelection])
 
   const handleContentClick = useCallback(
     (item, e) => {
@@ -819,12 +875,12 @@ export default function ContentView({ onNavigate, navContext }) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return
       if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
         e.preventDefault()
-        selectAllBulk(orderedContentIds)
+        selectAllBulk(matchIds)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [orderedContentIds, selectAllBulk])
+  }, [matchIds, selectAllBulk])
 
   useEffect(() => {
     if (!bulkActive) return
@@ -842,80 +898,19 @@ export default function ContentView({ onNavigate, navContext }) {
 
   const selectedBulkSet = useMemo(() => new Set(bulkSelectedIds), [bulkSelectedIds])
 
-  const bulkVisibilityState = useMemo(() => {
-    const items = filtered.filter((c) => bulkSelectedIds.includes(c.id))
-    if (!items.length) return { disabled: true, mixed: false, allHidden: false }
-    const hiddenCount = items.filter((c) => c.hidden).length
-    const allHidden = hiddenCount === items.length
-    const allVisible = hiddenCount === 0
-    return {
-      disabled: false,
-      mixed: !allHidden && !allVisible,
-      allHidden,
-      allVisible,
-    }
-  }, [filtered, bulkSelectedIds])
+  const bulkVisibilityState = useMemo(() => contentBulkVisibilityState(bulkSelectedItems), [bulkSelectedItems])
+  const bulkFavoriteState = useMemo(() => contentBulkFavoriteState(bulkSelectedItems), [bulkSelectedItems])
 
-  const bulkFavoriteState = useMemo(() => {
-    const items = filtered.filter((c) => bulkSelectedIds.includes(c.id))
-    if (!items.length) return { mixed: false, allFav: false, allUnfav: false }
-    const favCount = items.filter((c) => c.favorite).length
-    const allFav = favCount === items.length
-    const allUnfav = favCount === 0
-    return { mixed: !allFav && !allUnfav, allFav, allUnfav }
-  }, [filtered, bulkSelectedIds])
-
-  const runBulkHidden = useCallback(
-    async (hidden) => {
-      const items = filtered
-        .filter((c) => bulkSelectedIds.includes(c.id))
-        .map((c) => ({
-          id: c.id,
-          packageFilename: c.packageFilename,
-          internalPath: c.internalPath,
-        }))
-      if (!items.length) return
-      try {
-        await window.api.contents.setHiddenBatch({ items, hidden })
-      } catch (err) {
-        toast(`Failed: ${err.message}`)
-      }
-    },
-    [filtered, bulkSelectedIds],
+  const handleBulkVisibilityClick = useCallback(
+    () => void runContentBulkToggleVisibility(bulkSelectedItems),
+    [bulkSelectedItems],
   )
-
-  const runBulkFavorite = useCallback(
-    async (favorite) => {
-      const items = filtered
-        .filter((c) => bulkSelectedIds.includes(c.id))
-        .map((c) => ({
-          id: c.id,
-          packageFilename: c.packageFilename,
-          internalPath: c.internalPath,
-        }))
-      if (!items.length) return
-      try {
-        await window.api.contents.setFavoriteBatch({ items, favorite })
-      } catch (err) {
-        toast(`Failed: ${err.message}`)
-      }
-    },
-    [filtered, bulkSelectedIds],
-  )
-
-  const handleBulkVisibilityClick = useCallback(() => {
-    const st = bulkVisibilityState
-    if (st.disabled) return
-    if (st.mixed || st.allVisible) void runBulkHidden(true)
-    else void runBulkHidden(false)
-  }, [bulkVisibilityState, runBulkHidden])
 
   /** Owning-package enable/disable across the bulk selection: collapse content items
    *  to their unique parent packages, ignore local-only files (no .var to toggle). */
   const bulkPackageEnabledState = useMemo(() => {
-    const items = filtered.filter((c) => bulkSelectedIds.includes(c.id))
     const byFilename = new Map()
-    for (const c of items) {
+    for (const c of bulkSelectedItems) {
       if (!c.packageFilename || isLocalPackage(c.packageFilename)) continue
       if (!byFilename.has(c.packageFilename)) byFilename.set(c.packageFilename, c.package?.storageState ?? 'enabled')
     }
@@ -931,7 +926,7 @@ export default function ContentView({ onNavigate, navContext }) {
       packageCount: byFilename.size,
       filenames: [...byFilename.keys()],
     }
-  }, [filtered, bulkSelectedIds])
+  }, [bulkSelectedItems])
 
   const handleBulkPackageToggleEnabled = useCallback(async () => {
     const st = bulkPackageEnabledState
@@ -946,23 +941,19 @@ export default function ContentView({ onNavigate, navContext }) {
     }
   }, [bulkPackageEnabledState])
 
-  const handleBulkFavoriteClick = useCallback(() => {
-    const st = bulkFavoriteState
-    if (st.mixed || st.allUnfav) void runBulkFavorite(true)
-    else void runBulkFavorite(false)
-  }, [bulkFavoriteState, runBulkFavorite])
+  const handleBulkFavoriteClick = useCallback(
+    () => void runContentBulkToggleFavorite(bulkSelectedItems),
+    [bulkSelectedItems],
+  )
 
-  const bulkLabelStateMap = useMemo(() => {
-    const items = filtered.filter((c) => bulkSelectedIds.includes(c.id))
-    return bulkStateMap(items.map((c) => c.ownLabelIds || []))
-  }, [filtered, bulkSelectedIds])
+  const bulkLabelStateMap = useMemo(
+    () => bulkStateMap(bulkSelectedItems.map((c) => c.ownLabelIds || [])),
+    [bulkSelectedItems],
+  )
 
   const bulkLabelTargets = useMemo(
-    () =>
-      filtered
-        .filter((c) => bulkSelectedIds.includes(c.id))
-        .map((c) => ({ packageFilename: c.packageFilename, internalPath: c.internalPath })),
-    [filtered, bulkSelectedIds],
+    () => bulkSelectedItems.map((c) => ({ packageFilename: c.packageFilename, internalPath: c.internalPath })),
+    [bulkSelectedItems],
   )
 
   const runBulkLabelToggle = useCallback(
@@ -997,8 +988,8 @@ export default function ContentView({ onNavigate, navContext }) {
   useLayoutEffect(() => {
     const el = contentTableSelectAllRef.current
     if (!el) return
-    el.indeterminate = bulkSelectedIds.length > 0 && bulkSelectedIds.length < filtered.length
-  }, [bulkSelectedIds, filtered.length])
+    el.indeterminate = bulkSelectedIds.length > 0 && bulkSelectedIds.length < matchIds.length
+  }, [bulkSelectedIds, matchIds.length])
 
   return (
     <div className="h-full flex">
@@ -1034,7 +1025,7 @@ export default function ContentView({ onNavigate, navContext }) {
                   className={cn('shrink-0', bulkVisibilityState.mixed ? 'text-text-tertiary' : 'text-text-secondary')}
                 />
               )}
-              {bulkVisibilityState.allHidden ? 'Show' : 'Hide'}
+              {bulkVisibilityState.label}
             </button>
             <button
               type="button"
@@ -1051,7 +1042,7 @@ export default function ContentView({ onNavigate, navContext }) {
                 )}
                 fill={bulkFavoriteState.allFav && !bulkFavoriteState.mixed ? 'none' : 'currentColor'}
               />
-              {bulkFavoriteState.allFav && !bulkFavoriteState.mixed ? 'Unfavorite' : 'Favorite'}
+              {bulkFavoriteState.label}
             </button>
             <button
               type="button"
@@ -1106,9 +1097,9 @@ export default function ContentView({ onNavigate, navContext }) {
               <button
                 type="button"
                 className="shrink-0 whitespace-nowrap text-[10px] text-accent-blue hover:brightness-125 transition-[filter] cursor-pointer"
-                onClick={() => selectAllBulk(orderedContentIds)}
+                onClick={() => selectAllBulk(matchIds)}
               >
-                Select all {filtered.length}
+                Select all {matchIds.length}
               </button>
               <button
                 type="button"
@@ -1227,9 +1218,9 @@ export default function ContentView({ onNavigate, navContext }) {
                       type="checkbox"
                       className="accent-accent-blue cursor-pointer"
                       aria-label="Select all"
-                      checked={bulkSelectedIds.length > 0 && bulkSelectedIds.length === filtered.length}
+                      checked={bulkSelectedIds.length > 0 && bulkSelectedIds.length === matchIds.length}
                       onChange={(e) => {
-                        if (e.target.checked) selectAllBulk(orderedContentIds)
+                        if (e.target.checked) selectAllBulk(matchIds)
                         else clearBulkSelection()
                       }}
                     />

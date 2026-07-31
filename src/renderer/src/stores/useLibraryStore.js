@@ -442,11 +442,12 @@ export const useLibraryStore = create(
           }
           const lo = Math.min(i1, i2)
           const hi = Math.max(i1, i2)
-          const range = orderedFilenames.slice(lo, hi + 1)
-          const setFn = new Set([...s.bulkSelectedFilenames, ...range])
-          const merged = orderedFilenames.filter((x) => setFn.has(x))
+          const selected = new Set([...s.bulkSelectedFilenames, ...orderedFilenames.slice(lo, hi + 1)])
+          const onList = new Set(orderedFilenames)
+          // Selection follows visible order; picks that dropped out of the list keep their order up front.
+          const offList = s.bulkSelectedFilenames.filter((x) => !onList.has(x))
           return {
-            bulkSelectedFilenames: merged,
+            bulkSelectedFilenames: [...offList, ...orderedFilenames.filter((x) => selected.has(x))],
             bulkAnchorFilename: filename,
             selectedDetail: null,
           }
@@ -460,6 +461,21 @@ export const useLibraryStore = create(
         }),
 
       clearBulkSelection: () => set({ bulkSelectedFilenames: [], bulkAnchorFilename: null }),
+
+      /** Drop bulk picks that are no longer in the current filter match set (e.g. after a facet change). */
+      pruneBulkSelection: (visibleFilenames) =>
+        set((s) => {
+          if (!s.bulkSelectedFilenames.length) return s
+          const keep = new Set(visibleFilenames)
+          const next = s.bulkSelectedFilenames.filter((fn) => keep.has(fn))
+          if (next.length === s.bulkSelectedFilenames.length) return s
+          return {
+            bulkSelectedFilenames: next,
+            bulkAnchorFilename: next.includes(s.bulkAnchorFilename)
+              ? s.bulkAnchorFilename
+              : (next[next.length - 1] ?? null),
+          }
+        }),
 
       refreshDetail: async () => {
         const { selectedDetail } = get()

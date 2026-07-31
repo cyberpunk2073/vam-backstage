@@ -54,7 +54,7 @@ import {
   isPromotionalLink,
   openExternalLink,
 } from '@/lib/utils'
-import { toastIfBulkToggleFailures, toastIfSingleToggleFailed } from '@/lib/packageStorageToggleResults'
+import { toastIfSingleToggleFailed } from '@/lib/packageStorageToggleResults'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -88,12 +88,22 @@ import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
 import { useKeyboardNav } from '@/hooks/useKeyboardNav'
 import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
 import { useLibraryUpdateState } from '@/hooks/useLibraryUpdateState'
+import { useSortSnapshot } from '@/hooks/useSortSnapshot'
 import { LICENSE_FILTER_OPTIONS } from '@/lib/licenses'
 import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
 import { matchesPolarityList, matchesAuthorFilter, matchesLicenseFilter, polarityScrollKey } from '@/lib/filter-match'
 import { parseCommaTags, packageSuggestionCounts } from '@/lib/suggestion-counts'
 import { haystacksMatchAllTerms, LIBRARY_IS_FLAGS, libraryFlags, searchAndTerms } from '@/lib/search-text'
 import { isPackageActive, isPackageArchived } from '@shared/storage-state-predicates.js'
+import {
+  libraryBulkEnabledState,
+  resolveLibraryBulkPackages,
+  runLibraryBulkInstallFromArchive,
+  runLibraryBulkPromote,
+  runLibraryBulkRemove,
+  runLibraryBulkRemoveFromArchive,
+  runLibraryBulkToggleEnabled,
+} from '@/lib/bulk-targets'
 import { LicenseTag } from '@/components/LicenseTag'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { LibraryPackageContextMenu } from '@/components/LibraryPackageContextMenu'
@@ -168,6 +178,7 @@ function filterPackagesByEnabledStorage(items, enabledFilter) {
 export default function LibraryView({ onNavigate, navContext }) {
   const {
     packages,
+    packageByFilename,
     selectedDetail,
     search,
     authorSearch,
@@ -213,11 +224,13 @@ export default function LibraryView({ onNavigate, navContext }) {
     fetchMissingDeps,
     refreshUpdateCheck,
     selectPackage,
+    clearSelection,
     bulkSelectedFilenames,
     toggleBulkSelect,
     rangeBulkSelect,
     selectAllBulk,
     clearBulkSelection,
+    pruneBulkSelection,
   } = useLibraryStore()
   const labels = useLabelsStore((s) => s.labels)
   const labelNameById = useMemo(() => {
@@ -403,12 +416,33 @@ export default function LibraryView({ onNavigate, navContext }) {
     return { all: items.length, enabled, disabled, offloaded }
   }, [baseFiltered, statusFilter, selectedTypes, selectedTags, selectedLabelIds, updateCheckResults])
 
-  const filtered = useMemo(() => {
-    let result = filterPackagesByStatus(baseFiltered, statusFilter, updateCheckResults)
-    result = filterPackagesByEnabledStorage(result, effectiveEnabledFilter)
-    result = filterPackagesBySelectedTypes(result, selectedTypes)
-    result = result.filter((p) => packageMatchesSelectedTags(p, selectedTags))
-    result = result.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
+  // User-initiated query inputs — also the flush trigger for selection prune / sticky pins.
+  const scrollResetKey = `${search}\0${authorSearch}\0${excludedAuthors.join(',')}\0${statusFilter}\0${enabledFilter}\0${selectedTypes.join(',')}\0${polarityScrollKey(selectedTags)}\0${polarityScrollKey(selectedLabelIds)}\0${primarySort}\0${secondarySort}\0${license}`
+
+  const sortSnapshot = useSortSnapshot()
+
+  // Visible rows = filter matches ∪ current selection (so actions don't yank rows out mid-task).
+  const { filtered, matchFilenames } = useMemo(() => {
+    let matches = filterPackagesByStatus(baseFiltered, statusFilter, updateCheckResults)
+    matches = filterPackagesByEnabledStorage(matches, effectiveEnabledFilter)
+    matches = filterPackagesBySelectedTypes(matches, selectedTypes)
+    matches = matches.filter((p) => packageMatchesSelectedTags(p, selectedTags))
+    matches = matches.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
+    const matchFilenames = matches.map((p) => p.filename)
+    const pinned = new Set(bulkSelectedFilenames)
+    if (selectedDetail) pinned.add(selectedDetail.filename)
+    let result = matches
+    // Missing is a separate empty path; don't pin into it.
+    if (statusFilter !== 'missing') {
+      const matched = new Set(matchFilenames)
+      const extras = []
+      for (const fn of pinned) {
+        if (matched.has(fn)) continue
+        const p = packageByFilename.get(fn)
+        if (p) extras.push(p)
+      }
+      if (extras.length) result = [...matches, ...extras]
+    }
     const sortFns = {
       'Recently installed': (a, b) =>
         (b.firstSeenAt || 0) - (a.firstSeenAt || 0) || (b.fileMtime || 0) - (a.fileMtime || 0),
@@ -421,8 +455,13 @@ export default function LibraryView({ onNavigate, navContext }) {
     }
     const primary = sortFns[primarySort] || sortFns['Type']
     const secondary = sortFns[secondarySort] || sortFns['Recently installed']
-    result.sort((a, b) => primary(a, b) || secondary(a, b))
-    return result
+    const forSort = sortSnapshot({ frozenIds: pinned, key: scrollResetKey, getId: (p) => p.filename })
+    result.sort((a, b) => {
+      const x = forSort(a)
+      const y = forSort(b)
+      return primary(x, y) || secondary(x, y)
+    })
+    return { filtered: result, matchFilenames }
   }, [
     baseFiltered,
     statusFilter,
@@ -433,6 +472,11 @@ export default function LibraryView({ onNavigate, navContext }) {
     primarySort,
     secondarySort,
     updateCheckResults,
+    bulkSelectedFilenames,
+    selectedDetail,
+    packageByFilename,
+    scrollResetKey,
+    sortSnapshot,
   ])
 
   const sections = useMemo(
@@ -653,11 +697,16 @@ export default function LibraryView({ onNavigate, navContext }) {
   const bulkActive = bulkSelectedFilenames.length > 0
   const bulkToggleIntent = useLibraryStore((s) => s.bulkToggleIntent)
   const selectedBulkSet = useMemo(() => new Set(bulkSelectedFilenames), [bulkSelectedFilenames])
-
-  const scrollResetKey = `${search}\0${authorSearch}\0${excludedAuthors.join(',')}\0${statusFilter}\0${enabledFilter}\0${selectedTypes.join(',')}\0${polarityScrollKey(selectedTags)}\0${polarityScrollKey(selectedLabelIds)}\0${primarySort}\0${secondarySort}\0${license}`
+  const bulkSelectedPackages = useMemo(
+    () => resolveLibraryBulkPackages({ bulkSelectedFilenames, packageByFilename }),
+    [bulkSelectedFilenames, packageByFilename],
+  )
+  const bulkAllArchived =
+    bulkSelectedPackages.length > 0 && bulkSelectedPackages.every((p) => isPackageArchived(p.storageState))
 
   const lastSelectedIdxRef = useRef(0)
   const prevScrollResetKeyRef = useRef(scrollResetKey)
+  const prevPruneKeyRef = useRef(scrollResetKey)
   const selectedIdx = selectedDetail ? filtered.findIndex((p) => p.filename === selectedDetail.filename) : -1
   if (selectedIdx >= 0) lastSelectedIdxRef.current = selectedIdx
 
@@ -691,6 +740,21 @@ export default function LibraryView({ onNavigate, navContext }) {
     if (!target) return
     void runSelectPackage(target.filename)
   }, [bulkActive, filtered, selectedDetail, statusFilter, scrollResetKey, runSelectPackage])
+
+  // On filter/search/sort change: keep only matching bulk picks; drop detail if it no longer matches.
+  // Declared after the auto-select effect so that effect still sees a consistent selection this pass;
+  // invalidating its key then makes the follow-up pass treat the pruned list as fresh (select the top row).
+  useEffect(() => {
+    if (prevPruneKeyRef.current === scrollResetKey) return
+    prevPruneKeyRef.current = scrollResetKey
+    const { bulkSelectedFilenames: picks, selectedDetail: detail } = useLibraryStore.getState()
+    const matched = new Set(matchFilenames)
+    const staleDetail = detail && !matched.has(detail.filename)
+    if (!staleDetail && picks.every((fn) => matched.has(fn))) return
+    pruneBulkSelection(matchFilenames)
+    if (staleDetail) clearSelection()
+    prevScrollResetKeyRef.current = null
+  }, [scrollResetKey, matchFilenames, pruneBulkSelection, clearSelection])
 
   const handleLibraryClick = useCallback(
     (pkg, e) => {
@@ -730,120 +794,42 @@ export default function LibraryView({ onNavigate, navContext }) {
     [toggleBulkSelect],
   )
 
-  const bulkEnabledState = useMemo(() => {
-    const items = filtered.filter((p) => bulkSelectedFilenames.includes(p.filename))
-    if (!items.length) return { allEnabled: false, allDisabled: false, mixed: false }
-    const n = items.filter((p) => isPackageActive(p.storageState)).length
-    return {
-      allEnabled: n === items.length,
-      allDisabled: n === 0,
-      mixed: n > 0 && n < items.length,
-    }
-  }, [filtered, bulkSelectedFilenames])
+  const bulkEnabledState = useMemo(() => libraryBulkEnabledState(bulkSelectedPackages), [bulkSelectedPackages])
 
   const [bulkRemoveOpen, setBulkRemoveOpen] = useState(false)
 
   const bulkRemoveSummary = useMemo(() => {
-    const items = filtered.filter((p) => bulkSelectedFilenames.includes(p.filename))
+    const items = bulkSelectedPackages
     const direct = items.filter((p) => p.isDirect)
     const dep = items.filter((p) => !p.isDirect)
     return { items, direct, dep }
-  }, [filtered, bulkSelectedFilenames])
+  }, [bulkSelectedPackages])
 
-  const runBulkToggleEnabled = useCallback(async () => {
-    if (useLibraryStore.getState().bulkToggleIntent) return
-    const items = filtered.filter((p) => bulkSelectedFilenames.includes(p.filename))
-    if (!items.length) return
-    const targets = bulkEnabledState.mixed ? items.filter((p) => !isPackageActive(p.storageState)) : items
-    if (!targets.length) return
-    const enabled = bulkEnabledState.allDisabled || bulkEnabledState.mixed
-    useLibraryStore.setState({ bulkToggleIntent: enabled ? 'enable' : 'disable' })
-    try {
-      const res = await window.api.packages.setEnabled(
-        targets.map((p) => p.filename),
-        enabled,
-      )
-      toastIfBulkToggleFailures(res)
-      await fetchPackages()
-    } catch (err) {
-      toast(`Failed: ${err.message}`)
-    } finally {
-      useLibraryStore.setState({ bulkToggleIntent: null })
-    }
-  }, [filtered, bulkSelectedFilenames, bulkEnabledState.mixed, bulkEnabledState.allDisabled, fetchPackages])
+  const runBulkToggleEnabled = useCallback(
+    () => void runLibraryBulkToggleEnabled(bulkSelectedPackages),
+    [bulkSelectedPackages],
+  )
 
-  const runBulkPromote = useCallback(async () => {
-    const fnames = filtered
-      .filter((p) => bulkSelectedFilenames.includes(p.filename) && !p.isDirect)
-      .map((p) => p.filename)
-    if (!fnames.length) return
-    try {
-      await window.api.packages.promote(fnames.length === 1 ? fnames[0] : fnames, null)
-      clearBulkSelection()
-      await fetchPackages()
-    } catch (err) {
-      toast(`Failed: ${err.message}`)
-    }
-  }, [filtered, bulkSelectedFilenames, clearBulkSelection, fetchPackages])
+  const runBulkPromote = useCallback(() => void runLibraryBulkPromote(bulkSelectedPackages), [bulkSelectedPackages])
 
   const runBulkRemove = useCallback(async () => {
-    const { direct, dep } = bulkRemoveSummary
-    try {
-      let relocated = 0
-      if (direct.length) {
-        const d = direct.map((p) => p.filename)
-        const res = await window.api.packages.uninstall(d.length === 1 ? d[0] : d)
-        for (const r of res?.results ?? (res ? [res] : [])) {
-          if (r.relocatedToArchive) relocated++
-        }
-      }
-      if (dep.length) {
-        const d = dep.map((p) => p.filename)
-        await window.api.packages.forceRemove(d.length === 1 ? d[0] : d)
-      }
-      setBulkRemoveOpen(false)
-      clearBulkSelection()
-      await fetchPackages()
-      if (relocated) toast(`${relocated} moved to archive (still needed by archived packages)`, 'success')
-    } catch (err) {
-      toast(`Failed: ${err.message}`)
-    }
-  }, [bulkRemoveSummary, clearBulkSelection, fetchPackages])
+    setBulkRemoveOpen(false)
+    await runLibraryBulkRemove(bulkSelectedPackages)
+  }, [bulkSelectedPackages])
 
-  const runBulkInstallFromArchive = useCallback(async () => {
-    const fnames = filtered
-      .filter((p) => bulkSelectedFilenames.includes(p.filename) && isPackageArchived(p.storageState))
-      .map((p) => p.filename)
-    if (!fnames.length) return
-    try {
-      const res = await window.api.packages.installFromArchive(fnames)
-      if (res?.queued > 0)
-        toast(`Installing: ${res.queued} dependenc${res.queued === 1 ? 'y' : 'ies'} queued`, 'success')
-      clearBulkSelection()
-      await Promise.all([fetchPackages(), useDownloadStore.getState().fetchItems()])
-    } catch (err) {
-      toast(`Install failed: ${err.message}`)
-    }
-  }, [filtered, bulkSelectedFilenames, clearBulkSelection, fetchPackages])
+  const runBulkInstallFromArchive = useCallback(
+    () => void runLibraryBulkInstallFromArchive(bulkSelectedPackages),
+    [bulkSelectedPackages],
+  )
 
   const runBulkRemoveFromArchive = useCallback(async () => {
-    const fnames = filtered
-      .filter((p) => bulkSelectedFilenames.includes(p.filename) && isPackageArchived(p.storageState))
-      .map((p) => p.filename)
-    if (!fnames.length) return
-    try {
-      await window.api.packages.forceRemove(fnames.length === 1 ? fnames[0] : fnames)
-      setBulkRemoveOpen(false)
-      clearBulkSelection()
-      await fetchPackages()
-    } catch (err) {
-      toast(`Remove failed: ${err.message}`)
-    }
-  }, [filtered, bulkSelectedFilenames, clearBulkSelection, fetchPackages])
+    setBulkRemoveOpen(false)
+    await runLibraryBulkRemoveFromArchive(bulkSelectedPackages)
+  }, [bulkSelectedPackages])
 
   const runBulkSetType = useCallback(
     async (typeOverride) => {
-      const fnames = filtered.filter((p) => bulkSelectedFilenames.includes(p.filename)).map((p) => p.filename)
+      const fnames = bulkSelectedPackages.map((p) => p.filename)
       if (!fnames.length) return
       try {
         await window.api.packages.setTypeOverride({ filenames: fnames, typeOverride })
@@ -852,17 +838,17 @@ export default function LibraryView({ onNavigate, navContext }) {
         toast(`Failed: ${err.message}`)
       }
     },
-    [filtered, bulkSelectedFilenames, fetchPackages],
+    [bulkSelectedPackages, fetchPackages],
   )
 
-  const bulkLabelStateMap = useMemo(() => {
-    const items = filtered.filter((p) => bulkSelectedFilenames.includes(p.filename))
-    return bulkStateMap(items.map((p) => p.labelIds || []))
-  }, [filtered, bulkSelectedFilenames])
+  const bulkLabelStateMap = useMemo(
+    () => bulkStateMap(bulkSelectedPackages.map((p) => p.labelIds || [])),
+    [bulkSelectedPackages],
+  )
 
   const runBulkLabelToggle = useCallback(
     async (label, currentState) => {
-      const fnames = filtered.filter((p) => bulkSelectedFilenames.includes(p.filename)).map((p) => p.filename)
+      const fnames = bulkSelectedPackages.map((p) => p.filename)
       if (!fnames.length) return
       const apply = currentState !== 'all'
       try {
@@ -871,12 +857,12 @@ export default function LibraryView({ onNavigate, navContext }) {
         toast(`Failed to ${apply ? 'apply' : 'remove'} label: ${err.message}`)
       }
     },
-    [filtered, bulkSelectedFilenames],
+    [bulkSelectedPackages],
   )
 
   const runBulkLabelCreate = useCallback(
     async (name) => {
-      const fnames = filtered.filter((p) => bulkSelectedFilenames.includes(p.filename)).map((p) => p.filename)
+      const fnames = bulkSelectedPackages.map((p) => p.filename)
       if (!fnames.length) return
       try {
         const created = await window.api.labels.create({ name })
@@ -885,7 +871,7 @@ export default function LibraryView({ onNavigate, navContext }) {
         toast(`Failed to create label: ${err.message}`)
       }
     },
-    [filtered, bulkSelectedFilenames],
+    [bulkSelectedPackages],
   )
 
   const selectionAnnouncedLib = bulkActive ? `${bulkSelectedFilenames.length} selected` : ''
@@ -921,12 +907,12 @@ export default function LibraryView({ onNavigate, navContext }) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return
       if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
         e.preventDefault()
-        selectAllBulk(orderedLibraryFilenames)
+        selectAllBulk(matchFilenames)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [orderedLibraryFilenames, selectAllBulk])
+  }, [matchFilenames, selectAllBulk])
 
   useEffect(() => {
     if (!bulkActive) return
@@ -946,8 +932,8 @@ export default function LibraryView({ onNavigate, navContext }) {
   useLayoutEffect(() => {
     const el = libraryTableSelectAllRef.current
     if (!el) return
-    el.indeterminate = bulkSelectedFilenames.length > 0 && bulkSelectedFilenames.length < filtered.length
-  }, [bulkSelectedFilenames, filtered.length])
+    el.indeterminate = bulkSelectedFilenames.length > 0 && bulkSelectedFilenames.length < matchFilenames.length
+  }, [bulkSelectedFilenames, matchFilenames.length])
 
   return (
     <div className="h-full flex">
@@ -968,7 +954,7 @@ export default function LibraryView({ onNavigate, navContext }) {
         {/* Toolbar */}
         {bulkActive && statusFilter !== 'missing' ? (
           <div className="h-10 flex flex-nowrap items-center px-4 border-b border-border shrink-0 gap-3 min-w-0 overflow-x-auto [&::-webkit-scrollbar]:h-0 [&::-webkit-scrollbar]:bg-transparent">
-            {statusFilter === 'archived' ? (
+            {bulkAllArchived ? (
               <>
                 <button
                   type="button"
@@ -1094,9 +1080,9 @@ export default function LibraryView({ onNavigate, navContext }) {
               <button
                 type="button"
                 className="shrink-0 whitespace-nowrap text-[10px] text-accent-blue hover:brightness-125 transition-[filter] cursor-pointer"
-                onClick={() => selectAllBulk(orderedLibraryFilenames)}
+                onClick={() => selectAllBulk(matchFilenames)}
               >
-                Select all {filtered.length}
+                Select all {matchFilenames.length}
               </button>
               <button
                 type="button"
@@ -1261,9 +1247,11 @@ export default function LibraryView({ onNavigate, navContext }) {
                       type="checkbox"
                       className="accent-accent-blue cursor-pointer"
                       aria-label="Select all"
-                      checked={bulkSelectedFilenames.length > 0 && bulkSelectedFilenames.length === filtered.length}
+                      checked={
+                        bulkSelectedFilenames.length > 0 && bulkSelectedFilenames.length === matchFilenames.length
+                      }
                       onChange={(e) => {
-                        if (e.target.checked) selectAllBulk(orderedLibraryFilenames)
+                        if (e.target.checked) selectAllBulk(matchFilenames)
                         else clearBulkSelection()
                       }}
                     />
@@ -1341,7 +1329,7 @@ export default function LibraryView({ onNavigate, navContext }) {
             updateInfo={updateCheckResults?.[selectedDetail.filename]}
           />
         ) : bulkActive ? (
-          <LibraryBulkPanel filtered={filtered} bulkSelectedFilenames={bulkSelectedFilenames} />
+          <LibraryBulkPanel bulkSelectedPackages={bulkSelectedPackages} />
         ) : (
           <div className="shrink-0 border-l border-border bg-surface" style={{ width: detailPanelWidth }} />
         ))}
@@ -1773,19 +1761,18 @@ function MissingDepRow({ item, hubDetailsLoading, onNavigateBroken }) {
   )
 }
 
-function LibraryBulkPanel({ filtered, bulkSelectedFilenames }) {
+function LibraryBulkPanel({ bulkSelectedPackages }) {
   const [panelWidth] = usePersistedPanelWidth('panel_width_detail', {
     min: 260,
     max: 500,
     defaultWidth: 340,
   })
-  const selected = filtered.filter((p) => bulkSelectedFilenames.includes(p.filename))
-  const totalSize = selected.reduce((s, p) => s + (p.sizeBytes || 0), 0)
+  const totalSize = bulkSelectedPackages.reduce((s, p) => s + (p.sizeBytes || 0), 0)
   return (
     <div className="shrink-0 border-l border-border bg-surface" style={{ width: panelWidth }}>
       <div className="p-4">
         <div className="text-sm font-semibold text-text-primary">
-          {selected.length} package{selected.length !== 1 ? 's' : ''} selected
+          {bulkSelectedPackages.length} package{bulkSelectedPackages.length !== 1 ? 's' : ''} selected
         </div>
         <div className="text-[11px] text-text-tertiary mt-1">{formatBytes(totalSize)}</div>
       </div>

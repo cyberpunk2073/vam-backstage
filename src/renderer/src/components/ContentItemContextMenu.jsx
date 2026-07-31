@@ -12,6 +12,13 @@ import {
 } from '@/components/ui/context-menu'
 import { toast } from '@/components/Toast'
 import { cn, displayName } from '@/lib/utils'
+import {
+  contentBulkFavoriteState,
+  contentBulkVisibilityState,
+  resolveContentBulkItems,
+  runContentBulkToggleFavorite,
+  runContentBulkToggleVisibility,
+} from '@/lib/bulk-targets'
 import { useContentStore } from '@/stores/useContentStore'
 import { useLabelsStore } from '@/stores/useLabelsStore'
 import { LabelsApplyMenuItems } from '@/components/labels/LabelsApplyMenuItems'
@@ -20,32 +27,6 @@ import { singleTargetStateMap, bulkStateMap, applyLabelToContentItems } from '@/
 const SCENE_SOURCE_TYPES = new Set(['scene', 'legacyScene'])
 const LOOK_SOURCE_TYPES = new Set(['legacyLook'])
 const KIND_NOUN = { appearance: 'appearance', outfit: 'outfit' }
-
-function applyBulkVisibilityFromStore() {
-  const { contents, bulkSelectedIds } = useContentStore.getState()
-  const items = contents.filter((c) => bulkSelectedIds.includes(c.id))
-  if (!items.length) return
-  const hiddenCount = items.filter((i) => i.hidden).length
-  const allHidden = hiddenCount === items.length
-  const hidden = allHidden ? false : true
-  void window.api.contents.setHiddenBatch({
-    items: items.map((c) => ({ id: c.id, packageFilename: c.packageFilename, internalPath: c.internalPath })),
-    hidden,
-  })
-}
-
-function applyBulkFavoriteFromStore() {
-  const { contents, bulkSelectedIds } = useContentStore.getState()
-  const items = contents.filter((c) => bulkSelectedIds.includes(c.id))
-  if (!items.length) return
-  const favCount = items.filter((i) => i.favorite).length
-  const allFav = favCount === items.length
-  const favorite = allFav ? false : true
-  void window.api.contents.setFavoriteBatch({
-    items: items.map((c) => ({ id: c.id, packageFilename: c.packageFilename, internalPath: c.internalPath })),
-    favorite,
-  })
-}
 
 function toastExtractResult(label, result) {
   if (!result) return
@@ -90,59 +71,30 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
   // here — the reverse direction — instead of cluttering every scene/package card.
   const isExtracted = !!item.extractedFrom
 
-  const bulkSceneItems = useMemo(() => {
-    if (!showBulk) return []
-    return bulkSelectedIds
-      .map((id) => contents.find((c) => c.id === id))
-      .filter((c) => c && SCENE_SOURCE_TYPES.has(c.type))
-  }, [showBulk, bulkSelectedIds, contents])
+  const bulkItems = useMemo(
+    () => (showBulk ? resolveContentBulkItems({ bulkSelectedIds, contents }) : []),
+    [showBulk, bulkSelectedIds, contents],
+  )
 
-  const bulkLookItems = useMemo(() => {
-    if (!showBulk) return []
-    return bulkSelectedIds
-      .map((id) => contents.find((c) => c.id === id))
-      .filter((c) => c && LOOK_SOURCE_TYPES.has(c.type))
-  }, [showBulk, bulkSelectedIds, contents])
-
-  const bulkVisibilityUi = useMemo(() => {
-    const items = bulkSelectedIds.map((id) => contents.find((c) => c.id === id)).filter(Boolean)
-    if (!items.length) return { label: 'Hide', allHidden: false, mixed: false }
-    const hiddenCount = items.filter((c) => c.hidden).length
-    const allHidden = hiddenCount === items.length
-    const mixed = hiddenCount > 0 && hiddenCount < items.length
-    const label = allHidden ? 'Show' : 'Hide'
-    return { label, allHidden, mixed }
-  }, [bulkSelectedIds, contents])
+  const bulkSceneItems = useMemo(() => bulkItems.filter((c) => SCENE_SOURCE_TYPES.has(c.type)), [bulkItems])
+  const bulkLookItems = useMemo(() => bulkItems.filter((c) => LOOK_SOURCE_TYPES.has(c.type)), [bulkItems])
+  const bulkVisibilityUi = useMemo(() => contentBulkVisibilityState(bulkItems), [bulkItems])
+  const bulkFavoriteUi = useMemo(() => contentBulkFavoriteState(bulkItems), [bulkItems])
 
   const labelTargetItems = useMemo(() => {
     if (!showBulk) return [{ packageFilename: item.packageFilename, internalPath: item.internalPath }]
-    return bulkSelectedIds
-      .map((id) => contents.find((c) => c.id === id))
-      .filter(Boolean)
-      .map((c) => ({ packageFilename: c.packageFilename, internalPath: c.internalPath }))
-  }, [showBulk, bulkSelectedIds, contents, item.packageFilename, item.internalPath])
+    return bulkItems.map((c) => ({ packageFilename: c.packageFilename, internalPath: c.internalPath }))
+  }, [showBulk, bulkItems, item.packageFilename, item.internalPath])
 
   const labelStateMap = useMemo(() => {
     if (!showBulk) return singleTargetStateMap(item.ownLabelIds || [])
-    const targets = bulkSelectedIds.map((id) => contents.find((c) => c.id === id)).filter(Boolean)
-    return bulkStateMap(targets.map((c) => c.ownLabelIds || []))
-  }, [showBulk, bulkSelectedIds, contents, item.ownLabelIds])
+    return bulkStateMap(bulkItems.map((c) => c.ownLabelIds || []))
+  }, [showBulk, bulkItems, item.ownLabelIds])
 
   const handleLabelToggle = async (label, currentState) => {
     const apply = currentState !== 'all'
     await applyLabelToContentItems(label.id, labelTargetItems, apply)
   }
-
-  const bulkFavoriteUi = useMemo(() => {
-    const items = bulkSelectedIds.map((id) => contents.find((c) => c.id === id)).filter(Boolean)
-    if (!items.length) return { label: 'Favorite', mixed: false, allFav: false, allUnfav: true }
-    const favCount = items.filter((c) => c.favorite).length
-    const allFav = favCount === items.length
-    const allUnfav = favCount === 0
-    const mixed = !allFav && !allUnfav
-    const label = allFav && !mixed ? 'Unfavorite' : 'Favorite'
-    return { label, mixed, allFav, allUnfav }
-  }, [bulkSelectedIds, contents])
 
   const onOpenChange = useCallback(
     async (open) => {
@@ -330,7 +282,7 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
               </ContextMenuSubContent>
             </ContextMenuSub>
             <ContextMenuSeparator />
-            <ContextMenuItem onSelect={() => applyBulkVisibilityFromStore()}>
+            <ContextMenuItem onSelect={() => void runContentBulkToggleVisibility(bulkItems)}>
               {bulkVisibilityUi.allHidden ? (
                 <Eye size={12} className="shrink-0 text-text-secondary" />
               ) : (
@@ -341,7 +293,7 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
               )}
               {bulkVisibilityUi.label} ({bulkSelectedIds.length})
             </ContextMenuItem>
-            <ContextMenuItem onSelect={() => applyBulkFavoriteFromStore()}>
+            <ContextMenuItem onSelect={() => void runContentBulkToggleFavorite(bulkItems)}>
               <Star
                 size={12}
                 className={cn(

@@ -48,70 +48,23 @@ import {
   openExternalLink,
   TYPE_COLORS,
 } from '@/lib/utils'
-import { toastIfBulkToggleFailures, toastIfSingleToggleFailed } from '@/lib/packageStorageToggleResults'
+import { toastIfSingleToggleFailed } from '@/lib/packageStorageToggleResults'
 import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
 import { isUpdateUnavailable, isUpdateCheckFailed, isUpdateChecking, updateTargetVersion } from '@/lib/hub-availability'
 import { isPackageActive, isPackageArchived } from '@shared/storage-state-predicates.js'
+import {
+  libraryBulkEnabledState,
+  resolveLibraryBulkPackages,
+  runLibraryBulkInstallFromArchive,
+  runLibraryBulkPromote,
+  runLibraryBulkRemove,
+  runLibraryBulkRemoveFromArchive,
+  runLibraryBulkToggleEnabled,
+} from '@/lib/bulk-targets'
 import { useDownloadStore } from '@/stores/useDownloadStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
 import { useLabelsStore } from '@/stores/useLabelsStore'
 import { useLibraryDirsStore } from '@/stores/useLibraryDirsStore'
-
-function bulkSelectedPackagesFromStore() {
-  const { bulkSelectedFilenames, packageByFilename } = useLibraryStore.getState()
-  return bulkSelectedFilenames.map((fn) => packageByFilename.get(fn)).filter(Boolean)
-}
-
-async function runLibraryBulkToggleEnabledFromStore() {
-  if (useLibraryStore.getState().bulkToggleIntent) return
-  const items = bulkSelectedPackagesFromStore()
-  if (!items.length) return
-  const nEnabled = items.filter((p) => isPackageActive(p.storageState)).length
-  const allEnabled = nEnabled === items.length
-  const allDisabled = nEnabled === 0
-  const mixed = !allEnabled && !allDisabled
-  const targets = mixed ? items.filter((p) => !isPackageActive(p.storageState)) : items
-  if (!targets.length) return
-  const enabled = allDisabled || mixed
-  useLibraryStore.setState({ bulkToggleIntent: enabled ? 'enable' : 'disable' })
-  try {
-    const res = await window.api.packages.setEnabled(
-      targets.map((p) => p.filename),
-      enabled,
-    )
-    toastIfBulkToggleFailures(res)
-    await useLibraryStore.getState().fetchPackages()
-  } catch (err) {
-    toast(`Failed: ${err.message}`)
-  } finally {
-    useLibraryStore.setState({ bulkToggleIntent: null })
-  }
-}
-
-async function runLibraryBulkRemoveFromStore() {
-  const items = bulkSelectedPackagesFromStore()
-  const direct = items.filter((p) => p.isDirect)
-  const dep = items.filter((p) => !p.isDirect)
-  try {
-    let relocated = 0
-    if (direct.length) {
-      const d = direct.map((p) => p.filename)
-      const res = await window.api.packages.uninstall(d.length === 1 ? d[0] : d)
-      for (const r of res?.results ?? (res ? [res] : [])) {
-        if (r.relocatedToArchive) relocated++
-      }
-    }
-    if (dep.length) {
-      const d = dep.map((p) => p.filename)
-      await window.api.packages.forceRemove(d.length === 1 ? d[0] : d)
-    }
-    useLibraryStore.getState().clearBulkSelection()
-    await useLibraryStore.getState().fetchPackages()
-    if (relocated) toast(`${relocated} moved to archive (still needed by archived packages)`, 'success')
-  } catch (err) {
-    toast(`Failed: ${err.message}`)
-  }
-}
 
 const SCENE_SOURCE_TYPES = new Set(['scene', 'legacyScene'])
 const LOOK_SOURCE_TYPES = new Set(['legacyLook'])
@@ -162,20 +115,6 @@ async function runLibraryBulkExtract({ kind, sources, sourceNoun, actionLabel })
   }
 }
 
-async function runLibraryBulkPromoteFromStore() {
-  const fnames = bulkSelectedPackagesFromStore()
-    .filter((p) => !p.isDirect)
-    .map((p) => p.filename)
-  if (!fnames.length) return
-  try {
-    await window.api.packages.promote(fnames.length === 1 ? fnames[0] : fnames, null)
-    useLibraryStore.getState().clearBulkSelection()
-    await useLibraryStore.getState().fetchPackages()
-  } catch (err) {
-    toast(`Failed: ${err.message}`)
-  }
-}
-
 async function runSetTypeOverride(filenames, typeOverride) {
   if (!filenames.length) return
   try {
@@ -217,39 +156,10 @@ function TypeOverrideMenuItems({ filenames, typeOverride, autoBucketLabel, bulk 
   )
 }
 
-async function runLibraryBulkInstallFromArchive() {
-  const fnames = bulkSelectedPackagesFromStore()
-    .filter((p) => isPackageArchived(p.storageState))
-    .map((p) => p.filename)
-  if (!fnames.length) return
-  try {
-    const res = await window.api.packages.installFromArchive(fnames)
-    if (res?.queued > 0) toast(`Installing: ${res.queued} dependenc${res.queued === 1 ? 'y' : 'ies'} queued`, 'success')
-    useLibraryStore.getState().clearBulkSelection()
-    await Promise.all([useLibraryStore.getState().fetchPackages(), useDownloadStore.getState().fetchItems()])
-  } catch (err) {
-    toast(`Install failed: ${err.message}`)
-  }
-}
-
-async function runLibraryBulkRemoveFromArchive() {
-  const fnames = bulkSelectedPackagesFromStore()
-    .filter((p) => isPackageArchived(p.storageState))
-    .map((p) => p.filename)
-  if (!fnames.length) return
-  try {
-    await window.api.packages.forceRemove(fnames.length === 1 ? fnames[0] : fnames)
-    useLibraryStore.getState().clearBulkSelection()
-    await useLibraryStore.getState().fetchPackages()
-  } catch (err) {
-    toast(`Remove failed: ${err.message}`)
-  }
-}
-
 export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, children }) {
   const selectedDetail = useLibraryStore((s) => s.selectedDetail)
   const bulkSelectedFilenames = useLibraryStore((s) => s.bulkSelectedFilenames)
-  const packages = useLibraryStore((s) => s.packages)
+  const packageByFilename = useLibraryStore((s) => s.packageByFilename)
   const labels = useLabelsStore((s) => s.labels)
   const [detail, setDetail] = useState(null)
   const [probe, setProbe] = useState(null)
@@ -390,9 +300,11 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
   const isArchived = isPackageArchived(p.storageState)
 
   const showBulk = bulkSelectedFilenames.length > 0 && bulkSelectedFilenames.includes(pkg.filename)
-  const bulkDepCount = showBulk
-    ? packages.filter((x) => bulkSelectedFilenames.includes(x.filename) && !x.isDirect).length
-    : 0
+  const bulkPackages = useMemo(
+    () => (showBulk ? resolveLibraryBulkPackages({ bulkSelectedFilenames, packageByFilename }) : []),
+    [showBulk, bulkSelectedFilenames, packageByFilename],
+  )
+  const bulkDepCount = bulkPackages.filter((x) => !x.isDirect).length
 
   const labelTargetFilenames = useMemo(
     () => (showBulk ? bulkSelectedFilenames : [pkg.filename]),
@@ -400,44 +312,24 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
   )
   const labelStateMap = useMemo(() => {
     if (!showBulk) return singleTargetStateMap(pkg.labelIds || [])
-    const targets = packages.filter((x) => bulkSelectedFilenames.includes(x.filename))
-    return bulkStateMap(targets.map((x) => x.labelIds || []))
-  }, [showBulk, packages, bulkSelectedFilenames, pkg.labelIds])
+    return bulkStateMap(bulkPackages.map((x) => x.labelIds || []))
+  }, [showBulk, bulkPackages, pkg.labelIds])
 
   const handleLabelToggle = async (label, currentState) => {
     const apply = currentState !== 'all'
     await applyLabelToFilenames(label.id, labelTargetFilenames, apply)
   }
 
-  const bulkEnableUi = useMemo(() => {
-    if (!showBulk) return null
-    const items = packages.filter((p) => bulkSelectedFilenames.includes(p.filename))
-    if (!items.length) {
-      return { label: 'Enable', allEnabled: false, allDisabled: true, mixed: false }
-    }
-    const n = items.filter((p) => isPackageActive(p.storageState)).length
-    const allEnabled = n === items.length
-    const allDisabled = n === 0
-    const mixed = n > 0 && n < items.length
-    const label = mixed || allDisabled ? 'Enable' : 'Disable'
-    return { label, allEnabled, allDisabled, mixed }
-  }, [showBulk, packages, bulkSelectedFilenames])
+  const bulkEnableUi = useMemo(() => libraryBulkEnabledState(bulkPackages), [bulkPackages])
 
   // How many of the bulk selection are archived — drives whether the bulk menu
   // shows archive-shelf actions (Install/Remove) or the normal library actions.
-  const bulkSelectedSet = useMemo(() => new Set(bulkSelectedFilenames), [bulkSelectedFilenames])
-  const bulkArchivedCount = useMemo(() => {
-    if (!showBulk) return 0
-    return packages.filter((p) => bulkSelectedSet.has(p.filename) && isPackageArchived(p.storageState)).length
-  }, [showBulk, packages, bulkSelectedSet])
+  const bulkArchivedCount = bulkPackages.filter((p) => isPackageArchived(p.storageState)).length
   const bulkNonArchivedFilenames = useMemo(
-    () =>
-      packages
-        .filter((p) => bulkSelectedSet.has(p.filename) && !isPackageArchived(p.storageState))
-        .map((p) => p.filename),
-    [packages, bulkSelectedSet],
+    () => bulkPackages.filter((p) => !isPackageArchived(p.storageState)).map((p) => p.filename),
+    [bulkPackages],
   )
-  const bulkAllArchived = showBulk && bulkArchivedCount === bulkSelectedFilenames.length && bulkArchivedCount > 0
+  const bulkAllArchived = bulkArchivedCount > 0 && bulkArchivedCount === bulkPackages.length
   const archiveTargetFilenames = showBulk ? bulkNonArchivedFilenames : [pkg.filename]
 
   // Three sibling groups: scene-sourced appearance, scene-sourced outfit,
@@ -586,7 +478,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
           {showBulk ? (
             bulkAllArchived ? (
               <>
-                <ContextMenuItem onSelect={() => void runLibraryBulkInstallFromArchive()}>
+                <ContextMenuItem onSelect={() => void runLibraryBulkInstallFromArchive(bulkPackages)}>
                   <Download size={12} className="shrink-0 text-accent-blue" />
                   Install from archive ({bulkSelectedFilenames.length})
                 </ContextMenuItem>
@@ -600,7 +492,10 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                   </ContextMenuSubContent>
                 </ContextMenuSub>
                 <ContextMenuSeparator />
-                <ContextMenuItem variant="destructive" onSelect={() => void runLibraryBulkRemoveFromArchive()}>
+                <ContextMenuItem
+                  variant="destructive"
+                  onSelect={() => void runLibraryBulkRemoveFromArchive(bulkPackages)}
+                >
                   <Trash2 size={12} className="shrink-0" />
                   Remove from archive ({bulkSelectedFilenames.length})
                 </ContextMenuItem>
@@ -617,7 +512,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                   </ContextMenuSubContent>
                 </ContextMenuSub>
                 <ContextMenuSeparator />
-                <ContextMenuItem onSelect={() => void runLibraryBulkToggleEnabledFromStore()}>
+                <ContextMenuItem onSelect={() => void runLibraryBulkToggleEnabled(bulkPackages)}>
                   <Power
                     size={12}
                     className={
@@ -630,12 +525,12 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                   />
                   {bulkEnableUi.label} ({bulkSelectedFilenames.length})
                 </ContextMenuItem>
-                <ContextMenuItem variant="destructive" onSelect={() => void runLibraryBulkRemoveFromStore()}>
+                <ContextMenuItem variant="destructive" onSelect={() => void runLibraryBulkRemove(bulkPackages)}>
                   <Trash2 size={12} className="shrink-0" />
                   Remove ({bulkSelectedFilenames.length})
                 </ContextMenuItem>
                 {bulkDepCount > 0 && (
-                  <ContextMenuItem onSelect={() => void runLibraryBulkPromoteFromStore()}>
+                  <ContextMenuItem onSelect={() => void runLibraryBulkPromote(bulkPackages)}>
                     <Plus size={12} className="shrink-0 text-accent-blue" />
                     Promote ({bulkDepCount})
                   </ContextMenuItem>

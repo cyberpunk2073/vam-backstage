@@ -231,11 +231,12 @@ export const useContentStore = create(
           }
           const lo = Math.min(i1, i2)
           const hi = Math.max(i1, i2)
-          const range = orderedIds.slice(lo, hi + 1)
-          const setIds = new Set([...s.bulkSelectedIds, ...range])
-          const merged = orderedIds.filter((x) => setIds.has(x))
+          const selected = new Set([...s.bulkSelectedIds, ...orderedIds.slice(lo, hi + 1)])
+          const onList = new Set(orderedIds)
+          // Selection follows visible order; picks that dropped out of the list keep their order up front.
+          const offList = s.bulkSelectedIds.filter((x) => !onList.has(x))
           return {
-            bulkSelectedIds: merged,
+            bulkSelectedIds: [...offList, ...orderedIds.filter((x) => selected.has(x))],
             bulkAnchorId: id,
             selectedItem: null,
             selectedPackage: null,
@@ -251,6 +252,19 @@ export const useContentStore = create(
         }),
 
       clearBulkSelection: () => set({ bulkSelectedIds: [], bulkAnchorId: null }),
+
+      /** Drop bulk picks that are no longer in the current filter match set (e.g. after a facet change). */
+      pruneBulkSelection: (visibleIds) =>
+        set((s) => {
+          if (!s.bulkSelectedIds.length) return s
+          const keep = new Set(visibleIds)
+          const next = s.bulkSelectedIds.filter((id) => keep.has(id))
+          if (next.length === s.bulkSelectedIds.length) return s
+          return {
+            bulkSelectedIds: next,
+            bulkAnchorId: next.includes(s.bulkAnchorId) ? s.bulkAnchorId : (next[next.length - 1] ?? null),
+          }
+        }),
 
       refreshSelection: async () => {
         const { selectedItem } = get()
