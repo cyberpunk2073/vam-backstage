@@ -28,6 +28,7 @@ describe('libraryFlags', () => {
   it('includes storage and status flags', () => {
     expect(libraryFlags({ storageState: 'disabled' })).toEqual(['disabled'])
     expect(libraryFlags({ storageState: 'offloaded' })).toEqual(['offloaded'])
+    expect(libraryFlags({ storageState: 'archived' })).toEqual(['archived'])
     expect(libraryFlags({ isOrphan: true })).toEqual(['orphan'])
     expect(libraryFlags({ isLocalOnly: true })).toEqual(['local'])
   })

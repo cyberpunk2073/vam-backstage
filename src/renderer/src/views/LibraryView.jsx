@@ -21,6 +21,7 @@ import {
   FolderTree,
   Search,
   X,
+  Boxes,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { HoverCard, HoverCardTrigger, HoverCardContent } from '@/components/ui/hover-card'
@@ -69,8 +70,9 @@ import { useThumbnail } from '@/hooks/createBlobCacheHook'
 import { useLibraryStore, FILTER_DEFAULTS } from '@/stores/useLibraryStore'
 import { useLabelsStore } from '@/stores/useLabelsStore'
 import { useContentStore } from '@/stores/useContentStore'
-import { useDownloadStore } from '@/stores/useDownloadStore'
+import { lookupDownloadByRef, useDownloadStore } from '@/stores/useDownloadStore'
 import { useWishlistStore } from '@/stores/useWishlistStore'
+import { useLibraryDirsStore } from '@/stores/useLibraryDirsStore'
 import FilterPanel, { sectionActive } from '@/components/FilterPanel'
 import { SearchOnHubButton } from '@/components/SearchOnHubButton'
 import ResizeHandle from '@/components/ResizeHandle'
@@ -91,7 +93,7 @@ import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
 import { matchesPolarityList, matchesAuthorFilter, matchesLicenseFilter, polarityScrollKey } from '@/lib/filter-match'
 import { parseCommaTags, packageSuggestionCounts } from '@/lib/suggestion-counts'
 import { haystacksMatchAllTerms, LIBRARY_IS_FLAGS, libraryFlags, searchAndTerms } from '@/lib/search-text'
-import { isPackageActive } from '@shared/storage-state-predicates.js'
+import { isPackageActive, isPackageArchived } from '@shared/storage-state-predicates.js'
 import { LicenseTag } from '@/components/LicenseTag'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { LibraryPackageContextMenu } from '@/components/LibraryPackageContextMenu'
@@ -99,7 +101,9 @@ import {
   UninstallDialogContent,
   DisablePackageDialogContent,
   ForceRemoveDialogContent,
+  uninstallOutcomeMessage,
 } from '@/components/package-action-dialogs'
+import { ArchiveDialogContent, InstallFromArchiveDialogContent } from '@/components/ArchiveActionDialogs'
 import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
 import {
   isUpdateUnavailable,
@@ -109,6 +113,7 @@ import {
   updateTargetVersion,
   updateTargetFilename,
 } from '@/lib/hub-availability'
+import { useViewStore } from '@/stores/useViewStore'
 
 const SORT_OPTIONS = ['Recently installed', 'Type', 'Name', 'Size', 'Content', 'Deps', 'Morphs']
 
@@ -133,13 +138,16 @@ function isBrokenPackage(p) {
 
 function filterPackagesByStatus(items, statusFilter, updateCheckResults) {
   if (statusFilter === 'missing') return []
-  if (statusFilter === 'direct') return items.filter((p) => p.isDirect)
-  if (statusFilter === 'dependency') return items.filter((p) => !p.isDirect)
-  if (statusFilter === 'broken') return items.filter(isBrokenPackage)
-  if (statusFilter === 'orphan') return items.filter((p) => p.isOrphan)
-  if (statusFilter === 'updates') return items.filter((p) => updateCheckResults?.[p.filename])
-  if (statusFilter === 'local') return items.filter((p) => p.isLocalOnly)
-  return items
+  // Archived packages are their own Status facet; every other facet excludes them.
+  if (statusFilter === 'archived') return items.filter((p) => isPackageArchived(p.storageState))
+  const nonArchived = items.filter((p) => !isPackageArchived(p.storageState))
+  if (statusFilter === 'direct') return nonArchived.filter((p) => p.isDirect)
+  if (statusFilter === 'dependency') return nonArchived.filter((p) => !p.isDirect)
+  if (statusFilter === 'broken') return nonArchived.filter(isBrokenPackage)
+  if (statusFilter === 'orphan') return nonArchived.filter((p) => p.isOrphan)
+  if (statusFilter === 'updates') return nonArchived.filter((p) => updateCheckResults?.[p.filename])
+  if (statusFilter === 'local') return nonArchived.filter((p) => p.isLocalOnly)
+  return nonArchived
 }
 
 function filterPackagesBySelectedTypes(items, selectedTypes) {
@@ -276,6 +284,15 @@ export default function LibraryView({ onNavigate, navContext }) {
 
   const wishlistIds = useWishlistStore((s) => s.ids)
 
+  // Archive feature gating: the Archived facet, Archive actions, and detail-panel
+  // button only appear when at least one archive-role dir is registered.
+  const auxDirs = useLibraryDirsStore((s) => s.aux)
+  const archiveDirs = useMemo(() => auxDirs.filter((d) => d.archive), [auxDirs])
+  const hasArchiveDirs = archiveDirs.length > 0
+  // The Enabled axis doesn't apply to archived packages (all inactive), so while the
+  // Archived facet is selected we ignore any lingering Enabled selection.
+  const effectiveEnabledFilter = statusFilter === 'archived' ? 'all' : enabledFilter
+
   const baseFiltered = useMemo(() => {
     let result = packages
     if (search?.trim()) {
@@ -308,25 +325,30 @@ export default function LibraryView({ onNavigate, navContext }) {
   }, [packages, search, authorSearch, excludedAuthors, license, labelNameById, wishlistIds])
 
   const statusCounts = useMemo(() => {
-    if (!packagesLoaded) return { direct: '…', dependency: '…', broken: '…', orphan: '…', local: '…' }
-    let items = baseFiltered
-    items = filterPackagesBySelectedTypes(items, selectedTypes)
-    items = filterPackagesByEnabledStorage(items, enabledFilter)
-    items = items.filter((p) => packageMatchesSelectedTags(p, selectedTags))
-    items = items.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
+    if (!packagesLoaded) return { direct: '…', dependency: '…', broken: '…', orphan: '…', local: '…', archived: '…' }
+    let base = baseFiltered
+    base = filterPackagesBySelectedTypes(base, selectedTypes)
+    base = base.filter((p) => packageMatchesSelectedTags(p, selectedTags))
+    base = base.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
+    // Archived count ignores the Enabled axis (it doesn't apply to the cold shelf).
+    let archived = 0
+    for (const p of base) if (isPackageArchived(p.storageState)) archived++
+    // Every other facet excludes archived packages and respects the Enabled filter.
+    const items = filterPackagesByEnabledStorage(base, enabledFilter)
     let direct = 0,
       dependency = 0,
       broken = 0,
       orphan = 0,
       local = 0
     for (const p of items) {
+      if (isPackageArchived(p.storageState)) continue
       if (p.isDirect) direct++
       else dependency++
       if (isBrokenPackage(p)) broken++
       if (!p.isDirect && p.isOrphan) orphan++
       if (p.isLocalOnly) local++
     }
-    return { direct, dependency, broken, orphan, local }
+    return { direct, dependency, broken, orphan, local, archived }
   }, [packagesLoaded, baseFiltered, selectedTypes, enabledFilter, selectedTags, selectedLabelIds])
 
   const updateFacetCount = useMemo(() => {
@@ -353,7 +375,7 @@ export default function LibraryView({ onNavigate, navContext }) {
 
   const typeCounts = useMemo(() => {
     let items = filterPackagesByStatus(baseFiltered, statusFilter, updateCheckResults)
-    items = filterPackagesByEnabledStorage(items, enabledFilter)
+    items = filterPackagesByEnabledStorage(items, effectiveEnabledFilter)
     items = items.filter((p) => packageMatchesSelectedTags(p, selectedTags))
     items = items.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
     const counts = { _total: items.length }
@@ -362,7 +384,7 @@ export default function LibraryView({ onNavigate, navContext }) {
       counts[label] = (counts[label] || 0) + 1
     }
     return counts
-  }, [baseFiltered, statusFilter, enabledFilter, selectedTags, selectedLabelIds, updateCheckResults])
+  }, [baseFiltered, statusFilter, effectiveEnabledFilter, selectedTags, selectedLabelIds, updateCheckResults])
 
   /** Facet counts for Enabled filter: respects status/type/tags/labels but not enabled itself */
   const enabledFilterCounts = useMemo(() => {
@@ -383,7 +405,7 @@ export default function LibraryView({ onNavigate, navContext }) {
 
   const filtered = useMemo(() => {
     let result = filterPackagesByStatus(baseFiltered, statusFilter, updateCheckResults)
-    result = filterPackagesByEnabledStorage(result, enabledFilter)
+    result = filterPackagesByEnabledStorage(result, effectiveEnabledFilter)
     result = filterPackagesBySelectedTypes(result, selectedTypes)
     result = result.filter((p) => packageMatchesSelectedTags(p, selectedTags))
     result = result.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
@@ -404,7 +426,7 @@ export default function LibraryView({ onNavigate, navContext }) {
   }, [
     baseFiltered,
     statusFilter,
-    enabledFilter,
+    effectiveEnabledFilter,
     selectedTypes,
     selectedTags,
     selectedLabelIds,
@@ -430,6 +452,17 @@ export default function LibraryView({ onNavigate, navContext }) {
             count: statusCounts.direct,
             title: 'Installed directly (not pulled in only as dependencies)',
           },
+          ...(hasArchiveDirs
+            ? [
+                {
+                  value: 'archived',
+                  label: 'Archived',
+                  count: statusCounts.archived,
+                  title:
+                    'Stored in an archive directory. Kept out of your library views and never prompts for missing dependencies.',
+                },
+              ]
+            : []),
           { value: 'dependency', label: 'Dependencies', count: statusCounts.dependency },
           {
             value: 'orphan',
@@ -502,6 +535,9 @@ export default function LibraryView({ onNavigate, navContext }) {
         default: FILTER_DEFAULTS.enabledFilter,
         onChange: setEnabledFilter,
         listCollapsible: false,
+        // Archived packages are inactive by definition, so the Enabled axis doesn't
+        // apply — grey the section out (no layout shift) while Archived is selected.
+        disabled: statusFilter === 'archived',
         items: [
           { value: 'all', label: 'All', count: enabledFilterCounts.all },
           { value: 'enabled', label: 'Enabled', count: enabledFilterCounts.enabled },
@@ -577,6 +613,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     [
       statusFilter,
       enabledFilter,
+      hasArchiveDirs,
       selectedTypes,
       typeCounts,
       statusCounts,
@@ -752,9 +789,13 @@ export default function LibraryView({ onNavigate, navContext }) {
   const runBulkRemove = useCallback(async () => {
     const { direct, dep } = bulkRemoveSummary
     try {
+      let relocated = 0
       if (direct.length) {
         const d = direct.map((p) => p.filename)
-        await window.api.packages.uninstall(d.length === 1 ? d[0] : d)
+        const res = await window.api.packages.uninstall(d.length === 1 ? d[0] : d)
+        for (const r of res?.results ?? (res ? [res] : [])) {
+          if (r.relocatedToArchive) relocated++
+        }
       }
       if (dep.length) {
         const d = dep.map((p) => p.filename)
@@ -763,10 +804,42 @@ export default function LibraryView({ onNavigate, navContext }) {
       setBulkRemoveOpen(false)
       clearBulkSelection()
       await fetchPackages()
+      if (relocated) toast(`${relocated} moved to archive (still needed by archived packages)`, 'success')
     } catch (err) {
       toast(`Failed: ${err.message}`)
     }
   }, [bulkRemoveSummary, clearBulkSelection, fetchPackages])
+
+  const runBulkInstallFromArchive = useCallback(async () => {
+    const fnames = filtered
+      .filter((p) => bulkSelectedFilenames.includes(p.filename) && isPackageArchived(p.storageState))
+      .map((p) => p.filename)
+    if (!fnames.length) return
+    try {
+      const res = await window.api.packages.installFromArchive(fnames)
+      if (res?.queued > 0)
+        toast(`Installing: ${res.queued} dependenc${res.queued === 1 ? 'y' : 'ies'} queued`, 'success')
+      clearBulkSelection()
+      await Promise.all([fetchPackages(), useDownloadStore.getState().fetchItems()])
+    } catch (err) {
+      toast(`Install failed: ${err.message}`)
+    }
+  }, [filtered, bulkSelectedFilenames, clearBulkSelection, fetchPackages])
+
+  const runBulkRemoveFromArchive = useCallback(async () => {
+    const fnames = filtered
+      .filter((p) => bulkSelectedFilenames.includes(p.filename) && isPackageArchived(p.storageState))
+      .map((p) => p.filename)
+    if (!fnames.length) return
+    try {
+      await window.api.packages.forceRemove(fnames.length === 1 ? fnames[0] : fnames)
+      setBulkRemoveOpen(false)
+      clearBulkSelection()
+      await fetchPackages()
+    } catch (err) {
+      toast(`Remove failed: ${err.message}`)
+    }
+  }, [filtered, bulkSelectedFilenames, clearBulkSelection, fetchPackages])
 
   const runBulkSetType = useCallback(
     async (typeOverride) => {
@@ -895,52 +968,75 @@ export default function LibraryView({ onNavigate, navContext }) {
         {/* Toolbar */}
         {bulkActive && statusFilter !== 'missing' ? (
           <div className="h-10 flex flex-nowrap items-center px-4 border-b border-border shrink-0 gap-3 min-w-0 overflow-x-auto [&::-webkit-scrollbar]:h-0 [&::-webkit-scrollbar]:bg-transparent">
-            <button
-              type="button"
-              onClick={() => void runBulkToggleEnabled()}
-              disabled={!!bulkToggleIntent}
-              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded cursor-pointer border border-border hover:bg-elevated text-[11px] text-text-primary disabled:cursor-progress disabled:opacity-70 disabled:hover:bg-transparent"
-            >
-              {bulkToggleIntent ? (
-                <Loader2 size={16} className="shrink-0 animate-spin text-text-tertiary" />
-              ) : (
-                <Power
-                  size={16}
-                  className={cn(
-                    'shrink-0',
-                    bulkEnabledState.mixed
-                      ? 'text-text-tertiary'
-                      : bulkEnabledState.allDisabled
-                        ? 'text-error'
-                        : 'text-text-secondary',
+            {statusFilter === 'archived' ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void runBulkInstallFromArchive()}
+                  className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded cursor-pointer border border-accent-blue/40 text-accent-blue hover:bg-accent-blue/10 text-[11px]"
+                >
+                  <Download size={16} className="shrink-0" />
+                  Install from archive
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runBulkRemoveFromArchive()}
+                  className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded cursor-pointer border border-border text-error hover:bg-error/10 text-[11px]"
+                >
+                  <Trash2 size={16} className="shrink-0" />
+                  Remove from archive
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void runBulkToggleEnabled()}
+                  disabled={!!bulkToggleIntent}
+                  className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded cursor-pointer border border-border hover:bg-elevated text-[11px] text-text-primary disabled:cursor-progress disabled:opacity-70 disabled:hover:bg-transparent"
+                >
+                  {bulkToggleIntent ? (
+                    <Loader2 size={16} className="shrink-0 animate-spin text-text-tertiary" />
+                  ) : (
+                    <Power
+                      size={16}
+                      className={cn(
+                        'shrink-0',
+                        bulkEnabledState.mixed
+                          ? 'text-text-tertiary'
+                          : bulkEnabledState.allDisabled
+                            ? 'text-error'
+                            : 'text-text-secondary',
+                      )}
+                    />
                   )}
-                />
-              )}
-              {bulkToggleIntent === 'enable'
-                ? 'Enabling…'
-                : bulkToggleIntent === 'disable'
-                  ? 'Disabling…'
-                  : bulkEnabledState.mixed || bulkEnabledState.allDisabled
-                    ? 'Enable'
-                    : 'Disable'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setBulkRemoveOpen(true)}
-              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded cursor-pointer border border-border text-error hover:bg-error/10 text-[11px]"
-            >
-              <Trash2 size={16} className="shrink-0" />
-              Remove
-            </button>
-            {bulkRemoveSummary.dep.length > 0 && (
-              <button
-                type="button"
-                onClick={() => void runBulkPromote()}
-                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded cursor-pointer border border-border hover:bg-elevated text-accent-blue text-[11px]"
-              >
-                <Plus size={16} className="shrink-0" />
-                Promote
-              </button>
+                  {bulkToggleIntent === 'enable'
+                    ? 'Enabling…'
+                    : bulkToggleIntent === 'disable'
+                      ? 'Disabling…'
+                      : bulkEnabledState.mixed || bulkEnabledState.allDisabled
+                        ? 'Enable'
+                        : 'Disable'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBulkRemoveOpen(true)}
+                  className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded cursor-pointer border border-border text-error hover:bg-error/10 text-[11px]"
+                >
+                  <Trash2 size={16} className="shrink-0" />
+                  Remove
+                </button>
+                {bulkRemoveSummary.dep.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => void runBulkPromote()}
+                    className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded cursor-pointer border border-border hover:bg-elevated text-accent-blue text-[11px]"
+                  >
+                    <Plus size={16} className="shrink-0" />
+                    Promote
+                  </button>
+                )}
+              </>
             )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -1212,9 +1308,26 @@ export default function LibraryView({ onNavigate, navContext }) {
                 }}
               />
             </div>
-            {filtered.length === 0 && (
-              <div className="text-center py-16 text-text-tertiary text-sm">No packages found</div>
-            )}
+            {filtered.length === 0 &&
+              (statusFilter === 'archived' ? (
+                <div className="text-center py-16 px-6 max-w-md mx-auto space-y-2">
+                  <p className="text-sm text-text-secondary">No archived packages yet</p>
+                  <p className="text-[12px] text-text-tertiary leading-relaxed">
+                    Drop <span className="font-mono">.var</span> files into an archive folder to stash them without
+                    installing, or Archive an installed package from its menu. They stay browsable here but dormant: no
+                    missing-dep prompts, and VaM never loads them.
+                  </p>
+                  <button
+                    type="button"
+                    className="text-[12px] text-accent-blue hover:underline cursor-pointer"
+                    onClick={() => useViewStore.getState().setView('settings')}
+                  >
+                    Manage archive directories in Settings
+                  </button>
+                </div>
+              ) : (
+                <div className="text-center py-16 text-text-tertiary text-sm">No packages found</div>
+              ))}
           </div>
         )}
       </div>
@@ -1307,8 +1420,12 @@ function ToolbarActions({
   const handleRemoveOrphans = async () => {
     try {
       const result = await window.api.packages.removeOrphans()
-      if (result?.count > 0)
-        toast(`Removed ${result.count} orphan packages (${formatBytes(result.freedBytes)})`, 'success')
+      if (result?.count > 0) {
+        const bits = [`Removed ${result.count} orphan packages (${formatBytes(result.freedBytes)})`]
+        if (result.movedToArchive > 0)
+          bits.push(`${result.movedToArchive} local-only dep${result.movedToArchive === 1 ? '' : 's'} moved to archive`)
+        toast(bits.join('; '), 'success')
+      }
     } catch (err) {
       toast(`Remove failed: ${err.message}`)
     }
@@ -1876,16 +1993,18 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
   }, [pkg.contents])
 
   const hasDependents = pkg.dependents?.length > 0
+  const pinningDeps = (pkg.dependents || []).filter((d) => !isPackageArchived(d.storageState))
+  const hasPinning = pinningDeps.length > 0
   const suppressDisablePackageWarning = useLibraryStore((s) => s.suppressDisablePackageWarning)
   const showDisableDialog = packageNeedsDisableConfirmation(pkg, suppressDisablePackageWarning)
   const contentCount = pkg.contents?.length ?? 0
   const hasContent = contentCount > 0
   const hiddenContentCount = (pkg.contents || []).filter((c) => c.hidden).length
-  const dependentNames = hasDependents
-    ? pkg.dependents
+  const pinningNames = hasPinning
+    ? pinningDeps
         .slice(0, 2)
         .map((d) => d.packageName?.split('.').pop() || d.filename)
-        .join(', ') + (pkg.dependents.length > 2 ? ` +${pkg.dependents.length - 2}` : '')
+        .join(', ') + (pinningDeps.length > 2 ? ` +${pinningDeps.length - 2}` : '')
     : ''
 
   const kindLabel = pkg.type || pkg.hubType
@@ -1936,7 +2055,9 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
   }
   const handleUninstall = async () => {
     try {
-      await window.api.packages.uninstall(pkg.filename)
+      const res = await window.api.packages.uninstall(pkg.filename)
+      const msg = uninstallOutcomeMessage(res)
+      if (msg) toast(msg, 'success')
     } catch (err) {
       toast(`Uninstall failed: ${err.message}`)
     }
@@ -1958,6 +2079,31 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
       toast(`Redownload failed: ${err.message}`)
     } finally {
       setRedownloading(false)
+    }
+  }
+  const detailAuxDirs = useLibraryDirsStore((s) => s.aux)
+  const detailArchiveDirs = useMemo(() => detailAuxDirs.filter((d) => d.archive), [detailAuxDirs])
+  const hasArchiveDirs = detailArchiveDirs.length > 0
+  const isArchived = isPackageArchived(pkg.storageState)
+  const handleArchive = async (archiveDirId, depMode) => {
+    try {
+      const res = await window.api.packages.archive([pkg.filename], archiveDirId, depMode)
+      const parts = []
+      if (res?.pruned) parts.push(`${res.pruned} dropped`)
+      if (res?.storedToArchive) parts.push(`${res.storedToArchive} stored`)
+      toast(`Archived${parts.length ? `: ${parts.join(', ')}` : ''}`, 'success')
+    } catch (err) {
+      toast(`Archive failed: ${err.message}`)
+    }
+  }
+  const handleInstallFromArchive = async () => {
+    try {
+      const res = await window.api.packages.installFromArchive([pkg.filename])
+      if (res?.queued > 0)
+        toast(`Installing: ${res.queued} dependenc${res.queued === 1 ? 'y' : 'ies'} queued`, 'success')
+      await useDownloadStore.getState().fetchItems()
+    } catch (err) {
+      toast(`Install failed: ${err.message}`)
     }
   }
 
@@ -2081,30 +2227,51 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                 <Compass size={12} /> View on Hub
               </Button>
             )}
-            {pkg.isDirect ? (
+            {isArchived ? (
+              <div className="space-y-1.5">
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="gradient" className="w-full text-[11px]">
+                      <Download size={12} /> Install from archive
+                    </Button>
+                  </AlertDialogTrigger>
+                  <InstallFromArchiveDialogContent pkgs={pkg} onConfirm={handleInstallFromArchive} />
+                </AlertDialog>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="destructive-outline" size="sm" className="w-full text-[10px]">
+                      <Trash2 size={10} /> Remove from archive
+                    </Button>
+                  </AlertDialogTrigger>
+                  <ForceRemoveDialogContent
+                    pkg={pkg}
+                    name={name}
+                    hasDependents={hasDependents}
+                    onConfirm={handleForceRemove}
+                  />
+                </AlertDialog>
+                <p className="text-[10px] text-text-tertiary leading-relaxed px-0.5">
+                  Installing activates the package and downloads its missing dependencies.
+                </p>
+              </div>
+            ) : pkg.isDirect ? (
               <div>
                 <div className="flex gap-1.5">
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
                       <Button
-                        variant={hasDependents ? 'outline' : 'destructive'}
-                        className={`flex-1 min-w-0 text-[11px] ${hasDependents ? 'border-text-secondary/25 text-text-primary' : ''}`}
+                        variant={hasPinning ? 'outline' : 'destructive'}
+                        className={`flex-1 min-w-0 text-[11px] ${hasPinning ? 'border-text-secondary/25 text-text-primary' : ''}`}
                       >
                         <Trash2 size={12} />
-                        {hasDependents ? (
+                        {hasPinning ? (
                           'Remove'
                         ) : (
                           <>Uninstall &middot; {formatBytes(pkg.sizeBytes + (pkg.removableSize || 0))}</>
                         )}
                       </Button>
                     </AlertDialogTrigger>
-                    <UninstallDialogContent
-                      pkg={pkg}
-                      name={name}
-                      hasDependents={hasDependents}
-                      dependentNames={dependentNames}
-                      onConfirm={handleUninstall}
-                    />
+                    <UninstallDialogContent pkg={pkg} name={name} onConfirm={handleUninstall} />
                   </AlertDialog>
                   {isPackageActive(pkg.storageState) && showDisableDialog ? (
                     <AlertDialog>
@@ -2129,10 +2296,28 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                       {isPackageActive(pkg.storageState) ? 'Disable' : 'Enable'}
                     </Button>
                   )}
+                  {hasArchiveDirs && (
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button
+                          variant="outline"
+                          title="Archive…"
+                          className="shrink-0 px-2 border-text-secondary/25 text-text-primary"
+                        >
+                          <Boxes size={12} />
+                        </Button>
+                      </AlertDialogTrigger>
+                      <ArchiveDialogContent
+                        filenames={[pkg.filename]}
+                        archiveDirs={detailArchiveDirs}
+                        onConfirm={handleArchive}
+                      />
+                    </AlertDialog>
+                  )}
                 </div>
                 <p className="text-[10px] text-text-tertiary mt-1 leading-relaxed px-0.5">
-                  {hasDependents ? (
-                    <>Used by {dependentNames}. Stays as dependency, content auto-hidden.</>
+                  {hasPinning ? (
+                    <>Used by {pinningNames}. Stays as dependency, content auto-hidden.</>
                   ) : pkg.removableSize > 0 ? (
                     <>
                       Frees {formatBytes(pkg.sizeBytes)} + {formatBytes(pkg.removableSize)} from unused deps
@@ -2214,6 +2399,25 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                       {isPackageActive(pkg.storageState) ? 'Disable' : 'Enable'}
                     </Button>
                   )}
+                  {hasArchiveDirs && (
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          title="Archive…"
+                          className="shrink-0 px-2 border-text-secondary/33 text-text-primary"
+                        >
+                          <Boxes size={12} />
+                        </Button>
+                      </AlertDialogTrigger>
+                      <ArchiveDialogContent
+                        filenames={[pkg.filename]}
+                        archiveDirs={detailArchiveDirs}
+                        onConfirm={handleArchive}
+                      />
+                    </AlertDialog>
+                  )}
                 </div>
               </div>
             )}
@@ -2235,10 +2439,12 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
             <DepList
               items={pkg.deps}
               depCount={pkg.depCount}
-              missingDeps={pkg.missingDeps}
+              // Archived packages don't demand deps — pruned/missing is expected,
+              // so don't offer Install-all / Enable-all from the dep well.
+              missingDeps={isArchived ? 0 : pkg.missingDeps}
               inactiveDeps={isPackageActive(pkg.storageState) ? pkg.inactiveDeps : 0}
-              onInstallMissing={() => useDownloadStore.getState().installMissing(pkg.filename)}
-              onEnableInactive={handleEnableInactiveDeps}
+              onInstallMissing={isArchived ? undefined : () => useDownloadStore.getState().installMissing(pkg.filename)}
+              onEnableInactive={isArchived ? undefined : handleEnableInactiveDeps}
               onSelectPackage={handleSelectPackage}
             />
           </div>
@@ -2308,15 +2514,16 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
 // --- Dep / Dependent lists ---
 
 /** Matches depStatusTag in PackageCard: higher = worse (sort descending). */
-function depBadnessRank(dep, byPackageRef) {
-  const d = byPackageRef.get(dep.ref)
+function depBadnessRank(dep, byPackageRef, byPackageGroup) {
+  const d = lookupDownloadByRef(byPackageRef, byPackageGroup, dep.downloadRef || dep.ref)
   let dl = null
   if (d && d.status !== 'completed' && d.status !== 'cancelled') {
     dl = d.status === 'active' ? 'active' : d.status
   }
-  // Missing (95) bubbles first; disabled/offloaded (85) second among problem deps.
+  // Missing (95) bubbles first; inactive-on-disk (85) second among problem deps.
   if (dep.resolution === 'exact' || dep.resolution === 'latest') {
-    if (dep.storageState === 'disabled' || dep.storageState === 'offloaded') return 85
+    if (dep.storageState === 'disabled' || dep.storageState === 'offloaded' || dep.storageState === 'archived')
+      return 85
     return 0
   }
   if (dep.resolution === 'fallback') return 72
@@ -2327,23 +2534,24 @@ function depBadnessRank(dep, byPackageRef) {
   return 95
 }
 
-function aggregateDepBadness(dep, byPackageRef) {
-  let m = depBadnessRank(dep, byPackageRef)
+function aggregateDepBadness(dep, byPackageRef, byPackageGroup) {
+  let m = depBadnessRank(dep, byPackageRef, byPackageGroup)
   for (const c of dep.children || []) {
-    const cm = aggregateDepBadness(c, byPackageRef)
+    const cm = aggregateDepBadness(c, byPackageRef, byPackageGroup)
     if (cm > m) m = cm
   }
   return m
 }
 
-function sortDepTree(items, byPackageRef) {
+function sortDepTree(items, byPackageRef, byPackageGroup) {
   if (!items?.length) return items
   return [...items]
-    .map((node) => ({ ...node, children: sortDepTree(node.children, byPackageRef) }))
+    .map((node) => ({ ...node, children: sortDepTree(node.children, byPackageRef, byPackageGroup) }))
     .sort((a, b) => {
-      const diff = aggregateDepBadness(b, byPackageRef) - aggregateDepBadness(a, byPackageRef)
+      const diff =
+        aggregateDepBadness(b, byPackageRef, byPackageGroup) - aggregateDepBadness(a, byPackageRef, byPackageGroup)
       if (diff !== 0) return diff
-      const selfDiff = depBadnessRank(b, byPackageRef) - depBadnessRank(a, byPackageRef)
+      const selfDiff = depBadnessRank(b, byPackageRef, byPackageGroup) - depBadnessRank(a, byPackageRef, byPackageGroup)
       if (selfDiff !== 0) return selfDiff
       return a.ref.localeCompare(b.ref)
     })
@@ -2414,7 +2622,8 @@ function DepList({
   const [expanded, setExpanded] = useState(false)
   const [query, setQuery] = useState('')
   const byPackageRef = useDownloadStore((s) => s.byPackageRef)
-  const sorted = useMemo(() => sortDepTree(items, byPackageRef), [items, byPackageRef])
+  const byPackageGroup = useDownloadStore((s) => s.byPackageGroup)
+  const sorted = useMemo(() => sortDepTree(items, byPackageRef, byPackageGroup), [items, byPackageRef, byPackageGroup])
   const flat = useMemo(() => flattenDepRows(sorted), [sorted])
   const total = flat.length
   const collapsible = total > 4
@@ -2493,7 +2702,7 @@ function DepList({
               onAction={onEnableInactive}
             />
           )}
-          {!showSearch && missingDeps > 0 && (
+          {!showSearch && missingDeps > 0 && onInstallMissing && (
             <DepIssueAction
               Icon={AlertTriangle}
               label={`${missingDeps} missing`}

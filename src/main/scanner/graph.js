@@ -225,6 +225,32 @@ function isActive(pkg) {
   return !!pkg && pkg.storage_state === 'enabled'
 }
 
+/** Cold-storage tier (see `dependentPins`). Local mirror of `isActive` — this module imports nothing. */
+function isArchived(pkg) {
+  return !!pkg && pkg.storage_state === 'archived'
+}
+
+/**
+ * Demand Rule 1: does dependent
+ * `dependentPkg` exert demand on dep `depFilename`, pinning it against orphan
+ * cleanup / uninstall cascades?
+ *
+ * Non-archived dependents always pin (today's behavior). An *archived* dependent
+ * pins ONLY a local-only (irreplaceable) dep — "the archive never demands
+ * anything the Hub can restore, but holds on to what's irreplaceable".
+ *
+ * `replaceableSet` is a precomputed Set of deletion-grade-replaceable filenames
+ * (see store.js `getReplaceableSet`). Passing plain data keeps this module pure
+ * and Hub-agnostic. An empty set (the default) is the fail-safe: every dep is
+ * then treated as irreplaceable, so archived dependents pin everything and
+ * nothing is ever wrongly pruned when replaceability is unknown.
+ */
+function dependentPins(dependentPkg, depFilename, replaceableSet) {
+  if (!dependentPkg) return false
+  if (!isArchived(dependentPkg)) return true
+  return !replaceableSet.has(depFilename)
+}
+
 /**
  * Compute dependencies to cascade-disable when disabling `filename`.
  * Returns the set of dep filenames whose only enabled dependents are `filename`
@@ -273,16 +299,25 @@ export function computeCascadeEnable(filename, packageIndex, forwardDeps) {
 
 /**
  * Compute the full cascading set of orphan dependencies.
- * Direct orphans: non-direct packages with no reverse deps.
- * Cascade orphans: non-direct packages whose ALL dependents are in the orphan set.
+ * Direct orphans: non-direct packages with no *pinning* dependents.
+ * Cascade orphans: non-direct packages whose all pinning dependents are orphans.
  * Returns { orphans: Set<string>, directOrphans: Set<string>, totalSize: number }
+ *
+ * Demand Rule 1: archived packages are never orphans themselves (only removed
+ * explicitly), and an archived dependent pins a dep only when that dep is
+ * local-only (see `dependentPins`). `replaceableSet` carries deletion-grade
+ * replaceability; empty (default) means "nothing is verifiably replaceable", so
+ * archived dependents pin everything (fail-safe — never orphans an archive-needed dep).
  */
-export function computeOrphanCascade(packageIndex, forwardDeps, reverseDeps) {
+export function computeOrphanCascade(packageIndex, forwardDeps, reverseDeps, replaceableSet = new Set()) {
   const directOrphans = new Set()
   for (const [filename, pkg] of packageIndex) {
     if (pkg.is_direct) continue
+    if (isArchived(pkg)) continue // archived hoard is never auto-orphaned (Rule 1)
     const dependents = reverseDeps.get(filename)
-    if (!dependents || dependents.size === 0) directOrphans.add(filename)
+    const hasPin =
+      !!dependents && [...dependents].some((d) => dependentPins(packageIndex.get(d), filename, replaceableSet))
+    if (!hasPin) directOrphans.add(filename)
   }
 
   const toRemove = new Set(directOrphans)
@@ -291,9 +326,11 @@ export function computeOrphanCascade(packageIndex, forwardDeps, reverseDeps) {
     changed = false
     for (const [filename, pkg] of packageIndex) {
       if (pkg.is_direct || toRemove.has(filename)) continue
+      if (isArchived(pkg)) continue
       const dependents = reverseDeps.get(filename) || new Set()
-      if (dependents.size === 0) continue
-      if ([...dependents].every((d) => toRemove.has(d))) {
+      const pinning = [...dependents].filter((d) => dependentPins(packageIndex.get(d), filename, replaceableSet))
+      if (pinning.length === 0) continue // no pinning dependents ⇒ already a direct orphan above
+      if (pinning.every((d) => toRemove.has(d))) {
         toRemove.add(filename)
         changed = true
       }
@@ -312,8 +349,12 @@ export function computeOrphanCascade(packageIndex, forwardDeps, reverseDeps) {
 /**
  * Compute which deps would become orphans if `filename` is removed.
  * Returns { removableFilenames: Set<string>, removableSize: number }
+ *
+ * Demand Rule 1: archived deps are never swept as a side effect, and an archived
+ * surviving dependent pins a dep only when it's local-only. `replaceableSet` (see
+ * `dependentPins`) is the deletion-grade replaceable set; empty ⇒ fail-safe pinning.
  */
-export function computeRemovableDeps(filename, packageIndex, forwardDeps, reverseDeps) {
+export function computeRemovableDeps(filename, packageIndex, forwardDeps, reverseDeps, replaceableSet = new Set()) {
   const toRemove = new Set([filename])
   let changed = true
   while (changed) {
@@ -323,9 +364,10 @@ export function computeRemovableDeps(filename, packageIndex, forwardDeps, revers
       if (toRemove.has(dep)) continue
       const pkg = packageIndex.get(dep)
       if (!pkg || pkg.is_direct) continue
+      if (isArchived(pkg)) continue // never prune the archive as a side effect (Rule 1)
       const dependents = reverseDeps.get(dep) || new Set()
-      const allInRemoveSet = [...dependents].every((d) => toRemove.has(d))
-      if (allInRemoveSet) {
+      const pinning = [...dependents].filter((d) => dependentPins(packageIndex.get(d), dep, replaceableSet))
+      if (pinning.every((d) => toRemove.has(d))) {
         toRemove.add(dep)
         changed = true
       }

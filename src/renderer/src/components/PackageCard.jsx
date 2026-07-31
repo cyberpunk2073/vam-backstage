@@ -17,6 +17,7 @@ import {
   Check,
   Pin,
   Trash2,
+  Boxes,
 } from 'lucide-react'
 import {
   getGradient,
@@ -36,13 +37,13 @@ import {
   THUMB_OVERLAY_CHIP,
 } from '@/lib/utils'
 import { isLocalPackage } from '@shared/local-package.js'
-import { isPackageActive } from '@shared/storage-state-predicates.js'
+import { isPackageActive, isPackageArchived } from '@shared/storage-state-predicates.js'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { TruncateWithTooltip } from './TruncateWithTooltip'
 import { useThumbnail, useAvatar } from '@/hooks/createBlobCacheHook'
 import { useHubInstallState } from '@/hooks/useHubInstallState'
-import { useDownloadStore } from '@/stores/useDownloadStore'
+import { lookupDownloadByRef, useDownloadStore } from '@/stores/useDownloadStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
 import { useWishlistStore } from '@/stores/useWishlistStore'
 import { LabelDots } from '@/components/labels/LabelDots'
@@ -71,9 +72,11 @@ const inactiveTitle = (isOffloaded) => (isOffloaded ? 'Package offloaded' : 'Pac
  *  - `segments`: per-type icon+count pairs for icon-only contexts (minimal
  *    card, table, compressed footer), where no words means no crowding.
  * `packageActive` gates the inactive signal — an already-inactive package's
- * inactive deps are expected, not a flag. Returns null when there are no issues.
+ * inactive deps are expected, not a flag. Archived packages suppress all
+ * issue chips (pruned/missing deps are expected). Returns null when clean.
  */
 export function depIssues(pkg, packageActive) {
+  if (isPackageArchived(pkg.storageState)) return null
   const missing = pkg.missingDeps || 0
   const inactive = packageActive ? pkg.inactiveDeps || 0 : 0
   if (!missing && !inactive) return null
@@ -572,7 +575,7 @@ export function LibraryCard({
   const inactiveStyle = useInactiveStyle(pkg)
   const { isOffloaded, inactive } = inactiveStyle
   const dim = inactiveStyle.dim || dimmed
-  const depIssue = depIssues(pkg, !inactive)
+  const depIssue = depIssues(pkg, isPackageActive(pkg.storageState))
   const name = displayName(pkg)
   const thumbUrl = useThumbnail(`pkg:${pkg.filename}`)
   const versionStr = pkg.version != null && pkg.version !== '' ? String(pkg.version) : null
@@ -791,7 +794,7 @@ export function LibraryTableRow({
   const inactiveStyle = useInactiveStyle(pkg)
   const { isOffloaded, inactive } = inactiveStyle
   const dim = inactiveStyle.dim || dimmed
-  const depIssue = depIssues(pkg, !inactive)
+  const depIssue = depIssues(pkg, isPackageActive(pkg.storageState))
   const name = displayName(pkg)
   const versionStr = pkg.version != null && pkg.version !== '' ? String(pkg.version) : null
   const thumbUrl = useThumbnail(`pkg:${pkg.filename}`)
@@ -1236,9 +1239,35 @@ export function ContentCard({
 const TAG = 'text-[9px] font-medium px-2 py-0.5 rounded min-w-[4.5rem] text-center inline-block'
 
 function depStatusTag(dep, dlStatus, dlProgress, onInstall) {
-  // Installed status always takes priority over stale download data
-  if (dep.resolution === 'exact' || dep.resolution === 'latest')
+  // Local resolution always takes priority over stale download data. Inactive
+  // placements are still "resolved" on disk but must not read as Installed.
+  if (dep.resolution === 'exact' || dep.resolution === 'latest') {
+    if (dep.storageState === 'archived') {
+      return (
+        <span
+          title="Stored in an archive directory: dormant cold storage"
+          className={`${TAG} text-warning bg-warning/8`}
+        >
+          Archived
+        </span>
+      )
+    }
+    if (dep.storageState === 'offloaded') {
+      return (
+        <span title="Package offloaded; not loaded by VaM" className={`${TAG} text-warning bg-warning/8`}>
+          Offloaded
+        </span>
+      )
+    }
+    if (dep.storageState === 'disabled') {
+      return (
+        <span title="Package disabled" className={`${TAG} text-warning bg-warning/8`}>
+          Disabled
+        </span>
+      )
+    }
     return <span className={`${TAG} text-success bg-success/8`}>Installed</span>
+  }
   if (dep.resolution === 'fallback')
     return (
       <span
@@ -1294,9 +1323,12 @@ export function DepRow({ dep, depth = 0, renderChildren = true, onNavigate, onIn
   // `dep.ref` is the verbatim dep ref for display (may be flexible like ".latest").
   // `dep.downloadRef` is the concrete `packageName.N.var` the downloads table keys on;
   // fall back to `ref` for roots whose filename is already a concrete `.var`.
+  // Flexible refs (`.latest` / `.minN`) match any queued download in the same
+  // Author.Name group — Hub Install All, install-missing, install-from-archive,
+  // etc. all queue a concrete version while the library tree still shows the token.
   const lookupKey = dep.downloadRef || dep.ref
   const dl = useDownloadStore((s) => {
-    const d = s.byPackageRef.get(lookupKey)
+    const d = lookupDownloadByRef(s.byPackageRef, s.byPackageGroup, lookupKey)
     if (!d || d.status === 'completed' || d.status === 'cancelled') return null
     if (d.status === 'active') return `active|${s.liveProgress[d.id]?.progress ?? 0}`
     return d.status
@@ -1319,7 +1351,9 @@ export function DepRow({ dep, depth = 0, renderChildren = true, onNavigate, onIn
         style={{ paddingLeft: `${10 + depth * 16}px`, paddingRight: 10 }}
       >
         {dep.filename &&
-          (dep.storageState === 'offloaded' ? (
+          (dep.storageState === 'archived' ? (
+            <Boxes size={11} className="shrink-0 text-warning" />
+          ) : dep.storageState === 'offloaded' ? (
             <Archive size={11} className="shrink-0 text-warning" />
           ) : dep.storageState === 'disabled' ? (
             <Power size={11} className="shrink-0 text-warning" />

@@ -28,6 +28,7 @@ import {
   getLibraryDir,
   countPackagesInLibraryDir,
   setLibraryDirBrowserAssist,
+  setLibraryDirRole,
   getSetting,
   setSetting,
 } from '../db.js'
@@ -94,7 +95,7 @@ async function probeSameFs(mainPath, auxPath) {
  * sidecar mode enabled so future offloads into it write sidecars and existing BA
  * sidecars are honored on restore.
  */
-async function registerAuxDir(path) {
+async function registerAuxDir(path, { archive = false } = {}) {
   refreshLibraryDirs()
   const error = await validateNewAuxDirPath(path)
   if (error) throw new Error(error)
@@ -112,14 +113,18 @@ async function registerAuxDir(path) {
 
   const mainPath = getMainLibraryDirPath()
   if (!mainPath) throw new Error('Main library directory is not configured yet')
+  // TODO(cross-fs): archive dirs on a cheap HDD are the natural end state, but v1
+  // requires same-FS (rename-based moves). Lifts with the future cross-FS/symlink work.
   const probeError = await probeSameFs(mainPath, path)
   if (probeError) throw new Error(probeError)
 
-  const id = insertLibraryDir(path)
-  const browserAssist = matchOffloadToolId(path, getSetting('vam_dir')) === 'browser-assist'
+  const id = insertLibraryDir(path, archive)
+  // BrowserAssist auto-detect is an *offload* concern (its semantics are our
+  // offload); an explicitly-registered archive dir never auto-enables it.
+  const browserAssist = !archive && matchOffloadToolId(path, getSetting('vam_dir')) === 'browser-assist'
   if (browserAssist) setLibraryDirBrowserAssist(id, true)
   refreshLibraryDirs()
-  return { id, path, browserAssist }
+  return { id, path, browserAssist, archive: !!archive }
 }
 
 export function registerLibraryDirHandlers() {
@@ -135,6 +140,7 @@ export function registerLibraryDirHandlers() {
         packageCount,
         sizeBytes: Number(bytes) || 0,
         browserAssist: !!d.browser_assist,
+        archive: !!d.archive,
       }
     })
     return { main, aux }
@@ -165,8 +171,8 @@ export function registerLibraryDirHandlers() {
     return { path: result.filePaths[0] }
   })
 
-  ipcMain.handle('library-dirs:add', async (_, path) => {
-    const result = await registerAuxDir(path)
+  ipcMain.handle('library-dirs:add', async (_, path, opts) => {
+    const result = await registerAuxDir(path, { archive: !!opts?.archive })
 
     const vamDir = getSetting('vam_dir')
     if (vamDir) {
@@ -182,8 +188,31 @@ export function registerLibraryDirHandlers() {
   // Register an offload dir WITHOUT scanning — the first-run wizard registers
   // detected dirs before its single library scan, which then indexes them and
   // the watcher subscribes to them (both enumerate the library_dirs registry).
-  ipcMain.handle('library-dirs:register', async (_, path) => {
-    return await registerAuxDir(path)
+  ipcMain.handle('library-dirs:register', async (_, path, opts) => {
+    return await registerAuxDir(path, { archive: !!opts?.archive })
+  })
+
+  // Flip an aux dir's role (offload ↔ archive). DB rewrite is atomic via
+  // `setLibraryDirRole` (flag + package storage_state). `is_direct` stays sticky.
+  // When flipping to archive, a `disable_behavior` pointing at this dir is reset
+  // to 'suffix' (offload landings would otherwise silently become archived).
+  ipcMain.handle('library-dirs:set-role', async (_, id, role) => {
+    const row = getLibraryDir(id)
+    if (!row) throw new Error('Library directory not found')
+    const toArchive = role === 'archive'
+    const changed = setLibraryDirRole(id, toArchive)
+
+    let disableBehaviorReset = false
+    if (toArchive && getSetting('disable_behavior') === disableBehaviorMoveTo(id)) {
+      setSetting('disable_behavior', DISABLE_BEHAVIOR_SUFFIX)
+      disableBehaviorReset = true
+    }
+
+    refreshLibraryDirs()
+    buildFromDb()
+    notify('packages:updated')
+    notify('contents:updated')
+    return { ok: true, archive: toArchive, packagesReclassified: changed, disableBehaviorReset }
   })
 
   // Detected default offload folders from known third-party tools (BrowserAssist,

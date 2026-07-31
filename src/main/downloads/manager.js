@@ -32,6 +32,7 @@ import { computeAutoHidePathsForNewPackage } from '../scanner/index.js'
 import { inheritFromOlderVersion } from '../scanner/inherit.js'
 import { refreshExtractedPresetsForUpdates } from '../scenes/extract-refresh.js'
 import { computeCascadeEnable, parseDepRef, isFlexibleRef, resolveRef } from '../scanner/graph.js'
+import { isPackageArchived } from '@shared/storage-state-predicates.js'
 import {
   buildFromDb,
   buildGraphOnly,
@@ -389,7 +390,10 @@ export async function enqueueInstallAllMissing() {
   const pkgIndex = getPackageIndex()
   const allMissing = new Set()
 
-  for (const [filename] of pkgIndex) {
+  for (const [filename, pkg] of pkgIndex) {
+    // Archived packages make no demands — their missing refs stay out of the
+    // "Install All Available" bill (the hoard is never auto-completed).
+    if (isPackageArchived(pkg.storage_state)) continue
     for (const d of fwd.get(filename) || []) {
       if (!d.resolved || d.resolution === 'fallback') allMissing.add(d.ref)
     }
@@ -1115,23 +1119,32 @@ export async function integrateGraphPhase(entries, { autoQueueDeps = false } = {
     for (const entry of entries) {
       const { filename } = entry
 
-      // Plan §"Dep install target": land at max(storage_state) of installed dependents.
-      // The file is currently 'enabled' in main; relocate iff a less-active state satisfies all dependents.
+      // Plan §"Dep install target": a *dependency* lands at max(storage_state) of its
+      // installed dependents. The file is currently 'enabled' in main; relocate iff a
+      // less-active state satisfies all dependents.
+      //
+      // Direct entries are exempt: the user asked for this package by name (Hub install,
+      // drop-import), so it stays enabled in main however inactive the packages that
+      // happen to reference it are — otherwise an install could vanish straight into an
+      // offload or archive dir. Same rule the re-settle pass follows (`planResettle`
+      // never touches `is_direct` rows): direct packages are user-owned, never settled.
       let landingState = 'enabled'
-      try {
-        const dependents = getReverseDeps().get(filename) || null
-        const parsed = parseDisableBehavior(getSetting('disable_behavior'))
-        const target = computeInstallTarget({
-          dependents,
-          packageIndex: getPackageIndex(),
-          disableBehaviorTargetId: parsed.kind === 'move-to' ? parsed.auxDirId : null,
-        })
-        if (target) {
-          await applyStorageState(filename, target)
-          landingState = target.storageState
+      if (!entry.isDirect) {
+        try {
+          const dependents = getReverseDeps().get(filename) || null
+          const parsed = parseDisableBehavior(getSetting('disable_behavior'))
+          const target = computeInstallTarget({
+            dependents,
+            packageIndex: getPackageIndex(),
+            disableBehaviorTargetId: parsed.kind === 'move-to' ? parsed.auxDirId : null,
+          })
+          if (target) {
+            await applyStorageState(filename, target)
+            landingState = target.storageState
+          }
+        } catch (err) {
+          console.warn(`Install-target relocation failed for ${filename}:`, err.message)
         }
-      } catch (err) {
-        console.warn(`Install-target relocation failed for ${filename}:`, err.message)
       }
 
       // Cascade-enable forward deps only when the new package itself ends up active.
@@ -1147,8 +1160,10 @@ export async function integrateGraphPhase(entries, { autoQueueDeps = false } = {
         }
       }
 
-      // Discover and queue transitive deps if auto_queue_deps is set
-      if (autoQueueDeps) {
+      // Discover and queue transitive deps if auto_queue_deps is set — but never
+      // when the download landed archived: an archived package makes no demands
+      // (quiet semantics), so its missing deps must not be auto-fetched.
+      if (autoQueueDeps && landingState !== 'archived') {
         const newFwd = getForwardDeps().get(filename) || []
         const missing = newFwd
           .filter((d) => !d.resolved)

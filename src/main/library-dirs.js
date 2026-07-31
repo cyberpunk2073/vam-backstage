@@ -90,6 +90,23 @@ export function isBrowserAssistLibraryDir(libraryDirId) {
 }
 
 /**
+ * True when the given aux dir is an *archive* dir (cold storage) rather than an
+ * *offload* dir. Main (`null`) is never an archive dir. Reflects the in-memory
+ * registry — callers must `refreshLibraryDirs()` after a role flip. This is the
+ * single "location implies state" oracle: anything landing in an archive dir is
+ * `archived`, anything in an offload dir is `offloaded`.
+ */
+export function isArchiveLibraryDir(libraryDirId) {
+  if (libraryDirId == null) return false
+  return !!auxDirsById.get(libraryDirId)?.archive
+}
+
+/** Archive-role aux dirs only — for the Archive action's target dropdown and UI gating. */
+export function getArchiveLibraryDirs() {
+  return [...auxDirsById.values()].filter((d) => d.archive)
+}
+
+/**
  * Resolve the *nominal* absolute path for a package row — its library dir joined
  * with `subpath` and the canonical bare `filename`. Returns null if the library
  * dir is unknown (e.g. aux dir was removed from registry).

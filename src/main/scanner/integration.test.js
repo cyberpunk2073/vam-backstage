@@ -10,7 +10,14 @@ import {
   openTestDatabase,
 } from '../../../test/fixtures/index.js'
 import { runScan } from './index.js'
-import { closeDatabase, getAllPackages, insertLibraryDir, setSetting, getAllContents } from '../db.js'
+import {
+  closeDatabase,
+  getAllPackages,
+  insertLibraryDir,
+  setLibraryDirRole,
+  setSetting,
+  getAllContents,
+} from '../db.js'
 import { resolveContentPath } from '../library-dirs.js'
 import { runLocalScan } from './local.js'
 import { LOCAL_PACKAGE_FILENAME } from '@shared/local-package.js'
@@ -304,6 +311,87 @@ describe('runScan — aux library dirs', () => {
     const row = getAllPackages().find((r) => r.filename === 'Aux.Only.1.var')
     expect(row?.storage_state).toBe('offloaded')
     expect(row?.library_dir_id).toBe(auxId)
+  })
+})
+
+describe('runScan — archive dirs', () => {
+  it('indexes a .var in an archive-role dir as storage_state="archived"', async () => {
+    const arch = await mkAuxDir(tmp.vamDir)
+    const archId = insertLibraryDir(arch, true) // archive role
+    const buf = await buildVar({
+      meta: { packageName: 'Hoard.Pkg', creator: 'H' },
+      files: { 'Saves/scene/h.json': '{"atoms":[]}' },
+    })
+    await placeVar(arch, 'Hoard.Pkg.1.var', buf)
+
+    await runScan(tmp.vamDir)
+
+    const row = getAllPackages().find((r) => r.filename === 'Hoard.Pkg.1.var')
+    expect(row?.storage_state).toBe('archived')
+    expect(row?.library_dir_id).toBe(archId)
+  })
+
+  it('wizard scan leaf-classifies: a referenced package in an archive dir is a dep', async () => {
+    const arch = await mkAuxDir(tmp.vamDir)
+    insertLibraryDir(arch, true)
+    const childBuf = await buildVar({
+      meta: { packageName: 'Child.C', creator: 'C' },
+      files: { 'Saves/scene/c.json': '{"atoms":[]}' },
+    })
+    const parentBuf = await buildVar({
+      meta: { packageName: 'Parent.P', creator: 'P', dependencies: { 'Child.C.1': { dependencies: {} } } },
+      files: { 'Saves/scene/p.json': '{"atoms":[]}' },
+    })
+    await placeVar(arch, 'Child.C.1.var', childBuf)
+    await placeVar(arch, 'Parent.P.1.var', parentBuf)
+
+    await runScan(tmp.vamDir) // initial (wizard) scan
+
+    const byFile = Object.fromEntries(getAllPackages().map((r) => [r.filename, r]))
+    expect(byFile['Parent.P.1.var'].is_direct).toBe(1)
+    expect(byFile['Child.C.1.var'].is_direct).toBe(0)
+  })
+
+  it('subsequent scan registers new referenced packages as direct (leaf detection is wizard-only)', async () => {
+    // First scan flips initial_scan_done so the next runScan is non-initial.
+    await runScan(tmp.vamDir)
+
+    const arch = await mkAuxDir(tmp.vamDir)
+    insertLibraryDir(arch, true)
+    const childBuf = await buildVar({
+      meta: { packageName: 'Child.D', creator: 'C' },
+      files: { 'Saves/scene/c.json': '{"atoms":[]}' },
+    })
+    const parentBuf = await buildVar({
+      meta: { packageName: 'Parent.Q', creator: 'P', dependencies: { 'Child.D.1': { dependencies: {} } } },
+      files: { 'Saves/scene/p.json': '{"atoms":[]}' },
+    })
+    await placeVar(arch, 'Child.D.1.var', childBuf)
+    await placeVar(arch, 'Parent.Q.1.var', parentBuf)
+
+    await runScan(tmp.vamDir) // non-initial scan
+
+    const byFile = Object.fromEntries(getAllPackages().map((r) => [r.filename, r]))
+    // Both born on a non-initial scan ⇒ direct, even though Child.D is referenced.
+    expect(byFile['Parent.Q.1.var'].is_direct).toBe(1)
+    expect(byFile['Child.D.1.var'].is_direct).toBe(1)
+  })
+
+  it('role flip re-derives storage_state for packages already in the dir', async () => {
+    const aux = await mkAuxDir(tmp.vamDir)
+    const auxId = insertLibraryDir(aux) // offload role
+    const buf = await buildVar({
+      meta: { packageName: 'Flip.Role', creator: 'F' },
+      files: { 'Saves/scene/f.json': '{"atoms":[]}' },
+    })
+    await placeVar(aux, 'Flip.Role.1.var', buf)
+    await runScan(tmp.vamDir)
+    expect(getAllPackages().find((r) => r.filename === 'Flip.Role.1.var')?.storage_state).toBe('offloaded')
+
+    // Flip to archive role + re-derive (what library-dirs:set-role does).
+    const changed = setLibraryDirRole(auxId, true)
+    expect(changed).toBeGreaterThan(0)
+    expect(getAllPackages().find((r) => r.filename === 'Flip.Role.1.var')?.storage_state).toBe('archived')
   })
 })
 

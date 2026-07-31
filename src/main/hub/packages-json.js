@@ -1,6 +1,7 @@
 import { net } from 'electron'
 import { randomUUID } from 'crypto'
 import { getSetting, setSetting } from '../db.js'
+import { isPackageArchived } from '@shared/storage-state-predicates.js'
 
 const PACKAGES_JSON_URL = 'https://s3cdn.virtamate.com/data/packages.json'
 const DB_KEY_DATA = 'packages_json_data'
@@ -183,7 +184,8 @@ export function checkUpdatesFromIndex(packageIndex, groupIndex, forwardDeps) {
       bestVer = -1
     for (const fn of filenames) {
       const pkg = packageIndex.get(fn)
-      if (!pkg || !pkg.is_direct) continue
+      // Archived packages are dormant — no update nags (excluded from the Updates facet).
+      if (!pkg || !pkg.is_direct || isPackageArchived(pkg.storage_state)) continue
       const v = parseInt(pkg.version, 10) || 0
       if (v > bestVer) {
         bestVer = v
@@ -222,10 +224,12 @@ export function checkUpdatesFromIndex(packageIndex, groupIndex, forwardDeps) {
     // depPackageName → { resolvedFilename, resolvedVersion, neededBy }
     const latestDeps = new Map()
     for (const [filename, deps] of forwardDeps) {
+      // A .latest ref inside an archived package exerts no update demand.
+      if (isPackageArchived(packageIndex.get(filename)?.storage_state)) continue
       for (const dep of deps) {
         if (dep.resolution !== 'latest' || !dep.resolved) continue
         const pkg = packageIndex.get(dep.resolved)
-        if (!pkg) continue
+        if (!pkg || isPackageArchived(pkg.storage_state)) continue
         const depName = pkg.package_name
         let entry = latestDeps.get(depName)
         if (!entry) {

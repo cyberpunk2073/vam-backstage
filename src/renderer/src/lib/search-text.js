@@ -25,6 +25,7 @@ export const LIBRARY_IS_FLAGS = [
   'local',
   'disabled',
   'offloaded',
+  'archived',
   'nopreset',
 ]
 
@@ -43,6 +44,7 @@ export function libraryFlags(p) {
   if (p.isLocalOnly) flags.push('local')
   if (p.storageState === 'disabled') flags.push('disabled')
   if (p.storageState === 'offloaded') flags.push('offloaded')
+  if (p.storageState === 'archived') flags.push('archived')
   if (p.noLookPresetTag && !p.hasExtractedAppearancePreset) flags.push('nopreset')
   return flags
 }

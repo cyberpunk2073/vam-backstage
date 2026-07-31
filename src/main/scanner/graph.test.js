@@ -9,6 +9,7 @@ import {
   detectLeaves,
   getTransitiveDeps,
   computeRemovableDeps,
+  computeOrphanCascade,
   isFlexibleRef,
 } from './graph'
 
@@ -21,6 +22,7 @@ function pkg(filename, opts = {}) {
     dep_refs: opts.dep_refs ?? '[]',
     is_direct: opts.is_direct ?? 0,
     size_bytes: opts.size_bytes ?? 100,
+    storage_state: opts.storage_state ?? 'enabled',
   }
 }
 
@@ -936,5 +938,105 @@ describe('computeRemovableDeps', () => {
     const { removableFilenames, removableSize } = computeRemovableDeps('A.var', pi, forward, reverse)
     expect(removableFilenames).toEqual(new Set(['B.var', 'C.var', 'D.var', 'E.var']))
     expect(removableSize).toBe(100)
+  })
+})
+
+// ── Demand Rule 1: archived dependents & replaceability ─────────
+
+describe('computeRemovableDeps — demand Rule 1', () => {
+  // Uninstall direct A; its dep B is also needed by an *archived* package X.
+  const build = () => {
+    const forward = new Map([
+      ['A.var', [{ ref: 'B.Lib.1', resolved: 'B.var', resolution: 'exact' }]],
+      ['X.var', [{ ref: 'B.Lib.1', resolved: 'B.var', resolution: 'exact' }]],
+      ['B.var', []],
+    ])
+    return { forward, reverse: buildReverseDeps(forward) }
+  }
+
+  it('archived dependent does NOT pin a redownloadable dep (removable)', () => {
+    const pi = new Map([
+      ['A.var', pkg('A.var', { is_direct: 1 })],
+      ['X.var', pkg('X.var', { is_direct: 1, storage_state: 'archived' })],
+      ['B.var', pkg('B.var', { size_bytes: 200 })],
+    ])
+    const { forward, reverse } = build()
+    const { removableFilenames } = computeRemovableDeps('A.var', pi, forward, reverse, new Set(['B.var']))
+    expect(removableFilenames).toEqual(new Set(['B.var']))
+  })
+
+  it('archived dependent DOES pin a local-only dep (not removable)', () => {
+    const pi = new Map([
+      ['A.var', pkg('A.var', { is_direct: 1 })],
+      ['X.var', pkg('X.var', { is_direct: 1, storage_state: 'archived' })],
+      ['B.var', pkg('B.var', { size_bytes: 200 })],
+    ])
+    const { forward, reverse } = build()
+    // B not in replaceableSet ⇒ irreplaceable ⇒ archived X pins it.
+    const { removableFilenames } = computeRemovableDeps('A.var', pi, forward, reverse, new Set())
+    expect(removableFilenames.size).toBe(0)
+  })
+
+  it('empty replaceableSet is fail-safe (archived pins everything)', () => {
+    const pi = new Map([
+      ['A.var', pkg('A.var', { is_direct: 1 })],
+      ['X.var', pkg('X.var', { is_direct: 1, storage_state: 'archived' })],
+      ['B.var', pkg('B.var', { size_bytes: 200 })],
+    ])
+    const { forward, reverse } = build()
+    const { removableFilenames } = computeRemovableDeps('A.var', pi, forward, reverse)
+    expect(removableFilenames.size).toBe(0)
+  })
+
+  it('never sweeps an archived dep as a side effect of uninstall', () => {
+    const pi = new Map([
+      ['A.var', pkg('A.var', { is_direct: 1 })],
+      ['B.var', pkg('B.var', { storage_state: 'archived', size_bytes: 200 })],
+    ])
+    const forward = new Map([
+      ['A.var', [{ ref: 'B.Lib.1', resolved: 'B.var', resolution: 'exact' }]],
+      ['B.var', []],
+    ])
+    const reverse = buildReverseDeps(forward)
+    const { removableFilenames } = computeRemovableDeps('A.var', pi, forward, reverse, new Set(['B.var']))
+    expect(removableFilenames.size).toBe(0)
+  })
+})
+
+describe('computeOrphanCascade — demand Rule 1', () => {
+  it('archived packages are never orphans (even with no dependents)', () => {
+    const pi = new Map([['H.var', pkg('H.var', { storage_state: 'archived' })]])
+    const forward = new Map([['H.var', []]])
+    const reverse = buildReverseDeps(forward)
+    const { orphans } = computeOrphanCascade(pi, forward, reverse, new Set())
+    expect(orphans.has('H.var')).toBe(false)
+  })
+
+  it('redownloadable dep needed only by an archived package IS an orphan', () => {
+    const pi = new Map([
+      ['X.var', pkg('X.var', { is_direct: 1, storage_state: 'archived' })],
+      ['B.var', pkg('B.var')],
+    ])
+    const forward = new Map([
+      ['X.var', [{ ref: 'B.Lib.1', resolved: 'B.var', resolution: 'exact' }]],
+      ['B.var', []],
+    ])
+    const reverse = buildReverseDeps(forward)
+    const { orphans } = computeOrphanCascade(pi, forward, reverse, new Set(['B.var']))
+    expect(orphans.has('B.var')).toBe(true)
+  })
+
+  it('local-only dep needed only by an archived package is NOT an orphan', () => {
+    const pi = new Map([
+      ['X.var', pkg('X.var', { is_direct: 1, storage_state: 'archived' })],
+      ['B.var', pkg('B.var')],
+    ])
+    const forward = new Map([
+      ['X.var', [{ ref: 'B.Lib.1', resolved: 'B.var', resolution: 'exact' }]],
+      ['B.var', []],
+    ])
+    const reverse = buildReverseDeps(forward)
+    const { orphans } = computeOrphanCascade(pi, forward, reverse, new Set()) // B irreplaceable
+    expect(orphans.has('B.var')).toBe(false)
   })
 })

@@ -29,7 +29,13 @@ import {
   effectivePackageType,
 } from '../store.js'
 import { isLocalPackage } from '@shared/local-package.js'
-import { refreshLibraryDirs, getAllLibraryDirs, libraryRelSubpath, classifyMainVarOnDisk } from '../library-dirs.js'
+import {
+  refreshLibraryDirs,
+  getAllLibraryDirs,
+  libraryRelSubpath,
+  classifyMainVarOnDisk,
+  isArchiveLibraryDir,
+} from '../library-dirs.js'
 import { normalizeAuxDisabled } from '../watcher.js'
 
 /**
@@ -186,12 +192,21 @@ export async function runScan(vamDir, onProgress = () => {}) {
     buildGraphOnly()
     const pkgIdx = getPackageIndex()
     const rev = getReverseDeps()
-    const leaves = detectLeaves(pkgIdx, rev)
 
     if (isInitialScan) {
+      // Wizard scan only: classify a pre-existing library by leaf detection (no
+      // reverse deps ⇒ direct). The user reviews the result. This is the ONLY place
+      // leaf detection runs — subsequent scans always register new rows as direct.
+      const leaves = detectLeaves(pkgIdx, rev)
       batchSetDirect([...pkgIdx.keys()].map((fn) => [fn, leaves.has(fn)]))
     } else {
-      const updates = [...newAdditions.keys()].map((fn) => [fn, leaves.has(fn)])
+      // Subsequent scans (normal startup, add-dir rescan, manual rescan): newly
+      // discovered rows in ANY dir (main, offload, archive) register as direct,
+      // matching the live watcher path. Continued-use users don't expect a restart
+      // to silently demote things they dropped in; and within a creator-pack hoard,
+      // leaf detection would misclassify internally-referenced packages as deps and
+      // expose them to cascades. The rev-dep-less sweep still promotes stragglers.
+      const updates = [...newAdditions.keys()].map((fn) => [fn, true])
       for (const fn of pkgIdx.keys()) {
         if (newAdditions.has(fn)) continue
         const hadRevDeps = rev.has(fn) && rev.get(fn).size > 0
@@ -312,7 +327,9 @@ async function walkForVars(dir, libraryDirId) {
             fullPath: contentPath,
             mtime: s.mtimeMs / 1000,
             size: s.size,
-            storageState: 'offloaded',
+            // Location implies state: an archive-role aux dir yields `archived`,
+            // every other aux dir yields `offloaded` (dir role ⇒ storage state).
+            storageState: isArchiveLibraryDir(libraryDirId) ? 'archived' : 'offloaded',
             libraryDirId,
             subpath: libraryRelSubpath(dir, contentPath),
           }

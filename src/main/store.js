@@ -19,9 +19,9 @@ import {
   parseDepRef,
 } from './scanner/graph.js'
 import { categoryOf, isGalleryVisible, isVisible, LOOK_ITEM_EXACT_TYPES, tagOf } from '@shared/content-types.js'
-import { getPackagesIndex, loadPackagesJsonFromCache } from './hub/packages-json.js'
+import { getPackagesFilenameIndex, loadPackagesJsonFromCache } from './hub/packages-json.js'
 import { isLocalPackage } from '@shared/local-package.js'
-import { isPackageActive } from '@shared/storage-state-predicates.js'
+import { isPackageActive, isPackageArchived } from '@shared/storage-state-predicates.js'
 import {
   packageHasExtractedAppearance,
   contentHasExtractedAppearance,
@@ -100,6 +100,7 @@ let labelIndex = new Map() // label_id → { id, name, color, packageCount, cont
 let labelsByPackage = new Map() // package_filename → number[] of label ids
 let labelsByContent = new Map() // `${package_filename}\0${internal_path}` → number[] of label ids
 let nonDownloadableRids = new Set() // resource IDs known to be non-downloadable
+let replaceableSet = new Set() // filenames deletion-grade replaceable (exact version on Hub, downloadable)
 let stats = emptyStats()
 
 function emptyStats() {
@@ -168,16 +169,74 @@ function buildNonDownloadableRids() {
   }
 }
 
-export function isNotDownloadable(pkg) {
-  let cdnIndex = getPackagesIndex()
-  if (!cdnIndex) {
+/**
+ * One replaceability truth, tri-state. Both the "Local"
+ * display tag and every deletion decision derive from this — exact-version grade,
+ * so it never over-promises that pruning `Author.Pkg.3` is safe when the Hub only
+ * carries `.5` (fallback restores a different version, not the deleted bytes):
+ *
+ *   'replaceable'   — exact filename present in packages.json's filename index
+ *                     AND its resource isn't flagged non-downloadable (paid /
+ *                     unavailable / no URL). Deletion-safe: the Hub restores it.
+ *   'irreplaceable' — catalog loaded but this exact filename is absent, or the
+ *                     resource is flagged. Local-only: never delete.
+ *   'unknown'       — no catalog loaded at all (offline first run, before the
+ *                     first successful fetch seeds a disk cache).
+ *
+ * All detection is offline from the disk-cached Hub catalog + DB-cached resource
+ * flags. Consumers differ only on `unknown`: deletion treats it as irreplaceable
+ * (never delete on missing knowledge), display treats it as untagged.
+ */
+export function packageReplaceability(pkg) {
+  let fnIndex = getPackagesFilenameIndex()
+  if (!fnIndex) {
     loadPackagesJsonFromCache()
-    cdnIndex = getPackagesIndex()
+    fnIndex = getPackagesFilenameIndex()
   }
-  if (!cdnIndex) return false
-  if (!cdnIndex.has(pkg.package_name)) return true
-  if (pkg.hub_resource_id && nonDownloadableRids.has(String(pkg.hub_resource_id))) return true
-  return false
+  if (!fnIndex) return 'unknown'
+  if (pkg.hub_resource_id && nonDownloadableRids.has(String(pkg.hub_resource_id))) return 'irreplaceable'
+  return fnIndex.has(pkg.filename) ? 'replaceable' : 'irreplaceable'
+}
+
+/**
+ * Display-grade "Local" predicate: true when a package is irreplaceable. `unknown`
+ * (no catalog) reads as untagged — matching the historical behavior where an
+ * offline launch never painted the library Local. Backs the Library "Local" facet
+ * and the card tag. Deletion paths must use `getReplaceableSet()` instead, which
+ * treats `unknown` as irreplaceable (fail-safe).
+ */
+export function isNotDownloadable(pkg) {
+  return packageReplaceability(pkg) === 'irreplaceable'
+}
+
+/** Rebuild the deletion-grade replaceable filename set from current catalog + flags. */
+function buildReplaceableSet() {
+  replaceableSet = new Set()
+  for (const [filename, pkg] of packageIndex) {
+    if (isLocalPackage(filename)) continue
+    if (packageReplaceability(pkg) === 'replaceable') replaceableSet.add(filename)
+  }
+}
+
+/**
+ * Deletion-grade replaceable filename set: exactly the packages the Hub can
+ * verifiably restore. Callers (orphan/removable cascades, prune, uninstall) treat
+ * membership as "safe to delete"; absence — including `unknown` — as "keep"
+ * (fail-safe false). Rebuilt in `buildFromDb` after `buildNonDownloadableRids`.
+ */
+export function getReplaceableSet() {
+  return replaceableSet
+}
+
+/**
+ * Rebuild `nonDownloadableRids` + `replaceableSet` from the current DB Hub
+ * cache + in-memory packages.json index — no network. Used after a best-effort
+ * findPackages refresh writes new `hub_resources.find_json` rows so archive
+ * preview/prune see demotions without a full `buildFromDb`.
+ */
+export function rebuildReplaceableSet() {
+  buildNonDownloadableRids()
+  buildReplaceableSet()
 }
 
 // --- Extracted-preset ownership (derived, no persisted state) ---
@@ -391,13 +450,17 @@ export function buildFromDb({ skipGraph = false } = {}) {
     contentItemsDeduped = contentItems
   }
 
+  // Replaceability must be known before the orphan/removable passes (demand Rule 1
+  // pins local-only deps of archived dependents), so build it up front — reordered
+  // ahead of the cascades that consume `replaceableSet` via graph.js.
+  buildNonDownloadableRids()
+  buildReplaceableSet()
   computeTransitiveMissing()
   computeTransitiveInactive()
   computeStats()
   computeAllRemovableSizes()
   computeAllMorphCounts()
   computeOrphanSets()
-  buildNonDownloadableRids()
 
   creatorsNeedingUserId = new Map()
   for (const [filename, pkg] of userPackageEntries()) {
@@ -458,7 +521,7 @@ function packageLabelIds(filename) {
 function computeAllRemovableSizes() {
   removableSizeMap = new Map()
   for (const filename of packageIndex.keys()) {
-    const { removableSize } = computeRemovableDeps(filename, packageIndex, forwardDeps, reverseDeps)
+    const { removableSize } = computeRemovableDeps(filename, packageIndex, forwardDeps, reverseDeps, replaceableSet)
     if (removableSize > 0) removableSizeMap.set(filename, removableSize)
   }
 }
@@ -479,7 +542,7 @@ function computeAllMorphCounts() {
 }
 
 function computeOrphanSets() {
-  const result = computeOrphanCascade(packageIndex, forwardDeps, reverseDeps)
+  const result = computeOrphanCascade(packageIndex, forwardDeps, reverseDeps, replaceableSet)
   orphanSet = result.orphans
   directOrphanSet = result.directOrphans
 }
@@ -540,6 +603,9 @@ function computeTransitiveInactive() {
  * Shared by `computeStats` and the live `getStatusCounts`.
  */
 function isBrokenPkg(filename, pkg) {
+  // Archived packages are cold storage: missing/inactive deps are expected and
+  // fine, so they are never flagged broken (missing/inactive deps are expected).
+  if (isPackageArchived(pkg.storage_state)) return false
   if (pkg.is_corrupted) return true
   if ((transitiveMissingMap.get(filename) || 0) > 0) return true
   return isPackageActive(pkg.storage_state) && (transitiveInactiveMap.get(filename) || 0) > 0
@@ -554,6 +620,19 @@ function isBrokenPkg(filename, pkg) {
 export function recomputeInactiveDeps() {
   computeTransitiveInactive()
   computeStats()
+}
+
+/**
+ * Recompute every aggregate that depends on storage_state via demand Rule 1
+ * (orphan / removable) plus the inactive/stats refresh. Call when a package
+ * leaves `archived` via the toggle chokepoint — enabling an archived dep
+ * changes which redownloadable packages are pinned, so orphan/removable sets
+ * go stale if only `recomputeInactiveDeps` runs.
+ */
+export function recomputeDemandAggregates() {
+  computeOrphanSets()
+  computeAllRemovableSizes()
+  recomputeInactiveDeps()
 }
 
 function computeStats() {
@@ -590,9 +669,12 @@ function computeStats() {
   let totalMorphCount = 0
   for (const n of morphCountByPackage.values()) totalMorphCount += n
 
+  // Demand-side: an archived package makes no demands, so its own unresolved refs
+  // don't count toward the actionable missing total (the hoard stays quiet).
   let missingDepCount = 0
-  for (const deps of forwardDeps.values()) {
-    for (const d of deps) {
+  for (const [filename, pkg] of userPackageEntries()) {
+    if (isPackageArchived(pkg.storage_state)) continue
+    for (const d of forwardDeps.get(filename) || []) {
       if (!d.resolved || d.resolution === 'fallback') missingDepCount++
     }
   }
@@ -805,7 +887,10 @@ function enrichPackageSummary(pkg) {
     isCorrupted: !!pkg.is_corrupted,
     isOrphan: orphanSet.has(pkg.filename),
     isCascadeOrphan: orphanSet.has(pkg.filename) && !directOrphanSet.has(pkg.filename),
+    // Display-grade Local tag (unknown catalog → untagged). Deletion UI must use
+    // `isHubReplaceable` instead — membership in the deletion-grade replaceableSet.
     isLocalOnly: isNotDownloadable(pkg),
+    isHubReplaceable: replaceableSet.has(pkg.filename),
     noLookPresetTag,
     hasExtractedAppearancePreset,
     labelIds: packageLabelIds(pkg.filename),
@@ -885,7 +970,13 @@ export function getPackageDetail(filename) {
     )
   }
 
-  const { removableFilenames, removableSize } = computeRemovableDeps(filename, packageIndex, forwardDeps, reverseDeps)
+  const { removableFilenames, removableSize } = computeRemovableDeps(
+    filename,
+    packageIndex,
+    forwardDeps,
+    reverseDeps,
+    replaceableSet,
+  )
 
   const removableDeps = [...removableFilenames]
     .filter((f) => f !== filename)
@@ -973,8 +1064,15 @@ export function getStatusCounts() {
     broken = 0,
     orphan = orphanSet.size,
     local = 0,
-    offloaded = 0
+    offloaded = 0,
+    archived = 0
   for (const [filename, pkg] of userPackageEntries()) {
+    // Archived packages are their own facet and are excluded from every other
+    // facet's count (they never pollute the default library views).
+    if (isPackageArchived(pkg.storage_state)) {
+      archived++
+      continue
+    }
     if (pkg.is_direct) direct++
     else dependency++
     if (isBrokenPkg(filename, pkg)) broken++
@@ -983,7 +1081,8 @@ export function getStatusCounts() {
   }
 
   const missingGroups = new Set()
-  for (const [filename] of userPackageEntries()) {
+  for (const [filename, pkg] of userPackageEntries()) {
+    if (isPackageArchived(pkg.storage_state)) continue // hoard makes no missing-dep demands
     for (const d of forwardDeps.get(filename) || []) {
       if (d.resolved && d.resolution !== 'fallback') continue
       const parsed = parseDepRef(d.ref)
@@ -991,7 +1090,7 @@ export function getStatusCounts() {
     }
   }
 
-  return { direct, dependency, broken, orphan, local, offloaded, missingUnique: missingGroups.size }
+  return { direct, dependency, broken, orphan, local, offloaded, archived, missingUnique: missingGroups.size }
 }
 
 export function getOrphanSet() {
@@ -1014,7 +1113,8 @@ export function getOrphanTotalSize() {
  */
 export function getMissingDeps(hubPackagesIndex, hubFilenameIndex) {
   const groups = new Map() // ref -> { neededBy: Set, parsed, fallbackVersion }
-  for (const [filename] of userPackageEntries()) {
+  for (const [filename, pkg] of userPackageEntries()) {
+    if (isPackageArchived(pkg.storage_state)) continue // archived dependents don't demand their missing refs
     for (const d of forwardDeps.get(filename) || []) {
       if (d.resolved && d.resolution !== 'fallback') continue
       const parsed = parseDepRef(d.ref)
@@ -1186,17 +1286,23 @@ export function patchTypeOverride(filename, typeOverride) {
  *
  * NOT refreshed by this function:
  *  - `forwardDeps` / `reverseDeps` / `groupIndex` — graph topology, keyed on filename + package_name.
- *  - `removableSizeMap`, `aggregateMorphCountMap`, `transitiveDepsCountMap`,
- *    `transitiveMissingMap` — derived from `is_direct` and the dep graph.
- *  - `orphanSet` / `directOrphanSet` — derived from `is_direct` + reverse deps.
- *  - `nonDownloadableRids` — Hub/metadata, state-independent.
+ *  - `aggregateMorphCountMap`, `transitiveDepsCountMap`, `transitiveMissingMap` —
+ *    derived from `is_direct` and the dep graph.
+ *  - `tagCounts`, `authorCounts`, `nonDownloadableRids`, `replaceableSet` — Hub/metadata, state-independent.
+ *  - `orphanSet` / `directOrphanSet` / `removableSizeMap` — depend on `storage_state`
+ *    (demand Rule 1: archived pins differently) and `replaceableSet`. Plain
+ *    enabled↔disabled↔offloaded toggles among non-archived packages leave these
+ *    valid. Leaving `archived` (enable / cascade-enable / install-from-archive)
+ *    changes pinning — `applyStorageStateChange` calls `recomputeDemandAggregates()`
+ *    in that case; archive IPC / scan / watcher run a full `buildFromDb()`.
  *
  * State-dependent aggregates ARE storage-state sensitive and must NOT be read stale:
  *  - `transitiveInactiveMap` and `stats.brokenCount` (which now counts active
  *    packages with inactive deps) are refreshed by `recomputeInactiveDeps()`,
- *    which the toggle chokepoint (`applyStorageStateChange`) calls after the bulk.
+ *    which the toggle chokepoint (`applyStorageStateChange`) calls after the bulk
+ *    (or via `recomputeDemandAggregates` when archived was cleared).
  *  - Live count `getStatusCounts()` re-iterates `packageIndex` on every call, so it
- *    sees `storage_state` patches (offloaded count, broken) immediately.
+ *    sees `storage_state` patches (offloaded/archived counts, broken) immediately.
  *
  * If you add another derived map that branches on `storage_state`, either refresh
  * it in `recomputeInactiveDeps()` / at the toggle chokepoint, compute it live, or

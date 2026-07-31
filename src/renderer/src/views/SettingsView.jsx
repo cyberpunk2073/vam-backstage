@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, useId } from 'react'
 import {
   FolderOpen,
   RefreshCw,
@@ -18,10 +18,14 @@ import {
   Network,
   Plug,
   PlugZap,
+  Plus,
+  MoreHorizontal,
+  FolderInput,
+  Boxes,
   X,
 } from 'lucide-react'
 import { formatBytes } from '@/lib/utils'
-import { parseDisableBehavior, disableBehaviorMoveTo } from '@shared/disable-behavior.js'
+import { parseDisableBehavior, disableBehaviorMoveTo, DISABLE_BEHAVIOR_SUFFIX } from '@shared/disable-behavior.js'
 import { DEFAULT_REMOTE_PORT, normalizeConnectUrl } from '@shared/remote-config.js'
 import { toast } from '@/components/Toast'
 import { useStatusStore } from '@/stores/useStatusStore'
@@ -30,6 +34,15 @@ import { useRemoteUiStore } from '@/stores/useRemoteUiStore'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuCheckboxItem,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu'
 import { TruncateWithTooltip } from '@/components/TruncateWithTooltip'
 import { AutoHideSwitch, AutoHideForeignSwitch } from '@/components/AutoHideSwitch'
 import {
@@ -69,7 +82,11 @@ export default function SettingsView() {
   const [appVersion, setAppVersion] = useState('')
   const [updateChannel, setUpdateChannel] = useState('stable')
   const [libDirs, setLibDirs] = useState({ main: '', aux: [] })
-  const [libDirsLoading, setLibDirsLoading] = useState(false)
+  // What library-dir operation is in flight: `'add'`, an aux dir id, or null.
+  // Scoped rather than a plain boolean so each control reflects only its *own*
+  // operation — a shared flag greyed out the whole section (Add button included)
+  // every time one row's mode switch was flipped.
+  const [libDirsBusy, setLibDirsBusy] = useState(null)
   const [disableBehavior, setDisableBehavior] = useState('suffix')
   const [moveOnImport, setMoveOnImport] = useState(false)
   const [offloadSuggestions, setOffloadSuggestions] = useState([])
@@ -97,13 +114,38 @@ export default function SettingsView() {
   const [portDraft, setPortDraft] = useState(String(DEFAULT_REMOTE_PORT))
   const [urlDraft, setUrlDraft] = useState('')
 
-  const refreshLibDirs = useCallback(async () => {
+  // Mirrors `libDirsBusy` so the re-entrancy guard reads the live value from
+  // inside an async handler (by then the state captured in the closure is stale)
+  // and so the handlers no longer take it as a dependency.
+  const libDirsBusyRef = useRef(null)
+
+  /** Claim the library-dir lock. False (with a toast) when something else holds it. */
+  const beginLibDirsOp = useCallback((token) => {
+    if (libDirsBusyRef.current !== null) {
+      toast('Another library folder operation is still running. Try again in a moment.', 'error')
+      return false
+    }
+    libDirsBusyRef.current = token
+    setLibDirsBusy(token)
+    return true
+  }, [])
+
+  const endLibDirsOp = useCallback(() => {
+    libDirsBusyRef.current = null
+    setLibDirsBusy(null)
+  }, [])
+
+  // `suggestions: false` skips the disk-walking detection pass for operations that
+  // cannot change the suggestion set (a role or BrowserAssist flip registers and
+  // un-registers nothing), keeping those flips quick enough to feel instant.
+  const refreshLibDirs = useCallback(async ({ suggestions = true } = {}) => {
     try {
       const r = await window.api.libraryDirs.list()
       setLibDirs(r)
     } catch (err) {
       console.warn('library-dirs:list failed:', err.message)
     }
+    if (!suggestions) return
     try {
       setOffloadSuggestions(await window.api.libraryDirs.suggest())
     } catch (err) {
@@ -156,44 +198,84 @@ export default function SettingsView() {
     refreshLibDirs()
   }, [refreshLibDirs, loadRemoteConfig])
 
+  // Folders are always registered as offload — the cheap, reversible role. The
+  // user picks the real mode afterwards on the row itself, where the switch is
+  // labelled with what each mode does.
   const handleAddAuxDir = useCallback(async () => {
-    if (libDirsLoading) return
+    // The lock is claimed after the picker closes rather than before it opens:
+    // the OS dialog is the slow part, so any row operation started moments earlier
+    // has finished by the time a folder is chosen. Gating the button on it instead
+    // would flash the section header on every unrelated flip.
+    const browseResult = await window.api.libraryDirs.browse()
+    if (browseResult?.cancelled) return
+    if (!beginLibDirsOp('add')) return
     try {
-      const browseResult = await window.api.libraryDirs.browse()
-      if (browseResult?.cancelled) return
-      setLibDirsLoading(true)
       await window.api.libraryDirs.add(browseResult.path)
       await refreshLibDirs()
       fetchStats()
-      toast(`Offload directory added: ${browseResult.path}`, 'success')
+      toast('Offload folder added. Turn on Archive on its row for cold storage that reclaims disk.', 'success')
     } catch (err) {
       toast(`Failed to add directory: ${err.message}`, 'error')
     } finally {
-      setLibDirsLoading(false)
+      endLibDirsOp()
     }
-  }, [libDirsLoading, refreshLibDirs, fetchStats])
+  }, [beginLibDirsOp, endLibDirsOp, refreshLibDirs, fetchStats])
 
   const handleAddSuggestion = useCallback(
     async (suggestion) => {
-      if (libDirsLoading) return
-      setLibDirsLoading(true)
+      if (!beginLibDirsOp('add')) return
       try {
         const res = await window.api.libraryDirs.add(suggestion.path)
         await refreshLibDirs()
         fetchStats()
         toast(
           res?.browserAssist
-            ? `${suggestion.label} offload directory added — BrowserAssist mode enabled`
+            ? `${suggestion.label} offload directory added; BrowserAssist mode enabled`
             : `${suggestion.label} offload directory added`,
           'success',
         )
       } catch (err) {
         toast(`Failed to add directory: ${err.message}`, 'error')
       } finally {
-        setLibDirsLoading(false)
+        endLibDirsOp()
       }
     },
-    [libDirsLoading, refreshLibDirs, fetchStats],
+    [beginLibDirsOp, endLibDirsOp, refreshLibDirs, fetchStats],
+  )
+
+  const handleSetRole = useCallback(
+    async (id, role) => {
+      if (!beginLibDirsOp(id)) return
+      try {
+        const hadArchiveDir = libDirs.aux.some((d) => d.archive)
+        const res = await window.api.libraryDirs.setRole(id, role)
+        await refreshLibDirs({ suggestions: false })
+        // Main reports the reset rather than us re-reading the setting — a role
+        // flip is the one place that can change it, and it already tells us.
+        if (res?.disableBehaviorReset) setDisableBehavior(DISABLE_BEHAVIOR_SUFFIX)
+        fetchStats()
+        const bits = []
+        if (res?.packagesReclassified)
+          bits.push(`${res.packagesReclassified} package${res.packagesReclassified === 1 ? '' : 's'} reclassified`)
+        if (res?.disableBehaviorReset) bits.push('disable behavior reset to VaM native')
+        // The first archive dir unlocks the tier across the app, which is worth
+        // saying once — but in the toast, not a modal: flipping an empty folder
+        // has to stay free in both directions or the switch stops being a switch.
+        const unlocksArchive = role === 'archive' && !hadArchiveDir
+        toast(
+          `Archive turned ${role === 'archive' ? 'on' : 'off'} for this folder${bits.length ? `: ${bits.join(', ')}` : ''}${
+            unlocksArchive ? '. The Library now has an Archived shelf and an Archive action on every package.' : ''
+          }`,
+          'success',
+          unlocksArchive ? 8000 : undefined,
+        )
+      } catch (err) {
+        toast(`Failed to change role: ${err.message}`, 'error')
+      } finally {
+        endLibDirsOp()
+      }
+    },
+    [beginLibDirsOp, endLibDirsOp, refreshLibDirs, fetchStats, libDirs.aux],
   )
 
   const dismissOffloadSuggestion = useCallback((id) => {
@@ -208,8 +290,8 @@ export default function SettingsView() {
 
   const handleRemoveAuxDir = useCallback(
     async (id, opts) => {
-      if (libDirsLoading) return
-      setLibDirsLoading(true)
+      if (!beginLibDirsOp(id)) return
+      const label = libDirs.aux.find((d) => d.id === id)?.archive ? 'Archive' : 'Offload'
       try {
         const res = await window.api.libraryDirs.remove(id, opts)
         if (res?.matchedToolId) dismissOffloadSuggestion(res.matchedToolId)
@@ -220,33 +302,32 @@ export default function SettingsView() {
         const forgotten = res?.forgotten || 0
         toast(
           forgotten > 0
-            ? `Offload directory removed — ${forgotten} package${forgotten === 1 ? '' : 's'} hidden (files kept on disk; re-add to restore)`
-            : 'Offload directory removed',
+            ? `${label} directory removed: ${forgotten} package${forgotten === 1 ? '' : 's'} hidden (files kept on disk; re-add to restore)`
+            : `${label} directory removed`,
           'success',
         )
       } catch (err) {
         toast(`Failed to remove: ${err.message}`, 'error')
       } finally {
-        setLibDirsLoading(false)
+        endLibDirsOp()
       }
     },
-    [libDirsLoading, refreshLibDirs, fetchStats, dismissOffloadSuggestion],
+    [beginLibDirsOp, endLibDirsOp, refreshLibDirs, fetchStats, dismissOffloadSuggestion, libDirs.aux],
   )
 
   const handleToggleBrowserAssist = useCallback(
     async (id, enabled) => {
-      if (libDirsLoading) return
-      setLibDirsLoading(true)
+      if (!beginLibDirsOp(id)) return
       try {
         await window.api.libraryDirs.setBrowserAssist(id, enabled)
-        await refreshLibDirs()
+        await refreshLibDirs({ suggestions: false })
       } catch (err) {
         toast(`Failed to update BrowserAssist mode: ${err.message}`, 'error')
       } finally {
-        setLibDirsLoading(false)
+        endLibDirsOp()
       }
     },
-    [libDirsLoading, refreshLibDirs],
+    [beginLibDirsOp, endLibDirsOp, refreshLibDirs],
   )
 
   const handleDisableBehaviorChange = useCallback(async (value) => {
@@ -641,6 +722,9 @@ export default function SettingsView() {
     [patchRemoteConfig],
   )
 
+  const auxDirs = libDirs.aux
+  const offloadAuxDirs = useMemo(() => auxDirs.filter((d) => !d.archive), [auxDirs])
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-[640px] mx-auto py-8 px-6 space-y-6">
@@ -667,82 +751,92 @@ export default function SettingsView() {
           </div>
 
           <div className="space-y-2">
-            <div className="flex items-start gap-3">
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-text-primary font-medium">Offload directories</div>
-                <div className="text-[11px] text-text-tertiary mt-0.5">
-                  Folders for packages you want to keep around but not load in VaM.
-                </div>
+            {/* One feature, not two. Archive is an offload folder with the pruning
+                upgrade switched on, so the section is framed as offloading and
+                archive is introduced as something a folder can additionally do —
+                a symmetric Offload-vs-Archive presentation made the shared 90%
+                (move packages somewhere VaM won't load them) look like a fork. */}
+            <div>
+              <div className="text-xs text-text-primary font-medium">Offload folders</div>
+              <div className="text-[11px] text-text-tertiary mt-0.5">
+                Folders outside AddonPackages that VaM never loads. Packages parked there stay in your library and come
+                back in one click.
               </div>
-              <Button
-                variant="outline"
-                size="lg"
-                onClick={handleAddAuxDir}
-                disabled={libDirsLoading}
-                className="shrink-0"
-              >
-                {libDirsLoading ? <Loader2 size={14} className="animate-spin" /> : <FolderOpen size={14} />}
-                Add Folder
-              </Button>
             </div>
-            {libDirs.aux.length > 0 && (
-              <ul className="rounded-lg border border-border divide-y divide-border bg-surface/50">
-                {libDirs.aux.map((d) => (
-                  <AuxDirRow
-                    key={d.id}
-                    d={d}
-                    vamDir={vamDir}
-                    disabled={libDirsLoading}
-                    showBrowserAssist={baDirPresent}
-                    onRemove={handleRemoveAuxDir}
-                    onToggleBrowserAssist={handleToggleBrowserAssist}
-                  />
-                ))}
-              </ul>
-            )}
-            {offloadSuggestions
-              .filter((s) => !dismissedOffload.has(s.id))
-              .map((s) => (
-                <div
-                  key={s.id}
-                  className="flex items-center gap-3 px-3 py-2 rounded-lg border border-accent-blue/25 bg-accent-blue/6"
-                >
-                  <Compass size={14} className="text-accent-blue shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs text-text-primary">
-                      Detected <span className="font-medium">{s.label}</span> offload folder
-                      <span className="ml-1.5 text-[11px] text-text-tertiary">
-                        · {s.varCount.toLocaleString()} var{s.varCount === 1 ? '' : 's'}
-                      </span>
-                    </div>
-                    <div className="text-[11px] font-mono text-text-tertiary truncate select-text cursor-text">
-                      {s.path}
-                    </div>
-                  </div>
+            {/* Registered folders, detected candidates and the add action are one
+                bordered object: they are the same list at three stages, and pulling
+                Add out into the header made it compete with per-row state. */}
+            <div className="rounded-lg border border-border bg-surface/50 divide-y divide-border overflow-hidden">
+              {auxDirs.length === 0 && (
+                // The one place archive has to be discovered, since the Archived
+                // shelf is gated on a folder having it on. Offloading itself is
+                // already defined in the header above, so this says the one thing
+                // that header can't: any of these folders can go further.
+                <div className="px-3 py-3 space-y-2">
+                  <p className="text-[11px] text-text-tertiary pb-0.5">
+                    No folders yet. Any folder you add can also be an{' '}
+                    <span className="font-medium text-text-secondary">Archive</span>: cold storage that lets you drop
+                    the dependencies the Hub can re-download and fetches them back when you install the package again
+                    from the archive, so a hoard costs a fraction of the disk.
+                  </p>
                   <Button
                     variant="outline"
-                    size="sm"
-                    onClick={() => handleAddSuggestion(s)}
-                    disabled={libDirsLoading}
-                    className="shrink-0"
+                    size="lg"
+                    onClick={() => void handleAddAuxDir()}
+                    disabled={libDirsBusy === 'add'}
+                    className="text-xs"
                   >
-                    Add
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => dismissOffloadSuggestion(s.id)}
-                    disabled={libDirsLoading}
-                    title="Dismiss suggestion"
-                    className="shrink-0 text-text-tertiary hover:text-text-primary"
-                  >
-                    <X size={14} />
+                    {libDirsBusy === 'add' ? <Loader2 size={14} className="animate-spin" /> : <FolderOpen size={14} />}
+                    Add folder
                   </Button>
                 </div>
+              )}
+              {auxDirs.map((d) => (
+                <AuxDirRow
+                  key={d.id}
+                  d={d}
+                  vamDir={vamDir}
+                  disabled={libDirsBusy === d.id}
+                  disableBehavior={disableBehavior}
+                  showBrowserAssist={baDirPresent}
+                  onRemove={handleRemoveAuxDir}
+                  onToggleBrowserAssist={handleToggleBrowserAssist}
+                  onSetRole={handleSetRole}
+                />
               ))}
+              {offloadSuggestions
+                .filter((s) => !dismissedOffload.has(s.id))
+                .map((s) => (
+                  <SuggestionRow
+                    key={s.id}
+                    s={s}
+                    vamDir={vamDir}
+                    disabled={libDirsBusy === 'add'}
+                    onAdd={handleAddSuggestion}
+                    onDismiss={dismissOffloadSuggestion}
+                  />
+                ))}
+              {/* Only once there is a list to append to. The empty state ends with
+                  its own button, in the same shape the rest of Settings uses. */}
+              {auxDirs.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => void handleAddAuxDir()}
+                  disabled={libDirsBusy === 'add'}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-text-secondary cursor-pointer hover:bg-hover hover:text-text-primary disabled:cursor-progress disabled:opacity-60 disabled:hover:bg-transparent transition-colors"
+                >
+                  {libDirsBusy === 'add' ? (
+                    <Loader2 size={14} className="shrink-0 animate-spin text-text-tertiary" />
+                  ) : (
+                    <Plus size={14} className="shrink-0 text-text-tertiary" />
+                  )}
+                  Add folder…
+                </button>
+              )}
+            </div>
           </div>
 
-          {libDirs.aux.length > 0 && (
+          {offloadAuxDirs.length > 0 && (
             <div className="flex items-start gap-3">
               <div className="flex-1 min-w-0">
                 <div className="text-xs text-text-primary font-medium">When disabling a package</div>
@@ -753,17 +847,17 @@ export default function SettingsView() {
               <Select value={disableBehavior} onValueChange={handleDisableBehaviorChange}>
                 <SelectTrigger
                   className="shrink-0 min-w-[180px] max-w-[240px] h-9 text-xs"
-                  title={getDisableBehaviorTooltip(disableBehavior, libDirs.aux)}
+                  title={getDisableBehaviorTooltip(disableBehavior, offloadAuxDirs)}
                 >
                   <SelectValue>
                     <span className="block min-w-0 truncate">
-                      {getDisableBehaviorLabel(disableBehavior, libDirs.aux)}
+                      {getDisableBehaviorLabel(disableBehavior, offloadAuxDirs)}
                     </span>
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent className="max-w-[420px]">
                   <SelectItem value="suffix">VaM native (.var.disabled marker)</SelectItem>
-                  {libDirs.aux.map((d) => (
+                  {offloadAuxDirs.map((d) => (
                     <SelectItem key={d.id} value={disableBehaviorMoveTo(d.id)} title={d.path}>
                       <span className="block min-w-0 truncate">Move to {shortenLibraryPath(d.path, vamDir)}</span>
                     </SelectItem>
@@ -771,18 +865,6 @@ export default function SettingsView() {
                 </SelectContent>
               </Select>
             </div>
-          )}
-
-          {!isRemoteClient && (
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-text-primary font-medium">Move files when dragging them in</div>
-                <div className="text-[11px] text-text-tertiary mt-0.5">
-                  Drag-and-drop moves packages into your library instead of copying them, so the originals are removed.
-                </div>
-              </div>
-              <Switch checked={moveOnImport} onCheckedChange={handleToggleMoveOnImport} />
-            </label>
           )}
 
           <div className="space-y-3 border-t border-border pt-3">
@@ -889,8 +971,7 @@ export default function SettingsView() {
           </div>
         </Section>
 
-        {/* Display */}
-        <Section title="Display" description="Control how library content appears.">
+        <Section title="Behavior" description="How packages and content are managed.">
           <div className="space-y-3">
             <AutoHideSwitch
               settingKey="auto_hide_deps"
@@ -945,35 +1026,18 @@ export default function SettingsView() {
               description="Hide clothing items bundled inside packages categorized as something else, so only dedicated clothing packs surface in the Clothing view."
               noun="clothing items"
             />
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-text-primary font-medium">Blur thumbnails</div>
-                <div className="text-[11px] text-text-tertiary mt-0.5">
-                  Apply a blur to all package and content thumbnail images to keep it SFW.
+            {!isRemoteClient && (
+              <label className="flex items-center gap-3 cursor-pointer">
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs text-text-primary font-medium">Move files when dragging them in</div>
+                  <div className="text-[11px] text-text-tertiary mt-0.5">
+                    Drag-and-drop moves packages into your library instead of copying them, so the originals are
+                    removed.
+                  </div>
                 </div>
-              </div>
-              <Switch checked={blurThumbnails} onCheckedChange={setBlurThumbnails} />
-            </label>
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-text-primary font-medium">Dim inactive packages</div>
-                <div className="text-[11px] text-text-tertiary mt-0.5">
-                  When ON, disabled and offloaded packages are greyed out with a small corner icon. When OFF, they
-                  render at full color with an informational chip — handy if a large part of your library is archived.
-                </div>
-              </div>
-              <Switch checked={dimInactive} onCheckedChange={setDimInactive} />
-            </label>
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-text-primary font-medium">Skip confirmation when disabling packages</div>
-                <div className="text-[11px] text-text-tertiary mt-0.5">
-                  When ON, disabling a package that has dependents or cascade-disabled deps runs immediately with no
-                  confirmation dialog.
-                </div>
-              </div>
-              <Switch checked={suppressDisablePackageWarning} onCheckedChange={setSuppressDisablePackageWarning} />
-            </label>
+                <Switch checked={moveOnImport} onCheckedChange={handleToggleMoveOnImport} />
+              </label>
+            )}
             <label
               className="flex items-center gap-3 cursor-pointer"
               title={remoteSectionForced ? "Can't be hidden while a client/host connection is active." : undefined}
@@ -993,96 +1057,6 @@ export default function SettingsView() {
             </label>
           </div>
         </Section>
-
-        {(hubLoggedIn || baDirPresent) && (
-          <Section
-            title="Experimental"
-            icon={FlaskConical}
-            description="Early features that may change or be removed. Feedback welcome."
-          >
-            <div className="space-y-4">
-              {hubLoggedIn && (
-                <div className="space-y-3">
-                  <div>
-                    <div className="text-xs text-text-primary font-medium">Import Hub lists to wishlist</div>
-                    <div className="text-[11px] text-text-tertiary mt-0.5">
-                      Reads your Hub favorites or bookmarks and adds them to the local wishlist. Already-wishlisted
-                      items are skipped.
-                    </div>
-                  </div>
-                  <div className="space-y-3">
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        variant="outline"
-                        size="lg"
-                        onClick={() => void handleImportHubListToWishlist('favorites')}
-                        disabled={!!wishlistImporting}
-                        className="shrink-0 gap-2 text-xs"
-                      >
-                        {wishlistImporting === 'favorites' ? (
-                          <Loader2 size={14} className="animate-spin shrink-0" />
-                        ) : (
-                          <Heart size={14} className="shrink-0" />
-                        )}
-                        {wishlistImporting === 'favorites' ? 'Importing favorites…' : 'Import favorites to wishlist'}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="lg"
-                        onClick={() => void handleImportHubListToWishlist('bookmarks')}
-                        disabled={!!wishlistImporting}
-                        className="shrink-0 gap-2 text-xs"
-                      >
-                        {wishlistImporting === 'bookmarks' ? (
-                          <Loader2 size={14} className="animate-spin shrink-0" />
-                        ) : (
-                          <Bookmark size={14} className="shrink-0" />
-                        )}
-                        {wishlistImporting === 'bookmarks' ? 'Importing bookmarks…' : 'Import bookmarks to wishlist'}
-                      </Button>
-                    </div>
-                    {wishlistImportProgress && wishlistImporting && (
-                      <div className="text-[11px] text-text-tertiary select-text cursor-text">
-                        {formatWishlistImportProgress(wishlistImportProgress)}
-                      </div>
-                    )}
-                    <ResultBanner result={wishlistImportResult} />
-                  </div>
-                </div>
-              )}
-
-              {baDirPresent && (
-                <div className={`space-y-3 ${hubLoggedIn ? 'border-t border-border pt-4' : ''}`}>
-                  <div>
-                    <div className="text-xs text-text-primary font-medium">Sync with BrowserAssist</div>
-                    <div className="text-[11px] text-text-tertiary mt-0.5">
-                      Write User tags (scene-real / scene-look / scene-other) plus user-defined Labels into JayJayWon
-                      BrowserAssist settings — package Labels onto package rows, and content Labels (own + inherited
-                      from package) onto matching resources in this app&apos;s library.
-                    </div>
-                  </div>
-                  <div className="space-y-3">
-                    <Button
-                      variant="outline"
-                      size="lg"
-                      onClick={handleSyncBrowserAssist}
-                      disabled={baSyncing}
-                      className="shrink-0 gap-2 text-xs"
-                    >
-                      {baSyncing ? (
-                        <Loader2 size={14} className="animate-spin shrink-0" />
-                      ) : (
-                        <RefreshCw size={14} className="shrink-0" />
-                      )}
-                      {baSyncing ? 'Syncing…' : 'Sync with BrowserAssist'}
-                    </Button>
-                    <ResultBanner result={baSyncResult} />
-                  </div>
-                </div>
-              )}
-            </div>
-          </Section>
-        )}
 
         {(remoteEnabled || remoteSectionForced) && (
           <Section
@@ -1237,6 +1211,130 @@ export default function SettingsView() {
                 </label>
               </div>
             )}
+          </Section>
+        )}
+
+        <Section title="Display" description="Control how library content appears.">
+          <div className="space-y-3">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-text-primary font-medium">Blur thumbnails</div>
+                <div className="text-[11px] text-text-tertiary mt-0.5">
+                  Apply a blur to all package and content thumbnail images to keep it SFW.
+                </div>
+              </div>
+              <Switch checked={blurThumbnails} onCheckedChange={setBlurThumbnails} />
+            </label>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-text-primary font-medium">Dim inactive packages</div>
+                <div className="text-[11px] text-text-tertiary mt-0.5">
+                  When ON, disabled and offloaded packages are greyed out with a small corner icon. When OFF, they
+                  render at full color with an informational chip (handy if a large part of your library is archived).
+                </div>
+              </div>
+              <Switch checked={dimInactive} onCheckedChange={setDimInactive} />
+            </label>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-text-primary font-medium">Skip confirmation when disabling packages</div>
+                <div className="text-[11px] text-text-tertiary mt-0.5">
+                  When ON, disabling a package that has dependents or cascade-disabled deps runs immediately with no
+                  confirmation dialog.
+                </div>
+              </div>
+              <Switch checked={suppressDisablePackageWarning} onCheckedChange={setSuppressDisablePackageWarning} />
+            </label>
+          </div>
+        </Section>
+
+        {(hubLoggedIn || baDirPresent) && (
+          <Section
+            title="Experimental"
+            icon={FlaskConical}
+            description="Early features that may change or be removed. Feedback welcome."
+          >
+            <div className="space-y-4">
+              {hubLoggedIn && (
+                <div className="space-y-3">
+                  <div>
+                    <div className="text-xs text-text-primary font-medium">Import Hub lists to wishlist</div>
+                    <div className="text-[11px] text-text-tertiary mt-0.5">
+                      Reads your Hub favorites or bookmarks and adds them to the local wishlist. Already-wishlisted
+                      items are skipped.
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="lg"
+                        onClick={() => void handleImportHubListToWishlist('favorites')}
+                        disabled={!!wishlistImporting}
+                        className="shrink-0 gap-2 text-xs"
+                      >
+                        {wishlistImporting === 'favorites' ? (
+                          <Loader2 size={14} className="animate-spin shrink-0" />
+                        ) : (
+                          <Heart size={14} className="shrink-0" />
+                        )}
+                        {wishlistImporting === 'favorites' ? 'Importing favorites…' : 'Import favorites to wishlist'}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="lg"
+                        onClick={() => void handleImportHubListToWishlist('bookmarks')}
+                        disabled={!!wishlistImporting}
+                        className="shrink-0 gap-2 text-xs"
+                      >
+                        {wishlistImporting === 'bookmarks' ? (
+                          <Loader2 size={14} className="animate-spin shrink-0" />
+                        ) : (
+                          <Bookmark size={14} className="shrink-0" />
+                        )}
+                        {wishlistImporting === 'bookmarks' ? 'Importing bookmarks…' : 'Import bookmarks to wishlist'}
+                      </Button>
+                    </div>
+                    {wishlistImportProgress && wishlistImporting && (
+                      <div className="text-[11px] text-text-tertiary select-text cursor-text">
+                        {formatWishlistImportProgress(wishlistImportProgress)}
+                      </div>
+                    )}
+                    <ResultBanner result={wishlistImportResult} />
+                  </div>
+                </div>
+              )}
+
+              {baDirPresent && (
+                <div className={`space-y-3 ${hubLoggedIn ? 'border-t border-border pt-4' : ''}`}>
+                  <div>
+                    <div className="text-xs text-text-primary font-medium">Sync with BrowserAssist</div>
+                    <div className="text-[11px] text-text-tertiary mt-0.5">
+                      Write User tags (scene-real / scene-look / scene-other) plus user-defined Labels into JayJayWon
+                      BrowserAssist settings — package Labels onto package rows, and content Labels (own + inherited
+                      from package) onto matching resources in this app&apos;s library.
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      onClick={handleSyncBrowserAssist}
+                      disabled={baSyncing}
+                      className="shrink-0 gap-2 text-xs"
+                    >
+                      {baSyncing ? (
+                        <Loader2 size={14} className="animate-spin shrink-0" />
+                      ) : (
+                        <RefreshCw size={14} className="shrink-0" />
+                      )}
+                      {baSyncing ? 'Syncing…' : 'Sync with BrowserAssist'}
+                    </Button>
+                    <ResultBanner result={baSyncResult} />
+                  </div>
+                </div>
+              )}
+            </div>
           </Section>
         )}
 
@@ -1459,114 +1557,370 @@ function ResultBanner({ result }) {
 }
 
 /**
- * A registered offload directory row. When the dir is empty, the trash button
- * removes it directly. When it still holds packages, the trash button opens a
- * warning dialog that spells out what "un-registering" forgets before removing.
+ * A registered aux directory row (offload or archive). The mode toggle applies
+ * instantly on an empty folder — nothing to reclassify, so nothing to warn about
+ * — and confirms first once the folder holds packages. Empty dirs remove
+ * immediately; dirs with packages warn about what un-registering forgets.
+ *
+ * Two lines: identity plus the one primary control, then a single dim run of
+ * everything secondary. Anything rarer than the mode (BrowserAssist, removal)
+ * lives in the overflow menu, which also spares archive rows an inert toggle.
  */
-function AuxDirRow({ d, vamDir, disabled, showBrowserAssist, onRemove, onToggleBrowserAssist }) {
+function AuxDirRow({
+  d,
+  vamDir,
+  disabled,
+  disableBehavior,
+  showBrowserAssist,
+  onRemove,
+  onToggleBrowserAssist,
+  onSetRole,
+}) {
   const hasPackages = d.packageCount > 0
   // Only surface the BrowserAssist toggle to users who actually run BrowserAssist
   // (its data dir was detected). Still show it when the dir already has the mode on,
   // so a stray enabled flag can always be turned back off even if detection fails.
   const canBrowserAssist = showBrowserAssist || !!d.browserAssist
+  const role = d.archive ? 'archive' : 'offload'
+  const RoleIcon = d.archive ? Boxes : FolderInput
+  const [pendingRole, setPendingRole] = useState(null)
+  const [confirmRemove, setConfirmRemove] = useState(false)
+  const targetRole = pendingRole
+  const parsedDisable = parseDisableBehavior(disableBehavior)
+  const disablePointsHere = parsedDisable.kind === 'move-to' && parsedDisable.auxDirId === d.id
+
+  const requestRole = (next) => {
+    if (disabled || next === role) return
+    if (hasPackages) setPendingRole(next)
+    else onSetRole(d.id, next)
+  }
+
   return (
-    <li className="px-3 py-2 space-y-2">
-      <div className="flex items-center gap-3">
+    <div className="px-3 py-2">
+      <div className="flex items-center gap-2.5">
+        <RoleIcon size={14} className="shrink-0 text-text-tertiary" />
         <TruncateWithTooltip
           text={d.path}
           className="flex-1 min-w-0 text-xs font-mono truncate select-text cursor-text text-text-secondary"
         >
           {shortenLibraryPath(d.path, vamDir)}
         </TruncateWithTooltip>
-        <div className="text-[11px] text-text-tertiary tabular-nums whitespace-nowrap shrink-0">
-          {d.packageCount} pkg · {formatBytes(d.sizeBytes)}
-        </div>
-        {hasPackages ? (
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                disabled={disabled}
-                title="Remove (stops tracking these packages)"
-                className="shrink-0 text-text-tertiary hover:text-error"
-              >
-                <Trash2 size={14} />
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle className="select-text cursor-text">
-                  Stop tracking this offload directory?
-                </AlertDialogTitle>
-                <AlertDialogDescription asChild>
-                  <div className="text-[13px] leading-relaxed text-text-secondary space-y-2.5">
-                    <p>
-                      <span className="font-mono text-text-primary select-text cursor-text">
-                        {shortenLibraryPath(d.path, vamDir)}
-                      </span>{' '}
-                      currently holds{' '}
-                      <span className="font-medium text-text-primary">
-                        {d.packageCount.toLocaleString()} package{d.packageCount === 1 ? '' : 's'}
-                      </span>
-                      . Removing it un-registers the folder and hides those packages from Backstage.
-                    </p>
-                    <p>
-                      <span className="font-medium text-success">No files are deleted</span> — every{' '}
-                      <span className="font-mono">.var</span> stays where it is on disk, and VaM&apos;s own state for
-                      those packages (including the <span className="font-medium">favorite</span> and{' '}
-                      <span className="font-medium">hidden</span> status of their content) is untouched.
-                    </p>
-                    <p>
-                      <span className="font-medium text-success">Your Backstage data is kept</span> — the labels and
-                      category overrides you set are remembered, and re-adding the folder later restores them along with
-                      the packages.
-                    </p>
-                  </div>
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction variant="destructive" onClick={() => onRemove(d.id, { force: true })}>
-                  Remove folder
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        ) : (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => onRemove(d.id)}
-            disabled={disabled}
-            title="Remove"
-            className="shrink-0 text-text-tertiary hover:text-error"
-          >
-            <Trash2 size={14} />
-          </Button>
+        <ArchiveSwitch
+          archived={d.archive}
+          disabled={disabled}
+          onRequest={(next) => requestRole(next ? 'archive' : 'offload')}
+        />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              disabled={disabled}
+              title="Folder options"
+              className="shrink-0 text-text-tertiary hover:text-text-primary"
+            >
+              <MoreHorizontal size={14} />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-52">
+            {canBrowserAssist && (
+              <>
+                {/* Label short enough to belong in a menu; the explanation is a
+                    tooltip, because a menu item that needs a paragraph under it
+                    has stopped being a menu item. */}
+                <Tooltip delayDuration={300} disableHoverableContent>
+                  <TooltipTrigger asChild>
+                    <DropdownMenuCheckboxItem
+                      checked={!!d.browserAssist}
+                      disabled={d.archive}
+                      onCheckedChange={(v) => onToggleBrowserAssist(d.id, v)}
+                    >
+                      Share with BrowserAssist
+                    </DropdownMenuCheckboxItem>
+                  </TooltipTrigger>
+                  <TooltipContent side="left" className="block w-72 py-2 text-left leading-relaxed">
+                    {d.archive
+                      ? 'Offload folders only. BrowserAssist never handles archived packages. Turn Archive off for this folder to change the setting.'
+                      : BROWSER_ASSIST_HINT}
+                  </TooltipContent>
+                </Tooltip>
+                <DropdownMenuSeparator />
+              </>
+            )}
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={() => (hasPackages ? setConfirmRemove(true) : onRemove(d.id))}
+            >
+              <Trash2 size={12} />
+              Remove folder
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {/* Facts about this folder, nothing else. The mode used to append its own
+          one-liner here, which read as a fourth statistic — the eye can't tell
+          "48.2 GB" and "nothing pruned" apart when they share a separator. */}
+      <div className="pl-6 mt-0.5 text-[11px] text-text-tertiary truncate">
+        <span className="tabular-nums">
+          {d.packageCount.toLocaleString()} package{d.packageCount === 1 ? '' : 's'} · {formatBytes(d.sizeBytes)}
+        </span>
+        {d.browserAssist && (
+          <Tooltip delayDuration={350}>
+            <TooltipTrigger asChild>
+              <span className="cursor-help"> · shared with BrowserAssist</span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="start" className="block w-72 py-2 text-left leading-relaxed">
+              {BROWSER_ASSIST_HINT}
+            </TooltipContent>
+          </Tooltip>
         )}
       </div>
-      {canBrowserAssist && (
-        <label className="flex items-center gap-2 cursor-pointer w-fit" title={BROWSER_ASSIST_MODE_HINT}>
-          <Switch
-            size="sm"
-            checked={!!d.browserAssist}
-            onCheckedChange={(v) => onToggleBrowserAssist(d.id, v)}
-            disabled={disabled}
-          />
-          <span className="text-[11px] text-text-tertiary">
-            BrowserAssist mode <span className="text-text-tertiary/70">· write .var.json sidecars</span>
-          </span>
-        </label>
-      )}
-    </li>
+
+      <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="select-text cursor-text">
+              Stop tracking this {d.archive ? 'archive' : 'offload'} directory?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="text-[13px] leading-relaxed text-text-secondary space-y-2.5">
+                <p>
+                  <span className="font-mono text-text-primary select-text cursor-text">
+                    {shortenLibraryPath(d.path, vamDir)}
+                  </span>{' '}
+                  currently holds{' '}
+                  <span className="font-medium text-text-primary">
+                    {d.packageCount.toLocaleString()} package{d.packageCount === 1 ? '' : 's'}
+                  </span>
+                  . Removing it un-registers the folder and hides those packages from Backstage.
+                </p>
+                <p>
+                  <span className="font-medium text-success">No files are deleted</span>: every{' '}
+                  <span className="font-mono">.var</span> stays where it is on disk, and VaM&apos;s own state for those
+                  packages (including the <span className="font-medium">favorite</span> and{' '}
+                  <span className="font-medium">hidden</span> status of their content) is untouched.
+                </p>
+                <p>
+                  <span className="font-medium text-success">Your Backstage data is kept</span>: the labels and category
+                  overrides you set are remembered, and re-adding the folder later restores them along with the
+                  packages.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={() => onRemove(d.id, { force: true })}>
+              Remove folder
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!pendingRole} onOpenChange={(open) => !open && setPendingRole(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="select-text cursor-text">
+              Turn Archive {targetRole === 'archive' ? 'on' : 'off'} for this folder?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="text-[13px] leading-relaxed text-text-secondary space-y-2.5">
+                <p>
+                  <span className="font-mono text-text-primary select-text cursor-text">
+                    {shortenLibraryPath(d.path, vamDir)}
+                  </span>{' '}
+                  holds{' '}
+                  <span className="font-medium text-text-primary">
+                    {d.packageCount.toLocaleString()} package{d.packageCount === 1 ? '' : 's'}
+                  </span>
+                  , and all of them change state with the folder.
+                </p>
+                {targetRole === 'offload' ? (
+                  <p>
+                    They become <span className="font-medium text-text-primary">offloaded</span>: they reappear in your
+                    default library views and start reporting their missing dependencies again, so expect the Missing
+                    list to grow.
+                  </p>
+                ) : (
+                  <p>
+                    They become <span className="font-medium text-text-primary">archived</span>: they drop out of your
+                    default library views and the Missing tab, and the app stops prompting to download their
+                    dependencies.
+                  </p>
+                )}
+                <p>
+                  <span className="font-medium text-success">No files are moved or deleted.</span>
+                  {targetRole === 'archive' &&
+                    ' No dependencies are removed either; that only happens when you archive an individual package.'}
+                </p>
+                {targetRole === 'archive' && disablePointsHere && (
+                  <p className="text-[12px] text-text-tertiary">
+                    &ldquo;Disable → move here&rdquo; currently points at this folder and will revert to VaM native.
+                  </p>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (targetRole) onSetRole(d.id, targetRole)
+                setPendingRole(null)
+              }}
+            >
+              Turn Archive {targetRole === 'archive' ? 'on' : 'off'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
   )
 }
 
-const BROWSER_ASSIST_MODE_HINT =
-  'When offloading a package into this folder, also write a JayJayWon BrowserAssist ' +
-  '.var.json sidecar recording its original AddonPackages folder — so BrowserAssist can ' +
-  'restore packages you offloaded, and Backstage can restore packages BrowserAssist offloaded.'
+/**
+ * A detected-but-unregistered offload candidate, shaped like the rows it would
+ * join. Both text lines clip: `truncate` needs a block box, and the path span is
+ * inline here (unlike in `AuxDirRow`, where being a flex child blocks it), so
+ * without it long paths ran on underneath the buttons.
+ */
+function SuggestionRow({ s, vamDir, disabled, onAdd, onDismiss }) {
+  return (
+    <div className="flex items-center gap-2.5 px-3 py-2 bg-accent-blue/6">
+      <Compass size={14} className="shrink-0 text-accent-blue" />
+      <Tooltip delayDuration={350}>
+        <TooltipTrigger asChild>
+          <div className="min-w-0 flex-1">
+            <TruncateWithTooltip
+              text={s.path}
+              className="block min-w-0 text-xs font-mono truncate select-text cursor-text text-text-secondary"
+            >
+              {shortenLibraryPath(s.path, vamDir)}
+            </TruncateWithTooltip>
+            <div className="truncate text-[11px] text-text-tertiary">
+              {s.label}&apos;s offload folder · {s.varCount.toLocaleString()} var{s.varCount === 1 ? '' : 's'} found
+            </div>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" align="start" className="block w-72 py-2 text-left leading-relaxed">
+          Backstage found the default offload folder of a tool you have installed, and it already holds packages. Adding
+          it registers the folder as Offload: no files move and nothing is deleted.
+        </TooltipContent>
+      </Tooltip>
+      <Button variant="outline" size="sm" onClick={() => onAdd(s)} disabled={disabled} className="shrink-0">
+        Add
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={() => onDismiss(s.id)}
+        title="Dismiss suggestion"
+        className="shrink-0 text-text-tertiary hover:text-text-primary"
+      >
+        <X size={14} />
+      </Button>
+    </div>
+  )
+}
+
+/**
+ * Archive as a switch on an offload folder, not as the far half of a two-sided
+ * mode picker: it is the same folder either way, with pruning and cold-storage
+ * semantics turned on. A real `<label>` so clicking the word still toggles,
+ * without the pointer cursor and hover tint that made plain text read as a
+ * second, differently-behaved control next to the switch.
+ */
+function ArchiveSwitch({ archived, disabled, onRequest }) {
+  const id = useId()
+  return (
+    <Tooltip delayDuration={350}>
+      <TooltipTrigger asChild>
+        <span className="shrink-0 flex items-center gap-1.5">
+          <label
+            htmlFor={id}
+            className={`text-[11px] select-none ${disabled ? 'opacity-50' : ''} ${
+              archived ? 'text-text-primary font-medium' : 'text-text-tertiary'
+            }`}
+          >
+            Archive
+          </label>
+          <Switch
+            id={id}
+            size="sm"
+            checked={archived}
+            onCheckedChange={onRequest}
+            disabled={disabled}
+            aria-label="Archive folder"
+          />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="end" className="w-72 flex-col items-start gap-0 py-2 text-left">
+        <ArchiveSummary />
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+const ARCHIVE_FACTS = [
+  'Archiving a package offers to drop the dependencies nothing else needs',
+  'Only ones the Hub can re-download; the rest are stored, never deleted',
+  'Installing from the archive fetches back whatever you dropped',
+  'Contents sit out of your library views and never prompt for missing deps',
+]
+
+/**
+ * What turning Archive on buys, on the switch's own hover rather than in the
+ * rows: whether a folder archives is a property of it, not news about it, so
+ * restating it on every row taxes the readers who already know while still
+ * being too terse to teach the ones who don't.
+ *
+ * What the copy has to land is what happens to *dependencies*: offload keeps
+ * every byte, archive can trade the Hub-restorable ones for disk and buys them
+ * back on install. Archive going quiet about missing deps follows from that
+ * bargain — leading with it makes archive sound like a louder offload.
+ *
+ * Every line is phrased as a thing the folder lets you do, never as a thing it
+ * does to you: the deletion is a per-package choice at archive time, and copy
+ * that reads as "turning this on starts deleting my dependencies" makes the
+ * switch look like a trap when it is the whole point of the feature.
+ */
+function ArchiveSummary() {
+  return (
+    <div className="min-w-0">
+      <div className="flex items-center gap-1.5 text-xs font-medium text-text-primary">
+        <Boxes size={13} className="shrink-0 text-text-tertiary" />
+        Archive
+      </div>
+      <div className="mt-0.5 text-[11px] text-text-secondary">
+        An offload folder that can also reclaim the disk unneeded dependencies take up.
+      </div>
+      <ul className="mt-1.5 space-y-1 text-[11px] text-text-tertiary">
+        {ARCHIVE_FACTS.map((fact) => (
+          <li key={fact} className="flex gap-1.5">
+            <span aria-hidden>·</span>
+            <span className="min-w-0">{fact}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+/**
+ * Shared by the menu item that sets this and the row marker that reports it.
+ *
+ * Two things it has to get right. It must not imply Backstage needs the file to
+ * find its way home — it never did, and a setting that sounds like "remember where
+ * packages came from" is one nobody dares leave off. And it must not open with
+ * "sidecar" or ".var.json", which mean nothing to someone who merely *runs*
+ * BrowserAssist; the file name comes last, for whoever wants to know what will
+ * show up in the folder.
+ */
+const BROWSER_ASSIST_HINT =
+  'Shares this folder with BrowserAssist, so either tool can restore a package the other moved out. Each ' +
+  'package offloaded here also gets the small .var.json file BrowserAssist reads. Backstage does not need ' +
+  'that file; it tracks its own moves either way.'
 
 /**
  * Show an offload path that lives inside the VaM dir as `<VaM base dir name>/<relative>`

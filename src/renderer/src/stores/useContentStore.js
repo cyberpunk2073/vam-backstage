@@ -304,7 +304,7 @@ export const useContentStore = create(
       selectedLabelIds: asPolarityList,
       excludedAuthors: asArray,
       packageFilter: oneOf(['all', 'installed', 'dependency', 'local']),
-      packageStatusFilter: oneOf(['all', 'enabled', 'disabled']),
+      packageStatusFilter: oneOf(['all', 'enabled', 'disabled', 'archived']),
       visibilityFilter: oneOf(['all', 'visible', 'hidden', 'favorites']),
       primarySort: asString,
       secondarySort: asString,

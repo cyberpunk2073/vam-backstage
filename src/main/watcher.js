@@ -20,6 +20,7 @@ import {
   getLibraryDirPath,
   libraryRelSubpath,
   classifyMainVarOnDisk,
+  isArchiveLibraryDir,
 } from './library-dirs.js'
 import { awaitStable } from './var-stability.js'
 import { hidePackageContent, readAllPrefs, stripDisabledSuffix } from './vam-prefs.js'
@@ -561,9 +562,10 @@ async function processBatch() {
           try {
             let contentPath, storageState
             if (libraryDirId != null) {
-              // Aux adds were already normalized to bare; always offloaded.
+              // Aux adds were already normalized to bare. Location implies state:
+              // an archive-role dir yields `archived`, else `offloaded`.
               contentPath = adds[0].fullPath
-              storageState = 'offloaded'
+              storageState = isArchiveLibraryDir(libraryDirId) ? 'archived' : 'offloaded'
             } else {
               const cls = await classifyMainVarOnDisk(join(dirname(adds[0].fullPath), canonical))
               if (!cls.present) contentPath = null
@@ -840,9 +842,11 @@ async function locateWalk(root, dir, libraryDirId, remaining, out) {
   const subpath = rel ? rel.split(sep).join('/') : ''
   for (const canonical of [...remaining]) {
     if (libraryDirId != null) {
-      // Aux dirs are suffix-less in our model (offloaded == active).
+      // Aux dirs are suffix-less in our model (offloaded/archived == bare). Location
+      // implies state: an archive-role dir yields `archived`, else `offloaded`.
       if (files.has(canonical)) {
-        out.set(canonical, { libraryDirId, storageState: 'offloaded', subpath })
+        const storageState = isArchiveLibraryDir(libraryDirId) ? 'archived' : 'offloaded'
+        out.set(canonical, { libraryDirId, storageState, subpath })
         remaining.delete(canonical)
       }
       continue

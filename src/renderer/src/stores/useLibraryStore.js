@@ -473,7 +473,7 @@ export const useLibraryStore = create(
     }),
     persistViewState('library-view', {
       search: asString,
-      statusFilter: oneOf(['direct', 'dependency', 'orphan', 'local', 'broken', 'missing', 'updates']),
+      statusFilter: oneOf(['direct', 'dependency', 'orphan', 'local', 'broken', 'missing', 'updates', 'archived']),
       enabledFilter: oneOf(['all', 'enabled', 'disabled', 'offloaded']),
       selectedTypes: asArray,
       selectedTags: asPolarityList,

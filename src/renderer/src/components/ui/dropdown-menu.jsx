@@ -1,4 +1,5 @@
 import { DropdownMenu as DropdownMenuPrimitive } from 'radix-ui'
+import { Check } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 
@@ -45,6 +46,33 @@ function DropdownMenuItem({ className, inset, variant = 'default', ...props }) {
   )
 }
 
+/**
+ * The box is drawn in both states — an indicator that only appears when checked
+ * reads as an action ("do this now") rather than a setting the item reflects.
+ * Same empty-outline / filled-check shapes as the label checkboxes.
+ */
+function DropdownMenuCheckboxItem({ className, children, checked, ...props }) {
+  return (
+    <DropdownMenuPrimitive.CheckboxItem
+      data-slot="dropdown-menu-checkbox-item"
+      checked={checked}
+      className={cn(
+        'group relative flex cursor-default select-none items-start gap-2 rounded-sm py-1.5 pl-7 pr-2 outline-none',
+        'data-[highlighted]:bg-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-40',
+        className,
+      )}
+      {...props}
+    >
+      <span className="absolute left-2 top-1.75 inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border border-text-tertiary/60 group-data-[state=checked]:border-accent-blue group-data-[state=checked]:bg-accent-blue">
+        <DropdownMenuPrimitive.ItemIndicator>
+          <Check size={9} strokeWidth={3} className="text-white" />
+        </DropdownMenuPrimitive.ItemIndicator>
+      </span>
+      {children}
+    </DropdownMenuPrimitive.CheckboxItem>
+  )
+}
+
 function DropdownMenuSeparator({ className, ...props }) {
   return (
     <DropdownMenuPrimitive.Separator
@@ -71,6 +99,7 @@ export {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuCheckboxItem,
   DropdownMenuSeparator,
   DropdownMenuLabel,
 }

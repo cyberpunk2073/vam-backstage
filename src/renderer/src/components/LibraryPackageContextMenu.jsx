@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from 'react'
 import {
   ArrowUpCircle,
+  Boxes,
   Compass,
   Download,
   Eye,
@@ -33,7 +34,10 @@ import {
   DisablePackageDialogContent,
   ForceRemoveDialogContent,
   UninstallDialogContent,
+  hasPinningDependents,
+  uninstallOutcomeMessage,
 } from '@/components/package-action-dialogs'
+import { ArchiveDialogContent, InstallFromArchiveDialogContent } from '@/components/ArchiveActionDialogs'
 import FileTreeDialog from '@/components/FileTreeDialog'
 import LinkHubDialog from '@/components/LinkHubDialog'
 import {
@@ -47,10 +51,11 @@ import {
 import { toastIfBulkToggleFailures, toastIfSingleToggleFailed } from '@/lib/packageStorageToggleResults'
 import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
 import { isUpdateUnavailable, isUpdateCheckFailed, isUpdateChecking, updateTargetVersion } from '@/lib/hub-availability'
-import { isPackageActive } from '@shared/storage-state-predicates.js'
+import { isPackageActive, isPackageArchived } from '@shared/storage-state-predicates.js'
 import { useDownloadStore } from '@/stores/useDownloadStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
 import { useLabelsStore } from '@/stores/useLabelsStore'
+import { useLibraryDirsStore } from '@/stores/useLibraryDirsStore'
 
 function bulkSelectedPackagesFromStore() {
   const { bulkSelectedFilenames, packageByFilename } = useLibraryStore.getState()
@@ -88,9 +93,13 @@ async function runLibraryBulkRemoveFromStore() {
   const direct = items.filter((p) => p.isDirect)
   const dep = items.filter((p) => !p.isDirect)
   try {
+    let relocated = 0
     if (direct.length) {
       const d = direct.map((p) => p.filename)
-      await window.api.packages.uninstall(d.length === 1 ? d[0] : d)
+      const res = await window.api.packages.uninstall(d.length === 1 ? d[0] : d)
+      for (const r of res?.results ?? (res ? [res] : [])) {
+        if (r.relocatedToArchive) relocated++
+      }
     }
     if (dep.length) {
       const d = dep.map((p) => p.filename)
@@ -98,6 +107,7 @@ async function runLibraryBulkRemoveFromStore() {
     }
     useLibraryStore.getState().clearBulkSelection()
     await useLibraryStore.getState().fetchPackages()
+    if (relocated) toast(`${relocated} moved to archive (still needed by archived packages)`, 'success')
   } catch (err) {
     toast(`Failed: ${err.message}`)
   }
@@ -207,13 +217,33 @@ function TypeOverrideMenuItems({ filenames, typeOverride, autoBucketLabel, bulk 
   )
 }
 
-function formatDependentNames(dependents) {
-  if (!dependents?.length) return ''
-  const names = dependents
-    .slice(0, 2)
-    .map((d) => d.packageName?.split('.').pop() || d.filename)
-    .join(', ')
-  return names + (dependents.length > 2 ? ` +${dependents.length - 2}` : '')
+async function runLibraryBulkInstallFromArchive() {
+  const fnames = bulkSelectedPackagesFromStore()
+    .filter((p) => isPackageArchived(p.storageState))
+    .map((p) => p.filename)
+  if (!fnames.length) return
+  try {
+    const res = await window.api.packages.installFromArchive(fnames)
+    if (res?.queued > 0) toast(`Installing: ${res.queued} dependenc${res.queued === 1 ? 'y' : 'ies'} queued`, 'success')
+    useLibraryStore.getState().clearBulkSelection()
+    await Promise.all([useLibraryStore.getState().fetchPackages(), useDownloadStore.getState().fetchItems()])
+  } catch (err) {
+    toast(`Install failed: ${err.message}`)
+  }
+}
+
+async function runLibraryBulkRemoveFromArchive() {
+  const fnames = bulkSelectedPackagesFromStore()
+    .filter((p) => isPackageArchived(p.storageState))
+    .map((p) => p.filename)
+  if (!fnames.length) return
+  try {
+    await window.api.packages.forceRemove(fnames.length === 1 ? fnames[0] : fnames)
+    useLibraryStore.getState().clearBulkSelection()
+    await useLibraryStore.getState().fetchPackages()
+  } catch (err) {
+    toast(`Remove failed: ${err.message}`)
+  }
 }
 
 export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, children }) {
@@ -228,6 +258,11 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
   const [uninstallOpen, setUninstallOpen] = useState(false)
   const [disableOpen, setDisableOpen] = useState(false)
   const [forceRemoveOpen, setForceRemoveOpen] = useState(false)
+  const [archiveOpen, setArchiveOpen] = useState(false)
+  const [installArchiveOpen, setInstallArchiveOpen] = useState(false)
+  const auxDirs = useLibraryDirsStore((s) => s.aux)
+  const archiveDirs = useMemo(() => auxDirs.filter((d) => d.archive), [auxDirs])
+  const hasArchiveDirs = archiveDirs.length > 0
   // Snapshot of `detail` taken when a confirm dialog opens. The context menu
   // clears `detail` on close, so gating the dialog on the live `detail` would
   // unmount its content while the dialog is still open — which tears down
@@ -279,6 +314,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
 
   const p = detail || pkg
   const hasDependents = (p.dependents?.length ?? 0) > 0
+  const hasPinning = hasPinningDependents(detail || pkg)
   const suppressDisablePackageWarning = useLibraryStore((s) => s.suppressDisablePackageWarning)
   const showDisableDialog = packageNeedsDisableConfirmation(p, suppressDisablePackageWarning)
 
@@ -307,7 +343,9 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
   }
   const handleUninstall = async () => {
     try {
-      await window.api.packages.uninstall(p.filename)
+      const res = await window.api.packages.uninstall(p.filename)
+      const msg = uninstallOutcomeMessage(res)
+      if (msg) toast(msg, 'success')
     } catch (err) {
       toast(`Uninstall failed: ${err.message}`)
     }
@@ -327,6 +365,29 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
       toast(`Redownload failed: ${err.message}`)
     }
   }
+  const handleArchive = async (archiveDirId, depMode) => {
+    try {
+      const res = await window.api.packages.archive(archiveTargetFilenames, archiveDirId, depMode)
+      const parts = []
+      if (res?.pruned) parts.push(`${res.pruned} dropped`)
+      if (res?.storedToArchive) parts.push(`${res.storedToArchive} stored`)
+      toast(`Archived${parts.length ? `: ${parts.join(', ')}` : ''}`, 'success')
+      if (showBulk) useLibraryStore.getState().clearBulkSelection()
+    } catch (err) {
+      toast(`Archive failed: ${err.message}`)
+    }
+  }
+  const handleInstallFromArchive = async () => {
+    try {
+      const res = await window.api.packages.installFromArchive([p.filename])
+      if (res?.queued > 0)
+        toast(`Installing: ${res.queued} dependenc${res.queued === 1 ? 'y' : 'ies'} queued`, 'success')
+      await useDownloadStore.getState().fetchItems()
+    } catch (err) {
+      toast(`Install failed: ${err.message}`)
+    }
+  }
+  const isArchived = isPackageArchived(p.storageState)
 
   const showBulk = bulkSelectedFilenames.length > 0 && bulkSelectedFilenames.includes(pkg.filename)
   const bulkDepCount = showBulk
@@ -361,6 +422,23 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
     const label = mixed || allDisabled ? 'Enable' : 'Disable'
     return { label, allEnabled, allDisabled, mixed }
   }, [showBulk, packages, bulkSelectedFilenames])
+
+  // How many of the bulk selection are archived — drives whether the bulk menu
+  // shows archive-shelf actions (Install/Remove) or the normal library actions.
+  const bulkSelectedSet = useMemo(() => new Set(bulkSelectedFilenames), [bulkSelectedFilenames])
+  const bulkArchivedCount = useMemo(() => {
+    if (!showBulk) return 0
+    return packages.filter((p) => bulkSelectedSet.has(p.filename) && isPackageArchived(p.storageState)).length
+  }, [showBulk, packages, bulkSelectedSet])
+  const bulkNonArchivedFilenames = useMemo(
+    () =>
+      packages
+        .filter((p) => bulkSelectedSet.has(p.filename) && !isPackageArchived(p.storageState))
+        .map((p) => p.filename),
+    [packages, bulkSelectedSet],
+  )
+  const bulkAllArchived = showBulk && bulkArchivedCount === bulkSelectedFilenames.length && bulkArchivedCount > 0
+  const archiveTargetFilenames = showBulk ? bulkNonArchivedFilenames : [pkg.filename]
 
   // Three sibling groups: scene-sourced appearance, scene-sourced outfit,
   // and look-sourced appearance. Looks produce a distinct "Convert to ..."
@@ -506,144 +584,214 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
         <ContextMenuTrigger className="contents">{children}</ContextMenuTrigger>
         <ContextMenuContent className="min-w-52" onCloseAutoFocus={(e) => e.preventDefault()}>
           {showBulk ? (
-            <>
-              <ContextMenuSub>
-                <ContextMenuSubTrigger>
-                  <Tag size={12} className="shrink-0" />
-                  Labels ({bulkSelectedFilenames.length})
-                </ContextMenuSubTrigger>
-                <ContextMenuSubContent>
-                  <LabelsApplyMenuItems labels={labels} stateById={labelStateMap} onToggle={handleLabelToggle} />
-                </ContextMenuSubContent>
-              </ContextMenuSub>
-              <ContextMenuSub>
-                <ContextMenuSubTrigger>
-                  <Shapes size={12} className="shrink-0" />
-                  Type ({bulkSelectedFilenames.length})
-                </ContextMenuSubTrigger>
-                <ContextMenuSubContent className="min-w-40">
-                  <TypeOverrideMenuItems filenames={bulkSelectedFilenames} bulk />
-                </ContextMenuSubContent>
-              </ContextMenuSub>
-              <ContextMenuSeparator />
-              <ContextMenuItem onSelect={() => void runLibraryBulkToggleEnabledFromStore()}>
-                <Power
-                  size={12}
-                  className={
-                    bulkEnableUi.mixed
-                      ? 'shrink-0 text-text-tertiary'
-                      : bulkEnableUi.allDisabled
-                        ? 'shrink-0 text-error'
-                        : 'shrink-0 text-text-secondary'
-                  }
-                />
-                {bulkEnableUi.label} ({bulkSelectedFilenames.length})
-              </ContextMenuItem>
-              <ContextMenuItem variant="destructive" onSelect={() => void runLibraryBulkRemoveFromStore()}>
-                <Trash2 size={12} className="shrink-0" />
-                Remove ({bulkSelectedFilenames.length})
-              </ContextMenuItem>
-              {bulkDepCount > 0 && (
-                <ContextMenuItem onSelect={() => void runLibraryBulkPromoteFromStore()}>
-                  <Plus size={12} className="shrink-0 text-accent-blue" />
-                  Promote ({bulkDepCount})
+            bulkAllArchived ? (
+              <>
+                <ContextMenuItem onSelect={() => void runLibraryBulkInstallFromArchive()}>
+                  <Download size={12} className="shrink-0 text-accent-blue" />
+                  Install from archive ({bulkSelectedFilenames.length})
                 </ContextMenuItem>
-              )}
-              <ContextMenuSeparator />
-              <ContextMenuItem
-                onSelect={() =>
-                  void runLibraryBulkExtract({
-                    kind: 'appearance',
-                    sources: SCENE_SOURCE_TYPES,
-                    sourceNoun: 'scenes',
-                    actionLabel: 'Extract appearance',
-                  })
-                }
-              >
-                <Download size={12} className="shrink-0 text-accent-blue" />
-                Extract appearance presets from scenes ({bulkSelectedFilenames.length})
-              </ContextMenuItem>
-              <ContextMenuItem
-                onSelect={() =>
-                  void runLibraryBulkExtract({
-                    kind: 'outfit',
-                    sources: SCENE_SOURCE_TYPES,
-                    sourceNoun: 'scenes',
-                    actionLabel: 'Extract outfit',
-                  })
-                }
-              >
-                <Download size={12} className="shrink-0 text-accent-blue" />
-                Extract outfit presets from scenes ({bulkSelectedFilenames.length})
-              </ContextMenuItem>
-              <ContextMenuItem
-                onSelect={() =>
-                  void runLibraryBulkExtract({
-                    kind: 'appearance',
-                    sources: LOOK_SOURCE_TYPES,
-                    sourceNoun: 'legacy looks',
-                    actionLabel: 'Convert to appearance',
-                  })
-                }
-              >
-                <Download size={12} className="shrink-0 text-accent-blue" />
-                Convert legacy looks to appearance presets ({bulkSelectedFilenames.length})
-              </ContextMenuItem>
-            </>
+                <ContextMenuSub>
+                  <ContextMenuSubTrigger>
+                    <Tag size={12} className="shrink-0" />
+                    Labels ({bulkSelectedFilenames.length})
+                  </ContextMenuSubTrigger>
+                  <ContextMenuSubContent>
+                    <LabelsApplyMenuItems labels={labels} stateById={labelStateMap} onToggle={handleLabelToggle} />
+                  </ContextMenuSubContent>
+                </ContextMenuSub>
+                <ContextMenuSeparator />
+                <ContextMenuItem variant="destructive" onSelect={() => void runLibraryBulkRemoveFromArchive()}>
+                  <Trash2 size={12} className="shrink-0" />
+                  Remove from archive ({bulkSelectedFilenames.length})
+                </ContextMenuItem>
+              </>
+            ) : (
+              <>
+                <ContextMenuSub>
+                  <ContextMenuSubTrigger>
+                    <Tag size={12} className="shrink-0" />
+                    Labels ({bulkSelectedFilenames.length})
+                  </ContextMenuSubTrigger>
+                  <ContextMenuSubContent>
+                    <LabelsApplyMenuItems labels={labels} stateById={labelStateMap} onToggle={handleLabelToggle} />
+                  </ContextMenuSubContent>
+                </ContextMenuSub>
+                <ContextMenuSeparator />
+                <ContextMenuItem onSelect={() => void runLibraryBulkToggleEnabledFromStore()}>
+                  <Power
+                    size={12}
+                    className={
+                      bulkEnableUi.mixed
+                        ? 'shrink-0 text-text-tertiary'
+                        : bulkEnableUi.allDisabled
+                          ? 'shrink-0 text-error'
+                          : 'shrink-0 text-text-secondary'
+                    }
+                  />
+                  {bulkEnableUi.label} ({bulkSelectedFilenames.length})
+                </ContextMenuItem>
+                <ContextMenuItem variant="destructive" onSelect={() => void runLibraryBulkRemoveFromStore()}>
+                  <Trash2 size={12} className="shrink-0" />
+                  Remove ({bulkSelectedFilenames.length})
+                </ContextMenuItem>
+                {bulkDepCount > 0 && (
+                  <ContextMenuItem onSelect={() => void runLibraryBulkPromoteFromStore()}>
+                    <Plus size={12} className="shrink-0 text-accent-blue" />
+                    Promote ({bulkDepCount})
+                  </ContextMenuItem>
+                )}
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() =>
+                    void runLibraryBulkExtract({
+                      kind: 'appearance',
+                      sources: SCENE_SOURCE_TYPES,
+                      sourceNoun: 'scenes',
+                      actionLabel: 'Extract appearance',
+                    })
+                  }
+                >
+                  <Download size={12} className="shrink-0 text-accent-blue" />
+                  Extract appearance presets from scenes ({bulkSelectedFilenames.length})
+                </ContextMenuItem>
+                <ContextMenuItem
+                  onSelect={() =>
+                    void runLibraryBulkExtract({
+                      kind: 'outfit',
+                      sources: SCENE_SOURCE_TYPES,
+                      sourceNoun: 'scenes',
+                      actionLabel: 'Extract outfit',
+                    })
+                  }
+                >
+                  <Download size={12} className="shrink-0 text-accent-blue" />
+                  Extract outfit presets from scenes ({bulkSelectedFilenames.length})
+                </ContextMenuItem>
+                <ContextMenuItem
+                  onSelect={() =>
+                    void runLibraryBulkExtract({
+                      kind: 'appearance',
+                      sources: LOOK_SOURCE_TYPES,
+                      sourceNoun: 'legacy looks',
+                      actionLabel: 'Convert to appearance',
+                    })
+                  }
+                >
+                  <Download size={12} className="shrink-0 text-accent-blue" />
+                  Convert legacy looks to appearance presets ({bulkSelectedFilenames.length})
+                </ContextMenuItem>
+                {hasArchiveDirs && bulkNonArchivedFilenames.length > 0 && (
+                  <>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem onSelect={() => setArchiveOpen(true)}>
+                      <Boxes size={12} className="shrink-0" />
+                      Archive… ({bulkNonArchivedFilenames.length})
+                    </ContextMenuItem>
+                  </>
+                )}
+              </>
+            )
           ) : (
             <>
-              {updateInfo?.localNewerFilename ? (
-                <>
-                  <ContextMenuItem
-                    onSelect={async () => {
-                      try {
-                        await window.api.packages.uninstall(p.filename)
-                        await window.api.packages.promote(updateInfo.localNewerFilename)
-                        await useLibraryStore.getState().fetchPackages()
-                        await useLibraryStore.getState().selectPackage(updateInfo.localNewerFilename)
-                        toast(`Updated to v${updateInfo.hubVersion}`, 'success', 2500)
-                      } catch (err) {
-                        toast(`Update failed: ${err.message}`)
-                      }
-                    }}
-                  >
-                    <ArrowUpCircle size={12} className="shrink-0 text-accent-blue" />
-                    Update to v{updateInfo.hubVersion}
-                  </ContextMenuItem>
-                  <ContextMenuItem
-                    onSelect={() => useLibraryStore.getState().selectPackage(updateInfo.localNewerFilename)}
-                  >
-                    <Eye size={12} className="shrink-0 text-accent-blue" />
-                    Go to v{updateInfo.hubVersion}
-                  </ContextMenuItem>
-                </>
-              ) : isUpdateCheckFailed(updateInfo) ? (
-                <ContextMenuItem disabled title="The hub could not be reached — re-check to try again">
-                  <ArrowUpCircle size={12} className="shrink-0" />v{updateInfo.hubVersion} unchecked
-                </ContextMenuItem>
-              ) : isUpdateUnavailable(updateInfo) ? (
-                <ContextMenuItem
-                  disabled
-                  title="Listed on the hub but not downloadable — paid, externally hosted, or no longer served"
-                >
-                  <ArrowUpCircle size={12} className="shrink-0" />v{updateInfo.hubVersion} unavailable
-                </ContextMenuItem>
-              ) : isUpdateChecking(updateInfo) ? (
-                <ContextMenuItem disabled title="Verifying availability with the hub…">
-                  <ArrowUpCircle size={12} className="shrink-0" />
-                  Checking v{updateInfo.hubVersion}…
+              {isArchived ? (
+                <ContextMenuItem onSelect={() => openConfirm(setInstallArchiveOpen)} disabled={!detail}>
+                  <Download size={12} className="shrink-0 text-accent-blue" />
+                  Install from archive…
                 </ContextMenuItem>
               ) : (
-                (updateInfo?.hubResourceId || updateInfo?.packageName) && (
-                  <ContextMenuItem
-                    onSelect={() => {
-                      useDownloadStore.getState().installUpdate(p, updateInfo)
-                    }}
-                  >
-                    <ArrowUpCircle size={12} className="shrink-0 text-accent-blue" />
-                    Update to v{updateTargetVersion(updateInfo)}
-                  </ContextMenuItem>
-                )
+                <>
+                  {updateInfo?.localNewerFilename ? (
+                    <>
+                      <ContextMenuItem
+                        onSelect={async () => {
+                          try {
+                            await window.api.packages.uninstall(p.filename)
+                            await window.api.packages.promote(updateInfo.localNewerFilename)
+                            await useLibraryStore.getState().fetchPackages()
+                            await useLibraryStore.getState().selectPackage(updateInfo.localNewerFilename)
+                            toast(`Updated to v${updateInfo.hubVersion}`, 'success', 2500)
+                          } catch (err) {
+                            toast(`Update failed: ${err.message}`)
+                          }
+                        }}
+                      >
+                        <ArrowUpCircle size={12} className="shrink-0 text-accent-blue" />
+                        Update to v{updateInfo.hubVersion}
+                      </ContextMenuItem>
+                      <ContextMenuItem
+                        onSelect={() => useLibraryStore.getState().selectPackage(updateInfo.localNewerFilename)}
+                      >
+                        <Eye size={12} className="shrink-0 text-accent-blue" />
+                        Go to v{updateInfo.hubVersion}
+                      </ContextMenuItem>
+                    </>
+                  ) : isUpdateCheckFailed(updateInfo) ? (
+                    <ContextMenuItem disabled title="The hub could not be reached. Re-check to try again">
+                      <ArrowUpCircle size={12} className="shrink-0" />v{updateInfo.hubVersion} unchecked
+                    </ContextMenuItem>
+                  ) : isUpdateUnavailable(updateInfo) ? (
+                    <ContextMenuItem
+                      disabled
+                      title="Listed on the hub but not downloadable (paid, externally hosted, or no longer served)"
+                    >
+                      <ArrowUpCircle size={12} className="shrink-0" />v{updateInfo.hubVersion} unavailable
+                    </ContextMenuItem>
+                  ) : isUpdateChecking(updateInfo) ? (
+                    <ContextMenuItem disabled title="Verifying availability with the hub…">
+                      <ArrowUpCircle size={12} className="shrink-0" />
+                      Checking v{updateInfo.hubVersion}…
+                    </ContextMenuItem>
+                  ) : (
+                    (updateInfo?.hubResourceId || updateInfo?.packageName) && (
+                      <ContextMenuItem
+                        onSelect={() => {
+                          useDownloadStore.getState().installUpdate(p, updateInfo)
+                        }}
+                      >
+                        <ArrowUpCircle size={12} className="shrink-0 text-accent-blue" />
+                        Update to v{updateTargetVersion(updateInfo)}
+                      </ContextMenuItem>
+                    )
+                  )}
+                  {!p.hubResourceId && (
+                    <ContextMenuItem onSelect={() => setLinkHubOpen(true)}>
+                      <Link2 size={12} className="shrink-0" />
+                      Link to Hub…
+                    </ContextMenuItem>
+                  )}
+                  {isPromotionalLink(p.promotionalLink) && (
+                    <ContextMenuItem
+                      onSelect={() => {
+                        void openExternalLink(p.promotionalLink)
+                      }}
+                    >
+                      <Heart size={12} className="shrink-0 text-accent-blue" />
+                      Support
+                    </ContextMenuItem>
+                  )}
+                  {p.missingDeps > 0 && (
+                    <ContextMenuItem
+                      onSelect={() => {
+                        useDownloadStore.getState().installMissing(p.filename)
+                      }}
+                    >
+                      <Download size={12} className="shrink-0" />
+                      Install missing dependencies
+                    </ContextMenuItem>
+                  )}
+                  {isPackageActive(p.storageState ?? 'enabled') && p.inactiveDeps > 0 && (
+                    <ContextMenuItem onSelect={() => void handleEnableInactiveDeps()}>
+                      <Power size={12} className="shrink-0" />
+                      Enable disabled dependencies
+                    </ContextMenuItem>
+                  )}
+                  {p.isCorrupted && !p.isLocalOnly && (
+                    <ContextMenuItem onSelect={() => void handleRedownload()}>
+                      <Download size={12} className="shrink-0 text-error" />
+                      Redownload
+                    </ContextMenuItem>
+                  )}
+                </>
               )}
               {p.hubResourceId && (
                 <ContextMenuItem
@@ -662,49 +810,9 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                   View on Hub
                 </ContextMenuItem>
               )}
-              {!p.hubResourceId && (
-                <ContextMenuItem onSelect={() => setLinkHubOpen(true)}>
-                  <Link2 size={12} className="shrink-0" />
-                  Link to Hub…
-                </ContextMenuItem>
-              )}
-              {isPromotionalLink(p.promotionalLink) && (
-                <ContextMenuItem
-                  onSelect={() => {
-                    void openExternalLink(p.promotionalLink)
-                  }}
-                >
-                  <Heart size={12} className="shrink-0 text-accent-blue" />
-                  Support
-                </ContextMenuItem>
-              )}
-              {p.missingDeps > 0 && (
-                <ContextMenuItem
-                  onSelect={() => {
-                    useDownloadStore.getState().installMissing(p.filename)
-                  }}
-                >
-                  <Download size={12} className="shrink-0" />
-                  Install missing dependencies
-                </ContextMenuItem>
-              )}
-              {isPackageActive(p.storageState ?? 'enabled') && p.inactiveDeps > 0 && (
-                <ContextMenuItem onSelect={() => void handleEnableInactiveDeps()}>
-                  <Power size={12} className="shrink-0" />
-                  Enable disabled dependencies
-                </ContextMenuItem>
-              )}
-              {p.isCorrupted && !p.isLocalOnly && (
-                <ContextMenuItem onSelect={() => void handleRedownload()}>
-                  <Download size={12} className="shrink-0 text-error" />
-                  Redownload
-                </ContextMenuItem>
-              )}
               {(p.contentCount ?? 0) > 0 && (
                 <ContextMenuItem
-                  onSelect={() => {
-                    onNavigate?.('content', { filterByPackage: p.packageName || p.filename })
-                  }}
+                  onSelect={() => onNavigate?.('content', { filterByPackage: p.packageName || p.filename })}
                 >
                   <LayoutGrid size={12} className="shrink-0" />
                   Browse content
@@ -736,49 +844,67 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                   />
                 </ContextMenuSubContent>
               </ContextMenuSub>
-              {renderPkgExtractEntries()}
-              {!p.isDirect && (
+              {isArchived ? (
                 <>
                   <ContextMenuSeparator />
-                  <ContextMenuItem onSelect={() => void handlePromote()}>
-                    <Plus size={12} className="shrink-0 text-accent-blue" />
-                    Add to Library
+                  <ContextMenuItem variant="destructive" onSelect={() => void handleForceRemove()}>
+                    <Trash2 size={12} className="shrink-0" />
+                    Remove from archive
                   </ContextMenuItem>
                 </>
-              )}
-              <ContextMenuSeparator />
-              {showDisableDialog ? (
-                <ContextMenuItem onSelect={() => openConfirm(setDisableOpen)} disabled={!detail}>
-                  <Power size={12} className="shrink-0" />
-                  Disable…
-                </ContextMenuItem>
               ) : (
-                <ContextMenuItem onSelect={() => void handleToggleEnabled()}>
-                  <Power
-                    size={12}
-                    className={isPackageActive(p.storageState ?? 'enabled') ? 'shrink-0' : 'shrink-0 text-error'}
-                  />
-                  {isPackageActive(p.storageState ?? 'enabled') ? 'Disable' : 'Enable'}
-                </ContextMenuItem>
-              )}
-              {p.isDirect ? (
-                <ContextMenuItem
-                  variant="destructive"
-                  onSelect={() => openConfirm(setUninstallOpen)}
-                  disabled={!detail}
-                >
-                  <Trash2 size={12} className="shrink-0" />
-                  {hasDependents ? 'Remove…' : 'Uninstall…'}
-                </ContextMenuItem>
-              ) : (
-                <ContextMenuItem
-                  variant="destructive"
-                  onSelect={() => openConfirm(setForceRemoveOpen)}
-                  disabled={!detail}
-                >
-                  <Trash2 size={12} className="shrink-0" />
-                  {hasDependents ? 'Force remove…' : 'Remove…'}
-                </ContextMenuItem>
+                <>
+                  {renderPkgExtractEntries()}
+                  {!p.isDirect && (
+                    <>
+                      <ContextMenuSeparator />
+                      <ContextMenuItem onSelect={() => void handlePromote()}>
+                        <Plus size={12} className="shrink-0 text-accent-blue" />
+                        Add to Library
+                      </ContextMenuItem>
+                    </>
+                  )}
+                  <ContextMenuSeparator />
+                  {showDisableDialog ? (
+                    <ContextMenuItem onSelect={() => openConfirm(setDisableOpen)} disabled={!detail}>
+                      <Power size={12} className="shrink-0" />
+                      Disable…
+                    </ContextMenuItem>
+                  ) : (
+                    <ContextMenuItem onSelect={() => void handleToggleEnabled()}>
+                      <Power
+                        size={12}
+                        className={isPackageActive(p.storageState ?? 'enabled') ? 'shrink-0' : 'shrink-0 text-error'}
+                      />
+                      {isPackageActive(p.storageState ?? 'enabled') ? 'Disable' : 'Enable'}
+                    </ContextMenuItem>
+                  )}
+                  {hasArchiveDirs && (
+                    <ContextMenuItem onSelect={() => openConfirm(setArchiveOpen)} disabled={!detail}>
+                      <Boxes size={12} className="shrink-0" />
+                      Archive…
+                    </ContextMenuItem>
+                  )}
+                  {p.isDirect ? (
+                    <ContextMenuItem
+                      variant="destructive"
+                      onSelect={() => openConfirm(setUninstallOpen)}
+                      disabled={!detail}
+                    >
+                      <Trash2 size={12} className="shrink-0" />
+                      {hasPinning ? 'Remove…' : 'Uninstall…'}
+                    </ContextMenuItem>
+                  ) : (
+                    <ContextMenuItem
+                      variant="destructive"
+                      onSelect={() => openConfirm(setForceRemoveOpen)}
+                      disabled={!detail}
+                    >
+                      <Trash2 size={12} className="shrink-0" />
+                      {hasDependents ? 'Force remove…' : 'Remove…'}
+                    </ContextMenuItem>
+                  )}
+                </>
               )}
             </>
           )}
@@ -791,13 +917,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
 
       <AlertDialog open={uninstallOpen} onOpenChange={closeConfirm(setUninstallOpen)}>
         {uninstallOpen && confirmDetail ? (
-          <UninstallDialogContent
-            pkg={confirmDetail}
-            name={displayName(confirmDetail)}
-            hasDependents={(confirmDetail.dependents?.length ?? 0) > 0}
-            dependentNames={formatDependentNames(confirmDetail.dependents)}
-            onConfirm={handleUninstall}
-          />
+          <UninstallDialogContent pkg={confirmDetail} name={displayName(confirmDetail)} onConfirm={handleUninstall} />
         ) : null}
       </AlertDialog>
 
@@ -819,6 +939,22 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
             hasDependents={(confirmDetail.dependents?.length ?? 0) > 0}
             onConfirm={handleForceRemove}
           />
+        ) : null}
+      </AlertDialog>
+
+      <AlertDialog open={archiveOpen} onOpenChange={setArchiveOpen}>
+        {archiveOpen && archiveTargetFilenames.length > 0 ? (
+          <ArchiveDialogContent
+            filenames={archiveTargetFilenames}
+            archiveDirs={archiveDirs}
+            onConfirm={handleArchive}
+          />
+        ) : null}
+      </AlertDialog>
+
+      <AlertDialog open={installArchiveOpen} onOpenChange={closeConfirm(setInstallArchiveOpen)}>
+        {installArchiveOpen && confirmDetail ? (
+          <InstallFromArchiveDialogContent pkgs={confirmDetail} onConfirm={handleInstallFromArchive} />
         ) : null}
       </AlertDialog>
     </>

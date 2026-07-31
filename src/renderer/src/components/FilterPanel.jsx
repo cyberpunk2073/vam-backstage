@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Search, X, ChevronDown, ChevronRight, Check } from 'lucide-react'
 import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
 import ResizeHandle from './ResizeHandle'
@@ -362,7 +362,14 @@ function SectionWrapper({ section, active, children }) {
         )}
         {section.titleAction}
       </div>
-      {(!isCollapsible || !collapsed) && children}
+      {(!isCollapsible || !collapsed) &&
+        (section.disabled ? (
+          <div className="opacity-40 pointer-events-none select-none" aria-disabled="true">
+            {children}
+          </div>
+        ) : (
+          children
+        ))}
     </div>
   )
 }
@@ -379,20 +386,24 @@ function ListSection({ section }) {
   return (
     <div className="space-y-px">
       {visible.map((item) => (
-        <button
-          type="button"
-          key={item.value}
-          title={item.title}
-          onClick={() => section.onChange(item.value)}
-          style={item.level ? { paddingLeft: `${8 + item.level * 16}px` } : undefined}
-          className={`w-full text-left px-2 py-1.5 rounded text-xs flex items-center gap-2 transition-colors cursor-pointer
-            ${section.value === item.value ? 'bg-hover text-text-primary' : 'text-text-secondary hover:bg-elevated hover:text-text-primary'}`}
-        >
-          {item.color && <div className="w-2 h-2 rounded-full shrink-0" style={{ background: item.color }} />}
-          {item.icon && <item.icon size={12} className={item.iconClass || ''} />}
-          <span className="truncate">{item.label}</span>
-          {item.count != null && <span className="text-text-tertiary ml-auto text-[11px] shrink-0">{item.count}</span>}
-        </button>
+        <Fragment key={item.value}>
+          {item.dividerBefore && <div className="my-1.5 border-t border-border" aria-hidden="true" />}
+          <button
+            type="button"
+            title={item.title}
+            onClick={() => section.onChange(item.value)}
+            style={item.level ? { paddingLeft: `${8 + item.level * 16}px` } : undefined}
+            className={`w-full text-left px-2 py-1.5 rounded text-xs flex items-center gap-2 transition-colors cursor-pointer
+              ${section.value === item.value ? 'bg-hover text-text-primary' : 'text-text-secondary hover:bg-elevated hover:text-text-primary'}`}
+          >
+            {item.color && <div className="w-2 h-2 rounded-full shrink-0" style={{ background: item.color }} />}
+            {item.icon && <item.icon size={12} className={item.iconClass || ''} />}
+            <span className="truncate">{item.label}</span>
+            {item.count != null && (
+              <span className="text-text-tertiary ml-auto text-[11px] shrink-0">{item.count}</span>
+            )}
+          </button>
+        </Fragment>
       ))}
       {collapsible && (
         <button

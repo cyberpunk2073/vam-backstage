@@ -38,6 +38,7 @@ import { useThumbnail } from '@/hooks/createBlobCacheHook'
 import { useContentStore, FILTER_DEFAULTS } from '@/stores/useContentStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
 import { useLabelsStore } from '@/stores/useLabelsStore'
+import { useLibraryDirsStore } from '@/stores/useLibraryDirsStore'
 import { AuthorAvatar, AuthorLink, ContentCard, ContentTableRow, depIssues } from '@/components/PackageCard'
 import { ContentItemContextMenu } from '@/components/ContentItemContextMenu'
 import { LabelsRow } from '@/components/labels/LabelsRow'
@@ -60,7 +61,7 @@ import { CONTENT_IS_FLAGS, contentFlags } from '@/lib/search-text'
 import { matchesPolarityList, matchesAuthorFilter, polarityScrollKey } from '@/lib/filter-match'
 import { parseCommaTags, packageSuggestionCounts } from '@/lib/suggestion-counts'
 import { isLocalPackage } from '@shared/local-package.js'
-import { isPackageActive } from '@shared/storage-state-predicates.js'
+import { isPackageActive, isPackageArchived } from '@shared/storage-state-predicates.js'
 import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
 import { StorageStateChip } from '@/components/StorageStateChip'
 
@@ -89,8 +90,17 @@ const contentIsInstalled = (c) => {
   return isLocalPackage(c.packageFilename)
 }
 
+/** Content whose governing package lives in the archive (cold storage). Extracted
+ *  presets defer to their source package; plain local content is never archived. */
+const isContentArchived = (c) => isPackageArchived(governingPackage(c)?.storageState ?? 'enabled')
+
 function matchesContentPackageStatus(c, packageStatusFilter) {
   if (packageStatusFilter === 'all') return true
+  const archived = isContentArchived(c)
+  if (packageStatusFilter === 'archived') return archived
+  // Enabled/Disabled are axes over the *active* library — archived is its own
+  // tier and never bleeds into them (it's inactive but not "disabled").
+  if (archived) return false
   const disabled = isPackageDisabled(c)
   if (packageStatusFilter === 'disabled') return disabled
   return !disabled
@@ -217,6 +227,8 @@ export default function ContentView({ onNavigate, navContext }) {
   // pack shouldn't dominate ranking over a single-scene author).
   const packages = useLibraryStore((s) => s.packages)
   const labels = useLabelsStore((s) => s.labels)
+  const auxDirs = useLibraryDirsStore((s) => s.aux)
+  const hasArchiveDirs = useMemo(() => auxDirs.some((d) => d.archive), [auxDirs])
   const labelNameById = useMemo(() => {
     const m = new Map()
     for (const l of labels) m.set(l.id, l.name)
@@ -409,12 +421,14 @@ export default function ContentView({ onNavigate, navContext }) {
       { packageStatus: true },
     )
     let enabled = 0,
-      disabled = 0
+      disabled = 0,
+      archived = 0
     for (const c of items) {
-      if (isPackageDisabled(c)) disabled++
+      if (isContentArchived(c)) archived++
+      else if (isPackageDisabled(c)) disabled++
       else enabled++
     }
-    return { all: enabled + disabled, enabled, disabled }
+    return { all: enabled + disabled + archived, enabled, disabled, archived }
   }, [
     baseFiltered,
     selectedTypes,
@@ -563,6 +577,9 @@ export default function ContentView({ onNavigate, navContext }) {
           { value: 'all', label: 'All', count: packageStatusCounts.all },
           { value: 'enabled', label: 'Enabled', count: packageStatusCounts.enabled },
           { value: 'disabled', label: 'Disabled', count: packageStatusCounts.disabled },
+          ...(hasArchiveDirs
+            ? [{ value: 'archived', label: 'Archived', count: packageStatusCounts.archived, dividerBefore: true }]
+            : []),
         ],
       },
       {
@@ -644,6 +661,7 @@ export default function ContentView({ onNavigate, navContext }) {
       packageFilterCounts,
       packageStatusFilter,
       packageStatusCounts,
+      hasArchiveDirs,
       visibilityFilter,
       visibilityCounts,
       authorSearch,
@@ -1390,7 +1408,7 @@ function ContentDetailPanel({
 
   const pkgTitle = pkg ? displayName(pkg) : ''
   const pkgVersionStr = pkg && pkg.version != null && pkg.version !== '' ? String(pkg.version) : null
-  const pkgDepIssue = pkg ? depIssues(pkg, (pkg.storageState ?? 'enabled') === 'enabled') : null
+  const pkgDepIssue = pkg ? depIssues(pkg, isPackageActive(pkg.storageState ?? 'enabled')) : null
 
   return (
     <div className="flex shrink-0" style={{ width: panelWidth }}>

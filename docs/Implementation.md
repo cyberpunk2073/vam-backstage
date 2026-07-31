@@ -6,7 +6,7 @@ VaM Backstage is a desktop application for managing Virt-a-Mate (VaM) `.var` pac
 
 VaM Backstage solves this by:
 
-- **Differentiating direct installs from dependencies.** On first scan, a graph-based leaf-detection algorithm classifies packages. Users can promote/demote packages manually afterward.
+- **Differentiating direct installs from dependencies.** On the initial wizard scan, a graph-based leaf-detection algorithm classifies packages. Subsequent scans and the live watcher register newly discovered packages as direct (sticky `is_direct`). Users can promote/demote packages manually afterward.
 - **Auto-hiding dependency content in VaM's content browser.** The app manages `.hide`/`.fav` sidecar files that VaM reads natively, making dependency content invisible in VaM without modifying any package files.
 - **Providing a full package browser with Hub integration.** Users can search, browse, and install packages from the VaM Hub, with dependency resolution and concurrent downloads. A local wishlist preserves Hub snapshots for paid or removed packages.
 - **Content inspector.** A flat gallery of all content items across all packages with visibility/favorite controls, custom labels, and extracted-preset provenance.
@@ -14,6 +14,7 @@ VaM Backstage solves this by:
 - **Custom labels.** User-defined colored tags on packages and individual content items, with Library/Content filters and inheritance on version upgrades.
 - **Preset extraction.** Write appearance/outfit presets from scenes (and convert legacy looks) into loose VaM files under `Custom/Atom/Person/.../extracted/`.
 - **Disable and offload.** Packages can be disabled in place (VaM-native: an empty `.var.disabled` marker beside the real `.var`) or offloaded to registered aux library directories on the same filesystem; disable behavior is configurable.
+- **Archive tier.** Cold storage for two stories offload cannot serve: (1) **hoard** a creator pack without Missing/Broken/Install-All nags, (2) **archive** an installed package _and reclaim_ Hub-redownloadable deps. Distinct from offload (which stays a popular VaM-speedup / strong-disable). Archive dirs, quiet demand-side semantics, Install-from-archive, and Archive-with-prune; see §7/`storage_state` and §9 Demand & settling.
 - **Remote client/server mode.** One machine can host the library backend over LAN WebSocket while other instances connect as thin clients (`--connect=`).
 
 The application is built with Electron 39, React 19, SQLite (better-sqlite3), Zustand for state management, and Tailwind CSS v4 with shadcn/ui-style components (via the `shadcn` CLI and `radix-ui` primitives). It is JavaScript-only (no TypeScript). The UI is dark-only.
@@ -37,10 +38,10 @@ The application is built with Electron 39, React 19, SQLite (better-sqlite3), Zu
 ### Steady-State Usage
 
 - **Hub**: Browse VaM Hub packages with full-text search, type/pricing/author/tag/license filters, and sort options — or switch to **Wishlist** mode for a client-filtered gallery of locally saved Hub snapshots. Click a card to see a detail panel (left) with an embedded webview showing the actual Hub page (right). Install triggers download of the package plus all missing dependencies. Pin/unpin wishlist entries; when logged into the Hub, toggle favorite/bookmark/rate/like from the detail panel.
-- **Library**: Browse installed packages as a gallery (compact/detailed cards) or table. Filter by label, storage state (enabled/disabled/offloaded), and update availability. Select a package to see a detail panel with content list, dependency tree, dependents, label chips, and actions (uninstall/promote/demote/disable/offload/force-remove, Link to Hub…). Context menu: apply labels, extract appearance/outfit presets from scenes, convert legacy looks. Missing dependencies section shows broken packages with install actions. Cards show a "no preset" checkmark once appearance presets have been extracted.
-- **Content**: Browse all content items flat across packages as a gallery or table. Filter by label and package storage state. Select an item to see the owning package, toggle hidden/favorite, apply labels. Extracted presets show provenance ("Extracted from …") and re-extract actions. Cross-navigate to Library or Hub.
+- **Library**: Browse installed packages as a gallery (compact/detailed cards) or table. Filter by label, Status, Enabled, and labels. **Archived** is a Status shelf (not an Enabled value), separate from "my library by activity"; gated until an archive dir exists so a destructive-adjacent action never appears with a Settings detour. Other Status facets exclude archived so a hoard doesn't pollute Installed/Missing/Broken. Select a package for the detail panel (content, deps, dependents, labels, uninstall/promote/demote/disable/archive/install-from-archive/…). Context menu and bulk actions include Archive / Install from archive when archive dirs exist. Install is framed as a primary _install_ (not muted enable) because it downloads. Cards show a "no preset" checkmark once appearance presets have been extracted.
+- **Content**: Browse all content items flat across packages as a gallery or table. Package-status filter is All / Enabled / Disabled / Archived (**All means all**: includes archived; an "All" that excludes is a lie); default stays Enabled so the hoard stays out of the way. Select an item to see the owning package, toggle hidden/favorite, apply labels. Extracted presets show provenance ("Extracted from …") and re-extract actions. Cross-navigate to Library or Hub.
 - **Downloads**: Slide-in panel (between ribbon and content area) showing active/queued/completed/failed downloads with live progress, speed, and ETA. Pause/resume all, cancel, retry.
-- **Settings**: VaM directory configuration, aux offload library directories, disable behavior (suffix vs move-to-offload-dir), library rescanning, integrity verification, auto-hide toggles, thumbnail blur (privacy), remote server/client mode, update channel, developer options.
+- **Settings**: VaM directory, Offload folders (one bordered list holding registered folders, detected candidates and the **Add folder** action: the same list at three stages. Framed as one feature, not two: every folder is an offload folder, and **Archive** is a per-row switch that adds pruning / cold-storage semantics on top, explained on hover and, since the Archived shelf is gated on it, in a note in the empty state. Rarer per-folder actions (BrowserAssist sidecars, remove) live in a row overflow menu, and rows carry only facts about the folder), disable behavior, rescan, integrity, auto-hide, privacy blur, remote mode, update channel, developer options.
 - **Status bar**: Always-visible bottom strip with package count, dependency count, content items, total size, active download progress, scan progress, remote-server indicator (when serving), and app version.
 
 ### Cross-Navigation
@@ -63,8 +64,8 @@ The application is built with Electron 39, React 19, SQLite (better-sqlite3), Zu
 │  ├── DownloadsPanel                                       │
 │  ├── FirstRun (first-run wizard)                          │
 │  ├── StatusBar                                            │
-│  └── Zustand Stores (hub, library, content, downloads,    │
-│       installed, labels, wishlist, view, status, remote)  │
+│  └── Zustand Stores (hub, library, libraryDirs, content,  │
+│       downloads, installed, labels, wishlist, view, …)    │
 │                                                           │
 │  ──── contextBridge (src/preload/index.js) ────           │
 │       local IPC or remote WebSocket transport             │
@@ -74,8 +75,8 @@ The application is built with Electron 39, React 19, SQLite (better-sqlite3), Zu
 │  index.js ── startup orchestration                        │
 │  ├── db.js ── SQLite persistence layer                    │
 │  ├── store.js ── in-memory indexes & computed state       │
-│  ├── storage-state.js ── disable/offload rename chokepoint│
-│  ├── library-dirs.js ── main + aux library dir registry   │
+│  ├── storage-state.js ── storage-state chokepoint + re-settle │
+│  ├── library-dirs.js ── main + aux (offload/archive) dirs │
 │  ├── scanner/ ── .var reading, classification, graph      │
 │  ├── scenes/ ── preset extraction from scenes/looks       │
 │  ├── hub/ ── Hub API client + CDN index + interactions    │
@@ -152,7 +153,7 @@ App.jsx
 │   │   ├── VirtualGrid / Table (LibraryCard or LibraryTableRow × N)
 │   │   └── LibraryDetailPanel (resizable right, 260–500px)
 │   │       ├── Header (thumb, name, version, author, badges, Hub link)
-│   │       ├── Actions (uninstall/promote/force-remove/disable, contextual)
+│   │       ├── Actions (uninstall/promote/force-remove/disable/archive/install, contextual)
 │   │       ├── Description
 │   │       ├── Dependencies (DepRow × N, "Install missing" action)
 │   │       ├── Dependents (expandable list)
@@ -168,6 +169,7 @@ App.jsx
 │   │       └── MoreFromPackage (grouped by type, clickable items)
 │   └── SettingsView
 │       ├── VaM Directory (path + browse)
+│       ├── Offload folders (per-dir Archive switch)
 │       ├── Library Management (stats, rescan, integrity check)
 │       ├── Content Visibility (auto-hide toggle)
 │       ├── Privacy (thumbnail blur toggle)
@@ -185,7 +187,7 @@ App.jsx
 │   └── Version label
 ├── ToastContainer (bottom-right, animated notifications)
 ├── ErrorBoundary (catches render errors with retry)
-└── Action Dialogs (AlertDialog-based confirmation modals)
+└── Action Dialogs (AlertDialog-based confirmation modals; ArchiveActionDialogs for archive / install-from-archive)
 ```
 
 ---
@@ -312,7 +314,7 @@ Cross-package deduplication also occurs: when multiple versions of the same pack
 
 ## 7. Database Schema
 
-SQLite with WAL journaling, managed by `better-sqlite3` in the main process. Current schema version: **25**. New databases are created at the latest version in one step (`createSchema` in `db.js`); existing DBs walk forward through incremental steps in `migrate()` (v17 → … → v25). Pre-release builds at versions **< 16** cannot be upgraded — delete `backstage.db` under the app userData directory if you hit that error. The `__local__` sentinel package row that owns loose Saves/Custom content (see §7 and §11) is seeded by `ensureLocalPackage()` on every open — no schema change, just an idempotent data fixup that works on both new installs and existing DBs.
+SQLite with WAL journaling, managed by `better-sqlite3` in the main process. Current schema version: **29**. New databases are created at the latest version in one step (`createSchema` in `db.js`); existing DBs walk forward through incremental steps in `migrate()` (v17 → … → v29). Pre-release builds at versions **< 16** cannot be upgraded — delete `backstage.db` under the app userData directory if you hit that error. The `__local__` sentinel package row that owns loose Saves/Custom content (see §7 and §11) is seeded by `ensureLocalPackage()` on every open — no schema change, just an idempotent data fixup that works on both new installs and existing DBs.
 
 ### `packages` — Package Scan Cache
 
@@ -331,7 +333,7 @@ CREATE TABLE packages (
   size_bytes       INTEGER NOT NULL,
   file_mtime       REAL NOT NULL,     -- fractional seconds since epoch
   is_direct        INTEGER NOT NULL DEFAULT 0,  -- 1=user installed, 0=dependency
-  storage_state    TEXT NOT NULL DEFAULT 'enabled',  -- 'enabled' | 'disabled' | 'offloaded'
+  storage_state    TEXT NOT NULL DEFAULT 'enabled',  -- 'enabled' | 'disabled' | 'offloaded' | 'archived'
   library_dir_id   INTEGER REFERENCES library_dirs(id) ON DELETE RESTRICT,  -- NULL = main AddonPackages
   subpath          TEXT NOT NULL DEFAULT '',  -- POSIX relative dir within the library dir ('' = root)
   hub_resource_id  TEXT,              -- VaM Hub resource ID (learned from Hub API)
@@ -361,31 +363,46 @@ The payoff is **transparent restoration**: if the file reappears anywhere under 
 
 Tombstones are otherwise permanent (settings tied to identity should not expire on a timer). They cost little — the DB is tiny relative to the `.var` archive it describes — but a dev-settings "Forget deleted data" button (`forgetDeletedData`, gated like "Nuke database") is the single cleanup escape hatch for anyone who wants the space back. It (1) hard-deletes every tombstone (cascading their preserved `contents`/labels) and (2) prunes **orphaned content labels**: `label_contents` rows key on `packages(filename)` rather than `contents.id`, so replacing a still-present package in place with a version that drops some items leaves the labels of those removed internal paths dangling (a rescan deletes+reinserts `contents`, which does not cascade to `label_contents`). Those orphans are likewise retained by default — consistent with the identity-keyed-memory model, so re-adding the item restores its label — and reclaimed only by this button.
 
-`storage_state` replaces the legacy `is_enabled` boolean (v21). It encodes three physical placements:
+`storage_state` replaces the legacy `is_enabled` boolean (v21). It encodes four physical placements / intents:
 
-| state                      | location                                              | content bytes live in                                |
-| -------------------------- | ----------------------------------------------------- | ---------------------------------------------------- |
-| `enabled`                  | main `AddonPackages` (`library_dir_id IS NULL`)       | bare `Foo.1.var`                                     |
-| `disabled` (marker)        | main `AddonPackages` (`library_dir_id IS NULL`)       | bare `Foo.1.var` + empty `Foo.1.var.disabled` marker |
-| `disabled` (legacy suffix) | main `AddonPackages` (`library_dir_id IS NULL`)       | `Foo.1.var.disabled` (no bare sibling)               |
-| `disabled` (Qvaro rename)  | main `AddonPackages` (`library_dir_id IS NULL`)       | `Foo.1.DISABLED` (no bare sibling)                   |
-| `offloaded`                | a registered aux library directory (`library_dir_id`) | bare `Foo.1.var`                                     |
+| state                      | location                                               | content bytes live in                                |
+| -------------------------- | ------------------------------------------------------ | ---------------------------------------------------- |
+| `enabled`                  | main `AddonPackages` (`library_dir_id IS NULL`)        | bare `Foo.1.var`                                     |
+| `disabled` (marker)        | main `AddonPackages` (`library_dir_id IS NULL`)        | bare `Foo.1.var` + empty `Foo.1.var.disabled` marker |
+| `disabled` (legacy suffix) | main `AddonPackages` (`library_dir_id IS NULL`)        | `Foo.1.var.disabled` (no bare sibling)               |
+| `disabled` (Qvaro rename)  | main `AddonPackages` (`library_dir_id IS NULL`)        | `Foo.1.DISABLED` (no bare sibling)                   |
+| `offloaded`                | a registered _offload_-role aux dir (`library_dir_id`) | bare `Foo.1.var`                                     |
+| `archived`                 | a registered _archive_-role aux dir (`library_dir_id`) | bare `Foo.1.var`                                     |
 
-For dependency-graph purposes, `disabled` and `offloaded` behave identically (the package is unavailable to VaM at runtime). Three on-disk encodings express "disabled" in main: VaM's native **marker** style keeps the real `Foo.1.var` in place beside an empty `Foo.1.var.disabled` sentinel (the marker's presence is the disable signal); the **legacy suffix** style — used by older versions of this app and some external tools — renames the content to `Foo.1.var.disabled` with no bare sibling; and the **Qvaro** style (from the Qvaro tool) renames the content to `Foo.1.DISABLED` — the whole `.var` extension replaced by `.DISABLED` (uppercase, matched case-insensitively) — again with no bare sibling. We support _reading_ all three; the legacy-suffix and Qvaro cases are identical to the classifier ("content in the disabled sibling, no bare `.var`") and differ only in the sibling's spelling. We deliberately do **not** store which encoding a row uses: the DB keeps only the canonical bare `filename`, `storage_state`, and `subpath`. Where the content bytes physically live is re-derived from disk on demand by `resolveContentPath` (`src/main/library-dirs.js`), which probes the bare + disabled-sibling sizes via `classifyMainVar` (`src/main/disable-layout.js`) for disabled rows and short-circuits to the nominal bare path for everything else; `classifyMainVarOnDisk` tries the `.var.disabled` spelling first and falls back to the `.DISABLED` rename. Reads that need the bytes are rare, one-off, and already touch the disk, so a couple of extra `stat`s cost nothing while keeping the disk the single source of truth — no cached column to go stale. App-initiated disables always produce the marker style. All app-initiated transitions go through a single `applyStorageState` chokepoint that normalizes content to the bare name, reconciles the marker, updates the DB (`storage_state`, `library_dir_id`), patches memory, and suppresses the resulting watcher events atomically. Aux dirs must live on the same filesystem as main `AddonPackages` (validated by a probe-rename when the dir is registered), so a plain rename is always sufficient. Aux dirs are always suffix-less (offloaded == active); a stray `.var.disabled` there is normalized to bare `.var` on scan/add.
+Canonical values and shared predicates live in `src/shared/storage-state-predicates.js`. Activeness ordering for dep landing / re-settle is **enabled > disabled > offloaded > archived**.
+
+**Why a fourth state, not a flag on offloaded.** Offload is a popular _stronger disable_ (VaM loads faster; deps still demanded; one click to re-enable). Conflating archive with offload would silently change that for existing users. Archive is a separate **intent**: cold storage / local wishlist, indexed and browsable, but the app makes no demands on its behalf. Guiding intuition: _behaves like offload except it doesn't demand missing deps, and it prunes or re-downloads deps on transitions into/out of the archive._ Pruning is why Archive must be an explicit, well-explained action; users who want deps kept should offload instead. "Out of the way by default" is a guideline, not a hard constraint: archived packages may appear where the user is explicitly looking at everything (Content All, dep trees, stats totals).
+
+**Demand-side vs supply-side.** Exclusion is on the _demand_ side (skip archived dependents when aggregating Missing / Install-All / Broken / Updates). On the _supply_ side an archived package still resolves refs (it's the best download source: already local), so "Enable disabled dependencies" pulls it out of the archive instead of re-downloading. Per-package `missingDeps` stays computed so Install-from-archive can show the download bill. Stats totals / tag / author / size **include** archived (space that _is_ taken should be reflected; archive saves space by pruning, not by hiding numbers). Hub enrichment/thumbnails continue: browsing the hoard is a core activity.
+
+**Soft demand (Rule 1, one-liner for users):** _the archive never demands anything the Hub can restore, but holds on to what's irreplaceable._ Archived packages are never orphan/cascade targets themselves (hoard contents only leave via explicit Remove). See §9 Demand & settling.
+
+**Location implies state (dir role, not a per-package flag).** Matches the primary hoard flow (dump a thousand files into a folder) and survives external tools, rescans, and DB rebuilds with zero ceremony. Scanner/watcher derive `archived` vs `offloaded` from `library_dirs.archive`; `applyStorageState` validates role↔state pairing.
+
+Three on-disk encodings express "disabled" in main: VaM's native **marker** style keeps the real `Foo.1.var` in place beside an empty `Foo.1.var.disabled` sentinel (the marker's presence is the disable signal); the **legacy suffix** style — used by older versions of this app and some external tools — renames the content to `Foo.1.var.disabled` with no bare sibling; and the **Qvaro** style (from the Qvaro tool) renames the content to `Foo.1.DISABLED` — the whole `.var` extension replaced by `.DISABLED` (uppercase, matched case-insensitively) — again with no bare sibling. We support _reading_ all three; the legacy-suffix and Qvaro cases are identical to the classifier ("content in the disabled sibling, no bare `.var`") and differ only in the sibling's spelling. We deliberately do **not** store which encoding a row uses: the DB keeps only the canonical bare `filename`, `storage_state`, and `subpath`. Where the content bytes physically live is re-derived from disk on demand by `resolveContentPath` (`src/main/library-dirs.js`), which probes the bare + disabled-sibling sizes via `classifyMainVar` (`src/main/disable-layout.js`) for disabled rows and short-circuits to the nominal bare path for everything else; `classifyMainVarOnDisk` tries the `.var.disabled` spelling first and falls back to the `.DISABLED` rename. Reads that need the bytes are rare, one-off, and already touch the disk, so a couple of extra `stat`s cost nothing while keeping the disk the single source of truth — no cached column to go stale. App-initiated disables always produce the marker style. All app-initiated transitions go through a single `applyStorageState` chokepoint that normalizes content to the bare name, reconciles the marker, updates the DB (`storage_state`, `library_dir_id`), patches memory, and suppresses the resulting watcher events atomically. Aux dirs must live on the same filesystem as main `AddonPackages` (validated by a probe-rename when the dir is registered), so a plain rename is always sufficient. Cross-disk archive dirs are the natural end state (hoard on a cheap HDD) but are an explicit v1 non-goal, deferred with the broader cross-FS/symlink work; keep the same-FS error honest. Aux dirs are always suffix-less (offloaded/archived == bare); a stray `.var.disabled` there is normalized to bare `.var` on scan/add.
 
 A `.var` is valid anywhere under a library root, not only at the top level — VaM loads packages from any subfolder of `AddonPackages`. The `subpath` column records that relative folder (POSIX-style, `''` at the root); `pkgVarPath(pkg)` joins `library dir + subpath + filename` to the nominal bare path (writers/deleters and the companion-thumbnail lookup use this), while `resolveContentPath(pkg)` layers the on-demand disk probe on top for readers that open the archive of a possibly suffix-disabled package. `applyStorageState` preserves `subpath` across all transitions: an enabled/disabled flip renames in place inside the subfolder, and an offload mirrors the same relative subpath under the aux dir (creating it as needed), so an offload→enable round-trip is lossless. The scanner records `subpath` at discovery and reconciles it on a stat-cache hit (a same-bytes move into/out of a subfolder updates the column without re-reading the archive). The companion thumbnail (`Foo.1.jpg` next to `Foo.1.var`) is found via `dirname(pkgVarPath)`, so it tracks the package into subfolders for free.
 
-### `library_dirs` — Offload Library Directories
+### `library_dirs` — Aux Library Directories (offload / archive)
 
-Registered offload directories. Main `AddonPackages` is implicit (derived from `vam_dir`) and represented by `packages.library_dir_id IS NULL`; only aux dirs live in this table.
+Registered aux directories. Main `AddonPackages` is implicit (derived from `vam_dir`) and represented by `packages.library_dir_id IS NULL`; only aux dirs live in this table. Each aux dir has a **role**: offload (default) or archive (`archive = 1`).
 
 ```sql
 CREATE TABLE library_dirs (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  path       TEXT UNIQUE NOT NULL,
-  created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  path           TEXT UNIQUE NOT NULL,
+  created_at     INTEGER NOT NULL DEFAULT (unixepoch()),
+  browser_assist INTEGER NOT NULL DEFAULT 0,  -- v26: BrowserAssist-managed offload dir
+  archive        INTEGER NOT NULL DEFAULT 0   -- v29: archive-role dir (vs offload)
 );
 ```
+
+`library_dirs.archive` is the intake switch (location ⇒ state). Role flips (`library-dirs:set-role`) re-derive every package's `storage_state` in that dir but leave `is_direct` alone (sticky across flips/moves so a stored dep doesn't become "Installed" and an archived primary doesn't get demoted into the orphan cascade). Archive→offload warns that the hoard will start demanding missing deps; offload→archive that pointed at by `disable_behavior` resets that setting to `'suffix'` (otherwise disable would silently land in archive semantics). Settings gates that confirmation on the dir being non-empty: an empty folder has nothing to reclassify, so its switch applies instantly, which is what makes "register the folder first, pick its role after" viable with no modal in the add path. BrowserAssist / var*browser suggestions stay \_offload* role (those tools' semantics are VaM speedup, not prune); users convert in Settings if they want archive.
 
 The scanner walks every registered library dir recursively; the watcher monitors all of them; a package moved between dirs (or into a different subfolder) by an external tool is reconciled as a move (single update of `storage_state` + `library_dir_id` + `subpath`) rather than uninstall + reinstall — so labels and other FK-bound settings survive. Removing an aux dir with no packages is a plain delete (`ON DELETE RESTRICT` guards the FK); force-removing one that still holds packages (`removeLibraryDirTombstoningPackages`) does not delete those rows — it tombstones them (see `missing_since`) and detaches `library_dir_id` so the RESTRICT lifts, leaving the on-disk `.var`s in place. Re-adding the folder and rescanning resurrects each row with its labels/overrides intact, so a force-remove is recoverable, not destructive.
 
@@ -604,6 +621,8 @@ Schema is forward-only. New installs go through `createSchema` directly at the l
 | v25     | `hub_wishlist`                                                   |
 | v26     | `library_dirs.browser_assist`                                    |
 | v27     | `packages.missing_since` (soft-delete tombstones)                |
+| v28     | Normalize accidental `.disabled` content labels (data-only)      |
+| v29     | `library_dirs.archive` (archive-role aux dirs)                   |
 
 ---
 
@@ -613,27 +632,28 @@ All library business logic — filtering, sorting, dependency resolution, conten
 
 ### Core Indexes
 
-| Structure                      | Type                                           | Description                                                |
-| ------------------------------ | ---------------------------------------------- | ---------------------------------------------------------- |
-| `packageIndex`                 | `Map<filename, PackageObj>`                    | All packages keyed by filename                             |
-| `groupIndex`                   | `Map<packageName, filename[]>`                 | Package group → all version filenames                      |
-| `forwardDeps`                  | `Map<filename, [{ref, resolved, resolution}]>` | Resolved dependency edges per package                      |
-| `reverseDeps`                  | `Map<filename, Set<filename>>`                 | Reverse edges: who depends on this package                 |
-| `contentItems`                 | `Array<ContentItem>`                           | All gallery-visible content items                          |
-| `contentItemsDeduped`          | `Array<ContentItem>`                           | Cross-version deduplicated content                         |
-| `contentByPackage`             | `Map<filename, ContentItem[]>`                 | Content grouped by owning package                          |
-| `prefsMap`                     | `Map<"filename/path", {hidden, favorite}>`     | Visibility/favorite state from sidecar files               |
-| `morphCountByPackage`          | `Map<filename, number>`                        | Morph count per package                                    |
-| `aggregateMorphCountMap`       | `Map<filename, number>`                        | Morph count including transitive dependencies              |
-| `removableSizeMap`             | `Map<filename, number>`                        | Bytes freed if package is uninstalled                      |
-| `orphanSet`                    | `Set<filename>`                                | Direct packages with no reverse deps (considering cascade) |
-| `directOrphanSet`              | `Set<filename>`                                | Direct packages with strictly zero reverse deps            |
-| `creatorsNeedingUserId`        | `Map<normalized, filenames[]>`                 | Authors missing Hub user IDs                               |
-| `labelsByPackage`              | `Map<filename, number[]>`                      | Label ids applied directly to each package                 |
-| `labelsByContent`              | `Map<"pkg\0path", number[]>`                   | Label ids applied directly to each content item            |
-| `extractedAppearanceBasenames` | `Set<basename>`                                | Basenames of loose appearance presets on disk              |
-| `extractedByPackage`           | `Map<filename, ContentItem[]>`                 | Extracted presets owned by each package (any version)      |
-| `stats`                        | `StatsObj`                                     | Aggregate counts and sizes                                 |
+| Structure                      | Type                                           | Description                                              |
+| ------------------------------ | ---------------------------------------------- | -------------------------------------------------------- |
+| `packageIndex`                 | `Map<filename, PackageObj>`                    | All packages keyed by filename                           |
+| `groupIndex`                   | `Map<packageName, filename[]>`                 | Package group → all version filenames                    |
+| `forwardDeps`                  | `Map<filename, [{ref, resolved, resolution}]>` | Resolved dependency edges per package                    |
+| `reverseDeps`                  | `Map<filename, Set<filename>>`                 | Reverse edges: who depends on this package               |
+| `contentItems`                 | `Array<ContentItem>`                           | All gallery-visible content items                        |
+| `contentItemsDeduped`          | `Array<ContentItem>`                           | Cross-version deduplicated content                       |
+| `contentByPackage`             | `Map<filename, ContentItem[]>`                 | Content grouped by owning package                        |
+| `prefsMap`                     | `Map<"filename/path", {hidden, favorite}>`     | Visibility/favorite state from sidecar files             |
+| `morphCountByPackage`          | `Map<filename, number>`                        | Morph count per package                                  |
+| `aggregateMorphCountMap`       | `Map<filename, number>`                        | Morph count including transitive dependencies            |
+| `removableSizeMap`             | `Map<filename, number>`                        | Bytes freed if package is uninstalled (demand Rule 1)    |
+| `orphanSet`                    | `Set<filename>`                                | Non-direct packages with no pinning dependents (Rule 1)  |
+| `directOrphanSet`              | `Set<filename>`                                | Non-direct packages with strictly zero reverse deps      |
+| `replaceableSet`               | `Set<filename>`                                | Deletion-grade Hub-replaceable filenames (exact version) |
+| `creatorsNeedingUserId`        | `Map<normalized, filenames[]>`                 | Authors missing Hub user IDs                             |
+| `labelsByPackage`              | `Map<filename, number[]>`                      | Label ids applied directly to each package               |
+| `labelsByContent`              | `Map<"pkg\0path", number[]>`                   | Label ids applied directly to each content item          |
+| `extractedAppearanceBasenames` | `Set<basename>`                                | Basenames of loose appearance presets on disk            |
+| `extractedByPackage`           | `Map<filename, ContentItem[]>`                 | Extracted presets owned by each package (any version)    |
+| `stats`                        | `StatsObj`                                     | Aggregate counts and sizes                               |
 
 ### Stats Object
 
@@ -641,16 +661,30 @@ All library business logic — filtering, sorting, dependency resolution, conten
 {
   directCount,      // packages with is_direct=1
   depCount,         // packages with is_direct=0
-  totalCount,       // all packages
-  brokenCount,      // packages with at least one missing dependency
+  totalCount,       // all packages (includes archived)
+  brokenCount,      // packages with at least one missing dependency (archived never broken)
   totalContent,     // total gallery-visible content items
-  totalSize,        // sum of all package sizes
+  totalSize,        // sum of all package sizes (includes archived)
   directSize,       // sum of direct package sizes
   depSize,          // sum of dependency package sizes
   contentByType,    // { Scenes: N, Looks: N, ... }
-  missingDepCount,  // unique missing dependency references
+  missingDepCount,  // missing/fallback refs demanded by non-archived packages only
 }
 ```
+
+`getStatusCounts()` also exposes `offloaded`, `archived`, `local`, etc. for Library facets. Totals include archived (disk reality); Broken / Missing / Updates exclude them (a hoard must not inflate actionable counts).
+
+### Replaceability (Local tag + deletion)
+
+Archive prune and uninstall must never delete bytes the Hub cannot restore. One tri-state (`packageReplaceability` in `store.js`) backs **both** the Library "Local" tag and every deletion decision, so the Archive dialog's "stored as irreplaceable" counts stay consistent with card tags, and the uninstall cascade stops over-promising.
+
+| Grade           | Meaning                                                                                  | Deletion | Display ("Local") |
+| --------------- | ---------------------------------------------------------------------------------------- | -------- | ----------------- |
+| `replaceable`   | Exact filename in packages.json filename index AND resource not in `nonDownloadableRids` | safe     | untagged          |
+| `irreplaceable` | Catalog loaded but exact filename absent, or resource flagged paid/unavailable           | keep     | Local             |
+| `unknown`       | No catalog loaded (offline first run before disk cache exists)                           | keep     | untagged          |
+
+**Why exact-version (not group-level).** Group-level would treat `Author.Pkg.3` as replaceable when the Hub only has `.5`; prune would delete bytes that fallback cannot restore. **Why consumers differ only on `unknown`:** deletion fails safe (pin/store); display stays untagged so an offline launch doesn't paint the whole library Local. Graph algorithms take a precomputed `replaceableSet` (keeps `graph.js` pure; empty set ⇒ nothing verifiably replaceable ⇒ archived dependents pin everything). Destructive archive preview refreshes the catalog like missing-deps; when unavailable, prune degrades to store and the dialog says so.
 
 ### Build Process
 
@@ -660,13 +694,14 @@ All library business logic — filtering, sorting, dependency resolution, conten
 2. If `!skipGraph`: build `groupIndex`, resolve all `forwardDeps`, compute `reverseDeps`
 3. Merge `prefsMap` into content items (hidden/favorite state)
 4. Deduplicate content across package versions (same stem + type → highest version wins)
-5. Compute `removableSizeMap` for every package
-6. Compute morph counts (own + transitive)
-7. Compute orphan sets
-8. Aggregate `stats`
-9. Refresh label junction maps (`refreshLabels`) and extracted-preset ownership indexes
+5. Build `nonDownloadableRids` + `replaceableSet` (before cascades that consume them)
+6. Compute `removableSizeMap` for every package (with `replaceableSet`)
+7. Compute morph counts (own + transitive)
+8. Compute orphan sets (with `replaceableSet` / Rule 1)
+9. Aggregate `stats` (archived excluded from missing/broken demand)
+10. Refresh label junction maps (`refreshLabels`) and extracted-preset ownership indexes
 
-The `skipGraph` fast path is used directly by callers that know the graph is unchanged (e.g. enable/disable toggles, type overrides).
+The `skipGraph` fast path is used directly by callers that know the graph is unchanged (e.g. enable/disable/offload toggles, type overrides). Writers that change the `archived` set or replaceability (archive / install-from-archive IPCs, scan, watcher, packages.json refresh) run a full `buildFromDb()`.
 
 ---
 
@@ -804,51 +839,33 @@ The loop is needed because adding a dep may unlock further deps whose only remai
 
 Return all transitive deps of the package that are currently disabled. When re-enabling a package, its disabled deps are re-enabled unconditionally (they were presumably disabled by a prior cascade-disable).
 
-#### `computeRemovableDeps` — fixed point
+#### `computeRemovableDeps` / `computeOrphanCascade` — demand Rule 1
 
-When uninstalling a package, identify which deps would become orphans:
+Both take a precomputed `replaceableSet` and pin via `dependentPins`: non-archived dependents always pin; archived dependents pin **only** local-only deps. Archived packages are never removable/orphan _targets_ (the hoard leaves only via explicit Remove). Empty `replaceableSet` fails safe (pin everything archive-needed). Consequences worth keeping in mind:
 
-```
-computeRemovableDeps(target):
-  toRemove = {target}
-  repeat until stable:
-    for dep in transitiveDeps(target):
-      if dep in toRemove or dep.is_direct: skip
-      if every d in reverseDeps[dep] is in toRemove:
-        toRemove.add(dep)
-  toRemove.remove(target)   # target handled separately
-  return toRemove, sum(sizes)
-```
+- Redownloadable dep needed only by archived packages → unpinned → safe to prune / show as orphan (Hub restores it on later Install).
+- Local-only dep needed only by archived packages → soft-pinned → never an orphan; re-settle relocates it into the archive.
+- Archiving a batch: co-archived packages must not pin each other's deps (otherwise two packages sharing a dep would never prune it).
+- "Remove orphans" needs no special archive disposal: Rule 1 already keeps archive-needed local-only deps out of the set.
 
-Pre-computed for every package during `buildFromDb()` and cached in `removableSizeMap`, so the Library UI can show "removes X deps, frees Y MB" with no recomputation on hover.
+`removableSizeMap` is still precomputed in `buildFromDb` for uninstall hover copy.
 
-#### `detectLeaves` — initial classification
+#### `detectLeaves` — wizard-only (sticky `is_direct`)
 
-Packages with zero reverse dependencies are "leaves" of the graph — nothing depends on them. On initial scan, leaves are classified as `is_direct = 1`; everything else starts as `is_direct = 0`.
+Competing concerns: archived _deps_ stored alongside their owner must not become "Installed" when something activates them; archived _primaries_ must not get stealth-demoted into Dependencies and later swept by uninstall. Resolution: **`is_direct` is sticky and never guessed across state transitions.** Archiving preserves it; cascade-activation preserves it; only **explicit** Install-from-archive selection promotes.
 
-This heuristic works because in a typical VaM library, packages the user cares about (scenes, looks) sit at the leaves while shared resources (morphs, textures, plugins) sit deeper. Users can promote/demote afterward.
+Leaf detection therefore runs **only on the initial wizard scan** (user expects classification and will review it). Subsequent full scans register new rows in **any** dir as direct (matching the live watcher). Continued-use users don't expect a restart to demote drops; and inside a creator-pack hoard, leaf detection would misclassify internally-referenced packages as deps and expose them to cascades. Wrongly-primary is the safer error. (This deliberately changes main/offload scan behavior too, for watcher consistency.)
 
-#### `computeOrphanCascade` — fixed point
+#### Demand & settling (`computeInstallTarget` / `planResettle`)
 
-Identify dependency packages no direct package transitively needs:
+Two rules, one activeness ordering everywhere (offload and archive share it):
 
-```
-computeOrphanCascade():
-  directOrphans = {p for p in packageIndex if !p.is_direct and reverseDeps[p] is empty}
-  toRemove = copy(directOrphans)
-  repeat until stable:
-    for p in packageIndex where !p.is_direct and p not in toRemove:
-      if every d in reverseDeps[p] is in toRemove:
-        toRemove.add(p)
-  return { orphans: toRemove, directOrphans, totalSize }
-```
+1. **Demand (Rule 1):** above. Fail-safe toward "irreplaceable" when Hub data is missing/stale.
+2. **Settling (Rule 2):** a dep belongs at the **max activeness of its dependents**. Already how fresh downloads land (`computeInstallTarget`) and how cascade toggles work; archive extends the bottom of the ordering and applies it as a **re-settle pass** after uninstall / archive / remove-orphans. Soft demand made physical: a local-only dep whose remaining dependents are all archived relocates _into_ the archive.
 
-Two sets are exposed:
+**Why this shape.** Outcomes are **order-independent** (archive-then-uninstall ≡ uninstall-then-archive for shared deps). No separate "archive cleanup" maintenance action; ordinary flows converge. Also fixes a pre-existing offload gap: a dep whose last _enabled_ dependent is uninstalled now settles down to remaining offloaded dependents instead of staying enabled forever. Passive watcher paths don't re-settle (unattended external change); Rule 1 still protects local-only deps until the next active op. Stored deps _inside_ the archive whose owners were removed are allowed to linger (v1 non-goal). Direct packages are never pruned/re-settled/orphaned: user-owned regardless of state.
 
-- `directOrphanSet` — deps with strictly zero reverse deps (likely leftover from uninstalled packages)
-- `orphanSet` — full cascade, including deps whose entire dependent chain consists of other orphans
-
-The Library UI exposes orphans via a filter and a bulk "Remove all orphans" action.
+Plain "Enable disabled dependencies" on an active package **does not** auto-download: cascade-enabling archived deps just lifts demand-side exclusion (their missing refs become visible), matching today's disabled-dep behavior. Auto-queue is reserved for explicit Install-from-archive.
 
 ---
 
@@ -896,13 +913,13 @@ VaM stores hidden/favorite state as empty sidecar files alongside content items:
 
 `runScan(vamDir, onProgress)` runs on startup and on user request, emitting phases via `scan:progress` (see `scanner/index.js`):
 
-| Phase        | What it does                                                                                                                                                                                                                          | Key operations                                     |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `indexing`   | Walk every registered library directory (main `AddonPackages/` + any registered aux dirs) recursively for `.var` files; main also accepts `.var.disabled`. Aux-dir `.var.disabled` is normalized to bare `.var` on first observation. | directory traversal                                |
-| `reading`    | Per-file: skip if `file_mtime` + `size_bytes` match cache; otherwise read the ZIP, extract `meta.json`, classify and dedup content, write DB rows                                                                                     | `scanAndUpsert`                                    |
-| `graph`      | Drop DB rows for files no longer on disk; on initial scan / structural changes, rebuild graph and run leaf detection                                                                                                                  | `buildGraphOnly`, `detectLeaves`, `batchSetDirect` |
-| `local`      | Walk `Saves/` and `Custom/` for loose user content; classify with the same rules as packaged content; upsert under the `__local__` sentinel                                                                                           | `runLocalScan`                                     |
-| `finalizing` | Optional prefs extension migration; reload prefs; rebuild in-memory state                                                                                                                                                             | `readAllPrefs`, `buildFromDb()`                    |
+| Phase        | What it does                                                                                                                                                                                                                                                                                               | Key operations                                     |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `indexing`   | Walk every registered library directory (main `AddonPackages/` + any registered aux dirs) recursively for `.var` files; main also accepts `.var.disabled`. Aux-dir `.var.disabled` is normalized to bare `.var` on first observation. Aux role derives state: archive-role → `archived`, else `offloaded`. | directory traversal                                |
+| `reading`    | Per-file: skip if `file_mtime` + `size_bytes` match cache; otherwise read the ZIP, extract `meta.json`, classify and dedup content, write DB rows                                                                                                                                                          | `scanAndUpsert`                                    |
+| `graph`      | Tombstone gone files; rebuild graph on structural change. Leaf detection is **wizard-only** (sticky `is_direct` thereafter — see §9); subsequent scans mark new rows direct.                                                                                                                               | `buildGraphOnly`, `detectLeaves`, `batchSetDirect` |
+| `local`      | Walk `Saves/` and `Custom/` for loose user content; classify with the same rules as packaged content; upsert under the `__local__` sentinel                                                                                                                                                                | `runLocalScan`                                     |
+| `finalizing` | Optional prefs extension migration; reload prefs; rebuild in-memory state                                                                                                                                                                                                                                  | `readAllPrefs`, `buildFromDb()`                    |
 
 Hub metadata enrichment is driven separately by the first-run wizard via `wizard:enrich-hub`, which emits `hub-scan:progress` events (`lookup` / `cache` / `fetching` / `hub-finalize`). Outside first-run, enrichment is incremental and background-only.
 
@@ -959,7 +976,7 @@ The download manager (`src/main/downloads/manager.js`) handles concurrent packag
 1. **Enqueue**: `enqueueInstall({ resourceId, hubDetail, autoQueueDeps, packageName, asDependency, targetFilename })` creates a download entry. If `autoQueueDeps`, all missing transitive dependencies are also queued. `targetFilename` pins the enqueue to one concrete `.var` instead of everything the resource page lists, and lets a dead `resource_id` fall back to resolving that file through `findPackages` — both required by the update path, which offers a specific version.
 2. **Process queue**: `processQueue()` picks the next queued item (direct priority first) and starts up to `MAX_CONCURRENT` transfers.
 3. **Transfer**: Downloads to a `.var.tmp` file with resume support (HTTP Range headers). Validates the ZIP after completion (size check + integrity verification on mismatch).
-4. **Integration**: `postDownloadIntegrate()` runs on success — scans/classifies the package, stores Hub metadata, optionally hides dep content, rebuilds the graph, cascade-enables disabled deps, queues newly discovered transitive deps, and fires invalidation events. See §16 "Download → Library Cascade" for the full step-by-step.
+4. **Integration**: `postDownloadIntegrate()` runs on success — scans/classifies the package, stores Hub metadata, optionally hides dep content, rebuilds the graph, lands via `computeInstallTarget` (enabled > disabled > offloaded > archived), cascade-enables only when landing `enabled`, auto-queues transitive deps unless the landing state is `archived` (quiet), and fires invalidation events. See §16 "Download → Library Cascade" for the full step-by-step.
 
 ### Resume Support
 
@@ -1039,7 +1056,7 @@ Background Hub fetches (`getResourceDetail`, `scanHubDetails`, name lookup) pigg
 
 The watcher (`src/main/watcher.js`) runs three sets of `@parcel/watcher` subscriptions, one per concern:
 
-1. **packageWatcher** — one subscription per registered library directory (main `AddonPackages/` plus any registered aux/offload dirs), each recursive so `.var` files in subfolders are seen. Watches for `.var` and (in main only) `.var.disabled` files. Restarts whenever the `library_dirs` registry changes. On an unlink, the canonical is located by a single recursive walk across the library dirs (`locateVars`) before any delete, so a file moved to another dir or subfolder is reconciled as a single `setStorageState` UPDATE (state + `library_dir_id` + `subpath`), preserving package rows and their label FKs; only a truly-gone file is deleted.
+1. **packageWatcher** — one subscription per registered library directory (main `AddonPackages/` plus any registered aux offload/archive dirs), each recursive so `.var` files in subfolders are seen. Watches for `.var` and (in main only) `.var.disabled` files. Restarts whenever the `library_dirs` registry changes. On an unlink, the canonical is located by a single recursive walk across the library dirs (`locateVars`) before any delete, so a file moved to another dir or subfolder is reconciled as a single `setStorageState` UPDATE (state + `library_dir_id` + `subpath`, with aux role → `archived`/`offloaded`), preserving package rows and their label FKs; only a truly-gone file is tombstoned.
 2. **localWatcher** — one subscription per loose-content root (`Saves/`, `Custom/`) for content changes (debounced `runLocalScan`) and sibling `.hide`/`.fav` sidecars.
 3. **prefsWatcher** — single subscription on `AddonPackagesFilePrefs/` for `.hide`/`.fav` sidecar changes.
 
@@ -1057,7 +1074,7 @@ Events are debounced for 500ms and processed as a batch:
 - Removed files: Delete from database (CASCADE removes content rows)
 - After all changes: `buildFromDb()` to rebuild in-memory structures
 - Apply auto-hide rules to freshly-scanned packages via `computeAutoHidePathsForNewPackage` + `hidePackageContent` — same flow as `postDownloadIntegrate`, ensures externally-dropped `.var`s honor the foreign-hair / poses / clothing rules. Watcher-installed files are treated as `is_direct=1`, so the `deps` rule doesn't fire here.
-- **No cascade on external changes.** Enabling a package on disk (dropping its `.var`, or a peer app removing a `.var.disabled` marker) never cascade-enables its disabled/offloaded deps, and disabling never cascade-disables dependents. A watcher event is an unattended external change: silently flipping _other_ packages would race a peer app's own queued dep changes, enable content the user may not want, and be a surprising side effect. Unsatisfied deps simply show as "broken" in the graph. Cascade only happens on app/user-initiated transitions (`ipc/packages.js` toggle-enabled, `postDownloadIntegrate`). Freshly-scanned enabled packages are still Hub-enriched (metadata only, no state change).
+- **No cascade on external changes.** Enabling a package on disk (dropping its `.var`, or a peer app removing a `.var.disabled` marker) never cascade-enables its disabled/offloaded/archived deps, and disabling never cascade-disables dependents. A watcher event is an unattended external change: silently flipping _other_ packages would race a peer app's own queued dep changes, enable content the user may not want, and be a surprising side effect. Unsatisfied deps simply show as "broken" in the graph. Cascade and re-settle only happen on app/user-initiated transitions (`ipc/packages.js` toggle-enabled / archive / uninstall / remove-orphans, `postDownloadIntegrate`). Freshly-scanned enabled packages are still Hub-enriched (metadata only, no state change).
 - Emit `packages:updated`, `contents:updated`
 
 **Prefs events** (sidecar add/remove):
@@ -1113,19 +1130,20 @@ All renderer state is managed by **Zustand** stores (no Redux, no Context provid
 
 ### Store Overview
 
-| Store               | Purpose                            | Key State                                                                                                         |
-| ------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `useLibraryStore`   | Local packages, filters, detail    | `packages[]`, filter state, `selectedDetail`, `viewMode`, `selectedLabelIds`, `missingDeps`, `updateCheckResults` |
-| `useContentStore`   | Content items, filters, detail     | `contents[]`, filter state, `selectedItem`, `selectedPackage`, `selectedLabelIds`, `viewMode`, `expandedByType`   |
-| `useHubStore`       | Hub search, filters, detail        | `resources[]`, filter state, `detailData`, `cardMode`, `galleryMode` (`hub` \| `wishlist`), `filterOptions`       |
-| `useDownloadStore`  | Download queue and live progress   | `items[]`, `liveProgress{}`, `paused`, lookup maps by resource ID and package ref                                 |
-| `useInstalledStore` | Lightweight install status cache   | `byHubResourceId` map for Hub UI cross-referencing                                                                |
-| `useLabelsStore`    | Label definitions + counts         | `labels[]`, `byId`, `fetchLabels()` on `labels:updated`                                                           |
-| `useWishlistStore`  | Local Hub wishlist                 | `items[]`, `ids` Set, `load()` / `toggle()` backed by SQLite snapshots                                            |
-| `useViewStore`      | Active ribbon view (persisted)     | `view`: `'hub'` \| `'library'` \| `'content'` — Settings/Downloads never restored as the launch view              |
-| `useRemoteUiStore`  | Local-only UI state (persisted)    | `warningDismissed` (client-mode security banner); `blurThumbnails` (privacy blur) — both localStorage, not SQLite |
-| `useStatusStore`    | Status bar stats and scan progress | `stats{}`, `scan{}`                                                                                               |
-| `useToastStore`     | Notification toasts                | `toasts[]`, `add()`, `dismiss()`                                                                                  |
+| Store                 | Purpose                            | Key State                                                                                                         |
+| --------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `useLibraryStore`     | Local packages, filters, detail    | `packages[]`, filter state, `selectedDetail`, `viewMode`, `selectedLabelIds`, `missingDeps`, `updateCheckResults` |
+| `useLibraryDirsStore` | Aux dir registry (gating)          | `main` + `aux[]` from `library-dirs:list`; `selectArchiveDirs` gates Archived facet / Archive actions             |
+| `useContentStore`     | Content items, filters, detail     | `contents[]`, filter state, `selectedItem`, `selectedPackage`, `selectedLabelIds`, `viewMode`, `expandedByType`   |
+| `useHubStore`         | Hub search, filters, detail        | `resources[]`, filter state, `detailData`, `cardMode`, `galleryMode` (`hub` \| `wishlist`), `filterOptions`       |
+| `useDownloadStore`    | Download queue and live progress   | `items[]`, `liveProgress{}`, `paused`, lookup maps by resource ID and package ref                                 |
+| `useInstalledStore`   | Lightweight install status cache   | `byHubResourceId` map for Hub UI cross-referencing                                                                |
+| `useLabelsStore`      | Label definitions + counts         | `labels[]`, `byId`, `fetchLabels()` on `labels:updated`                                                           |
+| `useWishlistStore`    | Local Hub wishlist                 | `items[]`, `ids` Set, `load()` / `toggle()` backed by SQLite snapshots                                            |
+| `useViewStore`        | Active ribbon view (persisted)     | `view`: `'hub'` \| `'library'` \| `'content'` — Settings/Downloads never restored as the launch view              |
+| `useRemoteUiStore`    | Local-only UI state (persisted)    | `warningDismissed` (client-mode security banner); `blurThumbnails` (privacy blur) — both localStorage, not SQLite |
+| `useStatusStore`      | Status bar stats and scan progress | `stats{}`, `scan{}`                                                                                               |
+| `useToastStore`       | Notification toasts                | `toasts[]`, `add()`, `dismiss()`                                                                                  |
 
 ### Shared Patterns
 
@@ -1254,20 +1272,21 @@ flowchart TD
 
 Each step in the chain:
 
-| Step                              | Effect                                                                                                                                                                              |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scanAndUpsert`                   | Reads the ZIP, classifies contents, writes package + content rows to DB                                                                                                             |
-| `setHubDisplayName`               | Writes Hub metadata (display name, user ID, tags) to DB                                                                                                                             |
-| `hidePackageContent`              | Creates `.hide` sidecar files for the union of paths matched by any active auto-hide rule (deps, foreign hair/poses/clothing) — single pass via `computeAutoHidePathsForNewPackage` |
-| `readAllPrefs + setPrefsMap`      | Reloads all sidecar state from disk into the in-memory prefs map                                                                                                                    |
-| `buildGraphOnly`                  | Rebuilds `groupIndex`, `forwardDeps`, `reverseDeps` from DB (skips aggregates)                                                                                                      |
-| `computeCascadeEnable`            | Finds disabled transitive deps that should be re-enabled                                                                                                                            |
-| rename `.var.disabled` → `.var`   | Re-enables cascade deps on disk                                                                                                                                                     |
-| `findPackages` on Hub             | Batch-queries Hub API for still-missing transitive deps                                                                                                                             |
-| `insertDownload` + `processQueue` | Queues newly discovered deps and starts transfers                                                                                                                                   |
-| `buildFromDb(skipGraph)`          | Full aggregate rebuild (stats, orphans, morph counts) reusing the graph from above                                                                                                  |
-| `notify`                          | Pushes invalidation events to renderer, triggering re-fetches                                                                                                                       |
-| `resolvePackageThumbnails`        | Background async fetch of Hub thumbnails for new packages                                                                                                                           |
+| Step                                  | Effect                                                                                                                                                                              |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scanAndUpsert`                       | Reads the ZIP, classifies contents, writes package + content rows to DB                                                                                                             |
+| `setHubDisplayName`                   | Writes Hub metadata (display name, user ID, tags) to DB                                                                                                                             |
+| `hidePackageContent`                  | Creates `.hide` sidecar files for the union of paths matched by any active auto-hide rule (deps, foreign hair/poses/clothing) — single pass via `computeAutoHidePathsForNewPackage` |
+| `readAllPrefs + setPrefsMap`          | Reloads all sidecar state from disk into the in-memory prefs map                                                                                                                    |
+| `buildGraphOnly`                      | Rebuilds `groupIndex`, `forwardDeps`, `reverseDeps` from DB (skips aggregates)                                                                                                      |
+| `computeInstallTarget`                | Lands the new package at max dependent activeness (enabled > disabled > offloaded > archived)                                                                                       |
+| `computeCascadeEnable`                | When landing `enabled`: finds inactive transitive deps (incl. archived) to pull from disk                                                                                           |
+| rename / move via `applyStorageState` | Re-enables cascade deps on disk                                                                                                                                                     |
+| `findPackages` on Hub                 | Batch-queries Hub API for still-missing transitive deps — **skipped** when landing state is `archived`                                                                              |
+| `insertDownload` + `processQueue`     | Queues newly discovered deps and starts transfers                                                                                                                                   |
+| `buildFromDb(skipGraph)`              | Full aggregate rebuild (stats, orphans, morph counts) reusing the graph from above                                                                                                  |
+| `notify`                              | Pushes invalidation events to renderer, triggering re-fetches                                                                                                                       |
+| `resolvePackageThumbnails`            | Background async fetch of Hub thumbnails for new packages                                                                                                                           |
 
 #### Optimistic UI for Downloads
 
@@ -1298,11 +1317,10 @@ User clicks "Uninstall" on package A (which has dependents)
   Renderer: packages:uninstall IPC call
   │
   Main process:
-  ├─ Check reverseDeps[A] → has dependents → demote, don't delete
-  ├─ setPackageDirect(A, false)     ── DB: is_direct = 0
-  ├─ hidePackageContent(A, paths)   ── disk: create .hide sidecars
-  ├─ readAllPrefs() → setPrefsMap() ── in-mem: reload full prefs
-  ├─ buildFromDb(skipGraph: true)   ── in-mem: rebuild (graph unchanged)
+  ├─ Check reverseDeps[A] → non-archived dependents? → demote, don't delete
+  │     (archived-only dependents: delete if replaceable, else relocate into archive)
+  ├─ Else delete A + removable cascade (Rule 1 / replaceableSet); resettle survivors
+  ├─ setPackageDirect / hide / prefs / buildFromDb as needed
   ├─ notify('packages:updated')
   └─ notify('contents:updated')
   │
@@ -1331,7 +1349,13 @@ User clicks "Disable" on package A
   Renderer: fetchPackages → relink content package refs → toast with cascade count
 ```
 
-Re-enable inverts the matrix (`intent: 'enable'`) — an offloaded package returns to main `enabled`; a suffix-disabled package drops the `.disabled` suffix.
+Re-enable inverts the matrix (`intent: 'enable'`): an offloaded or archived package returns to main `enabled`; a suffix-disabled package drops the `.disabled` suffix. Enabling may cascade-pull inactive (including archived) deps from disk; it does **not** auto-queue their missing Hub downloads (that surprise bill is exactly what archive exists to avoid), so auto-queue stays behind the explicit Install-from-archive flow.
+
+#### Archive / Install from archive
+
+Two headline gestures. **Install from archive** is primary-styled _install_ (not muted enable) because it triggers dependency downloads; the confirm shows the bill (sizes via the same Hub enrichment path as Missing's "Install All") and notes deps activated from disk vs Hub. **Archive…** is available from any current state, only when ≥1 archive dir is registered (contentious: trades discoverability for safety; no destructive-adjacent action with a Settings detour). Prune is the default radio because reclaiming space is why someone archives instead of offloading; Store keeps the unneeded closure self-contained. Local-only deps are never deleted either way. The confirm dialog is the canonical home of the destructive-prune explanation (the Settings role switch's live description, its comparison grid, and the facet empty state cover the quieter semantics; registering the first archive dir only announces the unlock in a toast, since a modal there would tax a flip that is otherwise free and reversible).
+
+Mechanically: `packages:archive` moves the batch, rebuilds (Rule 1 demand lifts), then `resettleDeps` over the closure (`prune` vs `store`). `packages:install-from-archive` enables (cascade from disk), promotes **only** the explicitly selected filenames, then `enqueueInstallMissing` transitively. Preview IPC degrades prune→store when the Hub catalog is unavailable. Uninstall / remove-orphans share the same re-settle pass; uninstall's demote gate counts only **non-archived** dependents (archived-only demand does not keep a package alive if it's Hub-replaceable; relocate into archive if local-only).
 
 ### Data Staleness and Consistency
 
@@ -1429,7 +1453,7 @@ A generic, resizable filter sidebar used by all three main views. Supports these
 | `labels-autocomplete` | Multi-select labels with colored chips + inline manage/rename menu      |
 | `select`              | Dropdown select                                                         |
 
-Features: resizable width (persisted to localStorage), global search bar at top, collapsible lists (>6 items with "Show more" toggle).
+Features: resizable width (persisted to localStorage), global search bar at top, collapsible lists (>6 items with "Show more" toggle). Library puts **Archived** on the Status axis (not Enabled): Enabled slices _your library_ by activity; Archived is a separate shelf. Gated until an archive dir exists; other Status facets exclude archived from list _and_ count. Selecting Archived greys out Enabled (no layout shift: every archived package is inactive by definition). `is:archived` exists for symmetry/Content search; inside a non-Archived Status facet it matches nothing by design.
 
 ### ResizeHandle
 
@@ -1462,7 +1486,7 @@ Floating control mounted by `VirtualGrid` when the scroll container is far from 
 
 ### StorageStateChip
 
-Badge showing `enabled` / `disabled` / `offloaded` on package detail panels.
+Badge for inactive placements. ARCHIVED chip tooltip is the one-line version of the tier ("cold storage; no missing-dep nags"); fuller explanation lives in Settings inline copy / first-use dialog / Archive confirm / Archived facet empty state. The tier is non-obvious (a folder that changes package semantics; an action that can delete dep files).
 
 ---
 
@@ -1487,19 +1511,22 @@ Handlers live under `src/main/ipc/` split per domain (`packages.js`, `contents.j
 | `packages:list`                  | All packages (filtering done client-side)                                                         |
 | `packages:detail`                | Single package with deps, dependents, contents                                                    |
 | `packages:stats`                 | Aggregate stats (see §8)                                                                          |
-| `packages:status-counts`         | Direct/dependency/broken/orphan counts                                                            |
+| `packages:status-counts`         | Direct/dependency/broken/orphan/local/offloaded/archived/missingUnique counts                     |
 | `packages:type-counts`           | Counts grouped by package type                                                                    |
 | `packages:install`               | Install by Hub resource (with optional dep auto-queue)                                            |
 | `packages:install-missing`       | Install a single missing dep of one package                                                       |
-| `packages:install-all-missing`   | Install every missing ref across the library                                                      |
+| `packages:install-all-missing`   | Install every missing ref across the library (skips archived dependents)                          |
 | `packages:install-deps-batch`    | Install a renderer-supplied list of missing refs                                                  |
 | `packages:install-dep`           | Install a single dep by Hub file record                                                           |
-| `packages:promote`               | Promote dep → direct (single filename or array); auto-enables if disabled/offloaded               |
-| `packages:uninstall`             | Single filename or array; demotes instead of deleting when dependents remain                      |
+| `packages:promote`               | Promote dep → direct (single filename or array); auto-enables if disabled/offloaded/archived      |
+| `packages:uninstall`             | Single filename or array; demotes when non-archived dependents remain; re-settles survivors       |
 | `packages:toggle-enabled`        | Toggle disable/enable/offload via `applyStorageState` (cascade-aware; honors `disable_behavior`)  |
 | `packages:set-enabled`           | Set enabled/disabled for an explicit filename list                                                |
+| `packages:archive`               | Move packages into an archive dir; prune or store unneeded deps (`depMode`)                       |
+| `packages:archive-preview`       | Read-only prune/store size preview for the Archive dialog                                         |
+| `packages:install-from-archive`  | Enable selected archived packages, promote them, enqueue transitive missing deps                  |
 | `packages:force-remove`          | Delete a package regardless of dependents                                                         |
-| `packages:remove-orphans`        | Bulk-remove every package in `orphanSet`                                                          |
+| `packages:remove-orphans`        | Bulk-remove every package in `orphanSet`; re-settles surviving deps                               |
 | `packages:set-type-override`     | Override the auto-detected type                                                                   |
 | `packages:setHubResource`        | Manually link a local package to a Hub resource id                                                |
 | `packages:missing-deps`          | Aggregated missing-dep data for Library's "missing" filter                                        |
@@ -1624,12 +1651,16 @@ Dropping `.var` files (local or remote client) uses a batch protocol in `src/mai
 
 #### Library directories (`src/main/ipc/library-dirs.js`)
 
-| Channel               | Purpose                                                   |
-| --------------------- | --------------------------------------------------------- |
-| `library-dirs:list`   | Main path + registered aux dirs with package stats        |
-| `library-dirs:browse` | Native folder picker for a new aux dir                    |
-| `library-dirs:add`    | Register aux dir (same-FS probe), rescan, restart watcher |
-| `library-dirs:remove` | Remove empty aux dir; reset `disable_behavior` if needed  |
+| Channel                           | Purpose                                                                                 |
+| --------------------------------- | --------------------------------------------------------------------------------------- |
+| `library-dirs:list`               | Main path + registered aux dirs (`archive`, `browserAssist`, package stats)             |
+| `library-dirs:browse`             | Native folder picker for a new aux dir                                                  |
+| `library-dirs:add`                | Register aux dir (`opts.archive` for role; same-FS probe), rescan, restart watcher      |
+| `library-dirs:register`           | Register without rescan (used by Settings flows that scan separately)                   |
+| `library-dirs:suggest`            | Suggest known offload-tool paths (BrowserAssist / var*browser) as \_offload* role       |
+| `library-dirs:remove`             | Remove empty aux dir (or force-tombstone); reset `disable_behavior` if needed           |
+| `library-dirs:set-browser-assist` | Toggle BrowserAssist flag on an offload dir                                             |
+| `library-dirs:set-role`           | Flip offload ↔ archive; re-derive package `storage_state`; may reset `disable_behavior` |
 
 #### Preset extraction (`src/main/ipc/extract.js`)
 
@@ -1783,7 +1814,8 @@ src/
 │       └── assets/     (main.css)
 └── shared/ (modules + tests shared between main and renderer)
     ├── content-types.js, disable-behavior.js, hub-http.js, licenses.js, paths.js,
-    │   search-text.js, net-codec.js, remote-config.js, local-package.js, version.js
+    │   search-text.js, net-codec.js, remote-config.js, local-package.js, version.js,
+    │   storage-state-predicates.js
     └── *.test.js
 ```
 

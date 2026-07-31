@@ -16,6 +16,8 @@ import {
   resolveHubDownloadUrl,
   setPrefsMap,
   packageHasNoLookPresetTag,
+  packageReplaceability,
+  getReplaceableSet,
 } from './store.js'
 import { setPackagesIndexForTests } from './hub/packages-json.js'
 
@@ -866,6 +868,117 @@ describe('buildFromDb — package summary enrichment', () => {
     buildFromDb()
     const p = getFilteredPackages().find((x) => x.filename === 'Rem.A.1.var')
     expect(p?.removableSize).toBe(15)
+  })
+})
+
+describe('archive quiet semantics & replaceability', () => {
+  it('archived packages do not inflate Missing / broken / Installed counts', async () => {
+    const db = getDb()
+    seedPackage(db, {
+      filename: 'Hoard.H.1.var',
+      package_name: 'Hoard.H',
+      version: '1',
+      is_direct: 1,
+      storage_state: 'archived',
+      dep_refs: JSON.stringify(['Ghost.Missing.1']),
+    })
+    seedPackage(db, {
+      filename: 'Live.L.1.var',
+      package_name: 'Live.L',
+      version: '1',
+      is_direct: 1,
+      storage_state: 'enabled',
+      dep_refs: '[]',
+    })
+    buildFromDb()
+
+    const counts = getStatusCounts()
+    expect(counts.archived).toBe(1)
+    expect(counts.direct).toBe(1) // Live only — hoard excluded from Installed
+    expect(counts.broken).toBe(0) // archived never broken despite missing dep
+    expect(counts.missingUnique).toBe(0) // hoard makes no missing demand
+
+    const missing = getMissingDeps()
+    expect(missing.find((r) => r.ref === 'Ghost.Missing.1')).toBeUndefined()
+
+    const stats = getStats()
+    expect(stats.missingDepCount).toBe(0)
+    expect(stats.totalCount).toBe(2) // totals still include archived
+  })
+
+  it('exact-version replaceability: group on Hub but this version absent ⇒ not replaceable', async () => {
+    const db = getDb()
+    seedPackage(db, {
+      filename: 'Author.Pkg.3.var',
+      package_name: 'Author.Pkg',
+      version: '3',
+      is_direct: 0,
+      dep_refs: '[]',
+    })
+    // Hub only has .5 — group-level would wrongly call .3 replaceable.
+    setPackagesIndexForTests({
+      index: new Map([['Author.Pkg', { version: 5, filename: 'Author.Pkg.5.var', resourceId: 'r5' }]]),
+      fnIndex: new Map([['Author.Pkg.5.var', 'r5']]),
+    })
+    buildFromDb()
+
+    const row = getDb().prepare('SELECT * FROM packages WHERE filename = ?').get('Author.Pkg.3.var')
+    expect(packageReplaceability(row)).toBe('irreplaceable')
+    expect(getReplaceableSet().has('Author.Pkg.3.var')).toBe(false)
+
+    const pkg = getFilteredPackages().find((p) => p.filename === 'Author.Pkg.3.var')
+    expect(pkg?.isHubReplaceable).toBe(false)
+    expect(pkg?.isLocalOnly).toBe(true)
+  })
+
+  it('unknown catalog: display stays untagged Local, deletion set is empty (fail-safe)', async () => {
+    const db = getDb()
+    seedPackage(db, {
+      filename: 'Offline.O.1.var',
+      package_name: 'Offline.O',
+      version: '1',
+      is_direct: 1,
+      dep_refs: '[]',
+    })
+    setPackagesIndexForTests({ index: null, fnIndex: null })
+    buildFromDb()
+    const pkg = getFilteredPackages().find((p) => p.filename === 'Offline.O.1.var')
+    expect(pkg?.isLocalOnly).toBe(false) // unknown → untagged for display
+    expect(pkg?.isHubReplaceable).toBe(false) // unknown → not safe to delete
+  })
+
+  it('redownloadable dep needed only by archived package is an orphan; local-only is not', async () => {
+    const db = getDb()
+    seedPackage(db, {
+      filename: 'Arch.Owner.1.var',
+      package_name: 'Arch.Owner',
+      version: '1',
+      is_direct: 1,
+      storage_state: 'archived',
+      dep_refs: JSON.stringify(['Hub.Dep.1', 'Local.Dep.1']),
+    })
+    seedPackage(db, {
+      filename: 'Hub.Dep.1.var',
+      package_name: 'Hub.Dep',
+      version: '1',
+      is_direct: 0,
+      dep_refs: '[]',
+    })
+    seedPackage(db, {
+      filename: 'Local.Dep.1.var',
+      package_name: 'Local.Dep',
+      version: '1',
+      is_direct: 0,
+      dep_refs: '[]',
+    })
+    setPackagesIndexForTests({
+      index: new Map([['Hub.Dep', { version: 1, filename: 'Hub.Dep.1.var', resourceId: 'h1' }]]),
+      fnIndex: new Map([['Hub.Dep.1.var', 'h1']]),
+    })
+    buildFromDb()
+    expect(getOrphanSet().has('Hub.Dep.1.var')).toBe(true)
+    expect(getOrphanSet().has('Local.Dep.1.var')).toBe(false)
+    expect(getOrphanSet().has('Arch.Owner.1.var')).toBe(false)
   })
 })
 

@@ -2,9 +2,37 @@ import { create } from 'zustand'
 import { toast } from '@/components/Toast'
 import { updateTargetVersion, updateTargetFilename } from '@/lib/hub-availability'
 
+/**
+ * Package-group key for a dep ref or download `package_ref` (`Author.Name` from
+ * `Author.Name.5` / `.latest` / `.min3` / `.5.var`). Dep-well progress looks up
+ * by this group whenever the tree still shows a flexible token.
+ */
+export function packageGroupKey(ref) {
+  if (!ref) return null
+  const stem = String(ref).replace(/\.var$/i, '')
+  const m = stem.match(/^(.+)\.(latest|min\d+|\d+)$/i)
+  return m ? m[1] : null
+}
+
+/** Resolve a download row for a dep ref / concrete filename / flexible token. */
+export function lookupDownloadByRef(byPackageRef, byPackageGroup, ref) {
+  if (!ref || !byPackageRef) return null
+  const raw = String(ref)
+  const stem = raw.replace(/\.var$/i, '')
+  const candidates = [raw, stem]
+  if (stem === raw) candidates.push(`${raw}.var`)
+  for (const key of candidates) {
+    const d = byPackageRef.get(key)
+    if (d) return d
+  }
+  const group = packageGroupKey(raw)
+  return group && byPackageGroup ? byPackageGroup.get(group) || null : null
+}
+
 function buildIndexes(items) {
   const byHubResourceId = new Map()
   const byPackageRef = new Map()
+  const byPackageGroup = new Map()
   for (const d of items) {
     if (d.status === 'cancelled') continue
     if (d.hub_resource_id && !byHubResourceId.has(d.hub_resource_id)) byHubResourceId.set(d.hub_resource_id, d)
@@ -13,9 +41,11 @@ function buildIndexes(items) {
       // Also index by stem (without .var) so library dep refs match
       const stem = d.package_ref.replace(/\.var$/i, '')
       if (stem !== d.package_ref && !byPackageRef.has(stem)) byPackageRef.set(stem, d)
+      const group = packageGroupKey(d.package_ref)
+      if (group && !byPackageGroup.has(group)) byPackageGroup.set(group, d)
     }
   }
-  return { byHubResourceId, byPackageRef }
+  return { byHubResourceId, byPackageRef, byPackageGroup }
 }
 
 function toastUnresolvableDeps(unresolvedDeps) {
@@ -45,6 +75,7 @@ export const useDownloadStore = create((set, get) => ({
   initialized: false,
   byHubResourceId: new Map(),
   byPackageRef: new Map(),
+  byPackageGroup: new Map(), // Author.Name → download (flexible dep refs → concrete queue rows)
   pendingInstalls: new Set(), // hub resource IDs clicked but not yet in queue
   pendingDepInstalls: new Set(), // dep filenames whose Install click hasn't reached the queue yet
   pendingUpdates: new Set(), // library filenames whose Update click hasn't reached the queue yet
@@ -192,9 +223,14 @@ export const useDownloadStore = create((set, get) => ({
       const result = await window.api.packages.installMissing(filename)
       if (result?.unresolvedDeps?.length > 0) toastUnresolvableDeps(result.unresolvedDeps)
       if (result?.queued > 0) toast('Missing dependencies queued', 'success', 3000)
+      return result
     } catch (err) {
       toast(`Install failed: ${err.message}`)
       throw err
+    } finally {
+      // Belt-and-suspenders with downloads:updated — dep-well status needs the
+      // concrete queue rows before the next paint when possible.
+      await get().fetchItems()
     }
   },
 

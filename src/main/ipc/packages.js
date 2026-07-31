@@ -32,21 +32,41 @@ import {
   buildFromDb,
   patchTypeOverride,
   getFilteredContents,
-  isNotDownloadable,
+  getReplaceableSet,
+  rebuildReplaceableSet,
   resolveHubDownloadUrl,
   findLocalByFilename,
   effectivePackageType,
   recomputeInactiveDeps,
+  recomputeDemandAggregates,
+  getTransitiveMissingRefs,
 } from '../store.js'
-import { isPackageActive } from '@shared/storage-state-predicates.js'
+import { isPackageActive, isPackageArchived } from '@shared/storage-state-predicates.js'
 import { extractedDeletePaths, extractedHasSurvivor } from '../scenes/extracted-lifecycle.js'
 import { reconcileExtractedLifecycleAndResync, extractedItemsFor } from '../scenes/extracted-reconcile.js'
 import { hidePackageContent, unhidePackageContent, readAllPrefs } from '../vam-prefs.js'
 import { computeAutoHidePathsForNewPackage } from '../scanner/index.js'
-import { computeRemovableDeps, computeCascadeDisable, computeCascadeEnable } from '../scanner/graph.js'
+import {
+  computeRemovableDeps,
+  computeCascadeDisable,
+  computeCascadeEnable,
+  getTransitiveDeps,
+} from '../scanner/graph.js'
 import { LOCAL_PACKAGE_FILENAME } from '@shared/local-package.js'
-import { applyStorageState, parseDisableBehavior, nextStorageStateForIntent } from '../storage-state.js'
-import { pkgVarPath, resolveContentPath, getMainLibraryDirPath } from '../library-dirs.js'
+import {
+  applyStorageState,
+  parseDisableBehavior,
+  nextStorageStateForIntent,
+  computeInstallTarget,
+  planResettle,
+} from '../storage-state.js'
+import {
+  pkgVarPath,
+  resolveContentPath,
+  getMainLibraryDirPath,
+  isArchiveLibraryDir,
+  getArchiveLibraryDirs,
+} from '../library-dirs.js'
 import {
   enqueueInstall,
   enqueueInstallMissing,
@@ -181,6 +201,84 @@ async function cleanupExtractedPresetsForRemoval(removedFilenames) {
 }
 
 /**
+ * Cascade a storage-state change onto extracted presets owned by `filenames`
+ * (rename `.vap` <-> `.vap.disabled` to match their owners' activeness) and
+ * commit the moved loose-content rows. Renames are app-owned, so the watcher
+ * stays quiet. Every path that changes whether a package is active must run
+ * this — the enable/disable toggle, archiving, and the re-settle pass alike.
+ * Best-effort: a failure here never aborts the operation that caused it.
+ */
+async function syncExtractedPresets(filenames) {
+  const list = [...filenames]
+  if (list.length === 0) return
+  try {
+    const { changed } = await reconcileExtractedLifecycleAndResync({ vamDir: getSetting('vam_dir'), filenames: list })
+    if (changed > 0) notify('contents:updated')
+  } catch (err) {
+    console.warn('Extracted-preset lifecycle reconcile failed:', err.message)
+  }
+}
+
+/**
+ * Re-settle pass (demand Rule 2). After an operation changes some deps'
+ * dependent sets (uninstall / archive / remove-orphans), each surviving *non-direct*
+ * dep should sit at the max activeness of its remaining dependents (enabled >
+ * disabled > offloaded > archived). A dep more active than that settles down; a
+ * Hub-redownloadable dep whose remaining dependents are all archived is pruned
+ * (deleted — a later install re-downloads it); a local-only dep in that situation
+ * relocates into a dependent's archive dir (soft demand made physical). Direct
+ * packages are never touched, and archived deps (already at the bottom) are left be.
+ *
+ * The pure plan (settle-down / relocate / prune decisions) comes from `planResettle`;
+ * this executor applies it: `applyStorageState` for each settle/relocate decision,
+ * then the uninstall deletion path for the pruned set. `prune` false (Archive "store"
+ * mode) turns every would-be prune into a relocate-into-archive instead.
+ *
+ * Must run inside the caller's `withBulkWindow`; the caller rebuilds the graph
+ * (`buildFromDb`) afterwards. Returns `{ pruned, relocatedToArchive, settledDown }`.
+ */
+async function resettleDeps(candidates, { vamDir, prune = true }) {
+  const parsed = parseDisableBehavior(getSetting('disable_behavior'))
+  const disableBehaviorTargetId = parsed.kind === 'move-to' ? parsed.auxDirId : null
+  const { toPrune, decisions } = planResettle({
+    candidates,
+    packageIndex: getPackageIndex(),
+    reverseDeps: getReverseDeps(),
+    replaceableSet: getReplaceableSet(),
+    disableBehaviorTargetId,
+    prune,
+  })
+
+  let relocatedToArchive = 0
+  let settledDown = 0
+  for (const [fn, target] of decisions) {
+    try {
+      await applyStorageState(fn, target)
+      if (target.storageState === 'archived') relocatedToArchive++
+      else settledDown++
+    } catch (err) {
+      console.warn(`Re-settle failed for ${fn}:`, err.message)
+    }
+  }
+  // A dep settling enabled → offloaded/disabled/archived deactivates it, so its
+  // extracted presets must follow (the toggle chokepoint does the same).
+  await syncExtractedPresets(decisions.keys())
+
+  let pruned = 0
+  if (toPrune.size > 0) {
+    const toDelete = [...toPrune]
+    const removedExtracted = await cleanupExtractedPresetsForRemoval(toDelete)
+    for (const fn of toDelete) {
+      await unlinkPackagePhysicalAndAliases(getPackageIndex().get(fn), fn)
+      deletePackage(fn)
+    }
+    pruned = toDelete.length
+    if (removedExtracted && vamDir) await runLocalScan(vamDir)
+  }
+  return { pruned, relocatedToArchive, settledDown }
+}
+
+/**
  * Shared worker for `packages:toggle-enabled` and `packages:set-enabled`. The
  * caller supplies `intentFn(pkg)` returning `'enable' | 'disable'`; for each
  * filename we resolve the resulting storage_state target via the
@@ -225,6 +323,9 @@ async function applyStorageStateChange(filenames, intentFn) {
   return withBulkWindow(async () => {
     const out = []
     const affectedForExtracted = new Set()
+    // Enabling out of `archived` changes Rule 1 pinning (orphan/removable) —
+    // track so we recomputeDemandAggregates instead of the cheap inactive-only path.
+    let clearedArchive = false
     let lastProgressEmit = 0
     const emitProgressIfDue = () => {
       if (filenames.length <= 1) return
@@ -258,6 +359,7 @@ async function applyStorageStateChange(filenames, intentFn) {
           ? computeCascadeEnable(filename, getPackageIndex(), getForwardDeps())
           : computeCascadeDisable(filename, getPackageIndex(), getForwardDeps(), getReverseDeps())
 
+      if (isPackageArchived(pkg.storage_state)) clearedArchive = true
       try {
         await applyStorageState(filename, target)
         affectedForExtracted.add(filename)
@@ -274,6 +376,7 @@ async function applyStorageStateChange(filenames, intentFn) {
             if (!depPkg) return
             const depTarget = nextStorageStateForIntent({ current: depPkg.storage_state, intent, disableTarget })
             if (!depTarget) return
+            if (isPackageArchived(depPkg.storage_state)) clearedArchive = true
             try {
               await applyStorageState(depFilename, depTarget)
               affectedForExtracted.add(depFilename)
@@ -293,24 +396,14 @@ async function applyStorageStateChange(filenames, intentFn) {
       emitProgressIfDue()
     }
 
-    // Cascade the state change onto extracted presets owned by affected
-    // packages (rename .vap <-> .vap.disabled). Targeted by the flipped
-    // filenames — they're still present, so reachable via the store. Renames
-    // are app-owned, so the watcher stays quiet; the resync commits the moved
-    // loose-content rows to the store.
-    try {
-      const { changed } = await reconcileExtractedLifecycleAndResync({
-        vamDir: getSetting('vam_dir'),
-        filenames: affectedForExtracted,
-      })
-      if (changed > 0) notify('contents:updated')
-    } catch (err) {
-      console.warn('Extracted-preset lifecycle reconcile failed:', err.message)
-    }
+    // Targeted by the flipped filenames — they're still present, so reachable
+    // via the store.
+    await syncExtractedPresets(affectedForExtracted)
 
-    // Toggles patch packageIndex in place without a full rebuild, so refresh the
-    // one aggregate that tracks disabled/offloaded deps of active packages.
-    recomputeInactiveDeps()
+    // Toggles patch packageIndex in place without a full rebuild. Leaving archive
+    // changes Rule 1 pinning → orphan/removable; otherwise only inactive/stats.
+    if (clearedArchive) recomputeDemandAggregates()
+    else recomputeInactiveDeps()
 
     notify('packages:updated')
     return filenames.length === 1 ? out[0] : { ok: true, results: out }
@@ -453,19 +546,55 @@ export function registerPackageHandlers() {
     const filenames = normalizeFilenameArgs(filenameOrFilenames)
     return withBulkWindow(async () => {
       const results = []
+      const resettleCandidates = new Set()
       for (const filename of filenames) {
         const pkg = getPackageIndex().get(filename)
         if (!pkg) throw new Error(`Package not found: ${filename}`)
 
-        const dependents = getReverseDeps().get(filename)
-        if (dependents && dependents.size > 0) {
+        const replaceableSet = getReplaceableSet()
+        const dependents = getReverseDeps().get(filename) || new Set()
+        // Demote gate follows Rule 1: only *non-archived* dependents keep a package
+        // alive-as-dep. Archived dependents make no redownloadable demand, so a
+        // package needed only by the hoard is not stranded in the Dependencies facet.
+        const nonArchivedDeps = [...dependents].filter((d) => {
+          const dp = getPackageIndex().get(d)
+          return dp && !isPackageArchived(dp.storage_state)
+        })
+
+        if (nonArchivedDeps.length > 0) {
           setPackageDirect(filename, false)
           await syncAutoHideAfterDirectChange(vamDir, filename, false)
           const prefs = await readAllPrefs(vamDir)
           setPrefsMap(prefs)
           buildFromDb({ skipGraph: true })
+          // The demoted package itself may now settle down to its remaining
+          // (offloaded/disabled) dependents' tier — hand it to the re-settle pass.
+          resettleCandidates.add(filename)
           results.push({ ok: true, demoted: true })
           continue
+        }
+
+        // Needed only by archived packages (non-empty dependents, all archived):
+        // a local-only target is relocated into the archive rather than deleted;
+        // a replaceable one falls through to deletion as the user requested.
+        if (dependents.size > 0 && !replaceableSet.has(filename)) {
+          const target = computeInstallTarget({ dependents, packageIndex: getPackageIndex() })
+          if (target && target.storageState === 'archived') {
+            try {
+              // Capture deps before the move: once this package is archived it stops
+              // demanding its redownloadable deps (Rule 1), so they must re-settle too
+              // — otherwise the outcome depends on which end of the chain moved first.
+              const transitive = getTransitiveDeps(filename, getForwardDeps())
+              await applyStorageState(filename, target)
+              await syncExtractedPresets([filename])
+              buildFromDb()
+              for (const dep of transitive) resettleCandidates.add(dep)
+              results.push({ ok: true, relocatedToArchive: true })
+              continue
+            } catch (err) {
+              console.warn(`Relocate-to-archive on uninstall failed for ${filename}:`, err.message)
+            }
+          }
         }
 
         const { removableFilenames } = computeRemovableDeps(
@@ -473,13 +602,20 @@ export function registerPackageHandlers() {
           getPackageIndex(),
           getForwardDeps(),
           getReverseDeps(),
+          replaceableSet,
         )
-        // Keep local-only deps (not available on Hub) as orphans instead of auto-deleting
-        const filteredRemovable = [...removableFilenames].filter((fn) => {
-          const depPkg = getPackageIndex().get(fn)
-          return !depPkg || !isNotDownloadable(depPkg)
-        })
+        // Capture surviving transitive deps *before* deletion so the re-settle pass
+        // can settle down any that this package no longer demands.
+        const transitive = getTransitiveDeps(filename, getForwardDeps())
+        // Belt-and-suspenders with Rule 1 in computeRemovableDeps: that pass already
+        // keeps archive-soft-pinned local-only deps out of `removableFilenames`. This
+        // filter still drops any remaining non-replaceable members (unknown catalog,
+        // or removable only because *this* uninstall target was their last pin) so
+        // we never delete bytes we can't verifiably restore — they survive for
+        // orphan cleanup / re-settle instead.
+        const filteredRemovable = [...removableFilenames].filter((fn) => replaceableSet.has(fn))
         const toDelete = [filename, ...filteredRemovable]
+        const toDeleteSet = new Set(toDelete)
         // Remove extracted presets no surviving version still owns (before the
         // rows/index are torn down so candidates still resolve).
         const removedExtracted = await cleanupExtractedPresetsForRemoval(toDelete)
@@ -490,15 +626,261 @@ export function registerPackageHandlers() {
         // Reconcile the loose-content rows for any extracted presets we deleted
         // (their `__local__` rows would otherwise linger until the next scan).
         if (removedExtracted) await runLocalScan(vamDir)
+        for (const dep of transitive) if (!toDeleteSet.has(dep)) resettleCandidates.add(dep)
         buildFromDb()
         results.push({ ok: true, deleted: toDelete.length })
       }
 
+      // Settle surviving deps to their remaining dependents' tier (Rule 2), incl.
+      // relocating local-only deps into the archive and pruning redownloadable ones.
+      // Reported alongside the per-package results so the toast can mention deps
+      // that were deleted or moved beyond the ones the confirm dialog listed.
+      let resettled = null
+      if (resettleCandidates.size > 0) {
+        const res = await resettleDeps(resettleCandidates, { vamDir })
+        if (res.pruned || res.relocatedToArchive || res.settledDown) {
+          buildFromDb()
+          resettled = { prunedDeps: res.pruned, depsMovedToArchive: res.relocatedToArchive }
+        }
+      }
+
       notify('packages:updated')
       notify('contents:updated')
-      if (filenames.length === 1) return results[0]
-      return { ok: true, results }
+      if (filenames.length === 1) return { ...results[0], ...resettled }
+      return { ok: true, results, ...resettled }
     })
+  })
+
+  /**
+   * Best-effort Hub refresh for archive prune replaceability. Updates caches only:
+   *   1. packages.json if stale (exact-filename presence)
+   *   2. findPackages on currently-replaceable deps in the batch's closure
+   *      (downloadable flags → hub_resources.find_json)
+   *   3. rebuildReplaceableSet from those caches
+   * On any failure the existing local cache stays authoritative. Preview/execute
+   * just re-read getReplaceableSet() — no second Hub pass on Archive confirm.
+   */
+  ipcMain.handle('packages:refresh-archive-replaceability', async (_, filenameOrFilenames) => {
+    const filenames = normalizeFilenameArgs(filenameOrFilenames)
+    let catalogRefreshed = false
+    let findChecked = 0
+
+    const STALE_MS = 1 * 60 * 60 * 1000 // 1 hour
+    if (!getPackagesIndex() || getPackagesIndexAge() > STALE_MS) {
+      try {
+        await fetchPackagesJson()
+        catalogRefreshed = true
+        // Full rebuild so orphan/removable + replaceable all see the new index.
+        buildFromDb()
+      } catch (err) {
+        console.warn('[archive] packages.json refresh failed:', err.message)
+      }
+    }
+
+    const pkgIndex = getPackageIndex()
+    const replaceable = getReplaceableSet()
+    const stems = new Set()
+    for (const fn of filenames) {
+      const pkg = pkgIndex.get(fn)
+      if (!pkg || isPackageArchived(pkg.storage_state)) continue
+      for (const dep of getTransitiveDeps(fn, getForwardDeps())) {
+        if (dep === LOCAL_PACKAGE_FILENAME) continue
+        if (!replaceable.has(dep)) continue // already keep — Hub can't promote to prune
+        stems.add(dep.replace(/\.var$/i, ''))
+      }
+    }
+
+    if (stems.size > 0) {
+      try {
+        await findPackages([...stems])
+        findChecked = stems.size
+        // findPackages upserts hub_resources.find_json; rebuild deletion-grade set.
+        rebuildReplaceableSet()
+      } catch (err) {
+        console.warn('[archive] findPackages refresh failed:', err.message)
+      }
+    }
+
+    return { ok: true, catalogRefreshed, findChecked }
+  })
+
+  // Read-only preview for the Archive confirm dialog: per dep-mode, how many deps
+  // / how many bytes would be deleted vs moved into the archive. Both modes are
+  // returned because the dialog shows both radio options side by side — the user
+  // is choosing between these numbers. Uses the same `planResettle` core as
+  // execution against a batch-archived simulated index, so the numbers match what
+  // the action actually does. No network — Hub freshness is
+  // `packages:refresh-archive-replaceability` (dialog-owned).
+  ipcMain.handle('packages:archive-preview', async (_, { filenames: fnArg, archiveDirId } = {}) => {
+    const archiveDirs = getArchiveLibraryDirs()
+    const dirId = archiveDirId != null ? Number(archiveDirId) : (archiveDirs[0]?.id ?? null)
+    const filenames = normalizeFilenameArgs(fnArg)
+    // Same source replaceability reads from — a group-level index without the
+    // filename index would let the dialog claim a bill it can't actually verify.
+    const catalogUnavailable = !getPackagesFilenameIndex()
+
+    const pkgIndex = getPackageIndex()
+    const batchSet = new Set()
+    for (const fn of filenames) {
+      const p = pkgIndex.get(fn)
+      if (p && !isPackageArchived(p.storage_state)) batchSet.add(fn)
+    }
+    // Overlay the batch as archived-in-target-dir so Rule 1 (archived demand) applies.
+    const overlay = new Map()
+    for (const fn of batchSet) {
+      const p = pkgIndex.get(fn)
+      if (p) overlay.set(fn, { ...p, storage_state: 'archived', library_dir_id: dirId })
+    }
+    const simIndex = { get: (fn) => overlay.get(fn) ?? pkgIndex.get(fn) }
+    const closure = new Set()
+    for (const fn of batchSet) for (const dep of getTransitiveDeps(fn, getForwardDeps())) closure.add(dep)
+
+    const parsed = parseDisableBehavior(getSetting('disable_behavior'))
+    const disableBehaviorTargetId = parsed.kind === 'move-to' ? parsed.auxDirId : null
+    const summarize = (prune) => {
+      const { toPrune, decisions } = planResettle({
+        candidates: closure,
+        packageIndex: simIndex,
+        reverseDeps: getReverseDeps(),
+        replaceableSet: getReplaceableSet(),
+        disableBehaviorTargetId,
+        prune,
+      })
+      const totals = { deleteCount: 0, deleteBytes: 0, storeCount: 0, storeBytes: 0 }
+      for (const fn of toPrune) {
+        const p = pkgIndex.get(fn)
+        if (!p) continue
+        totals.deleteCount++
+        totals.deleteBytes += p.size_bytes || 0
+      }
+      for (const [fn, target] of decisions) {
+        if (target.storageState !== 'archived') continue // settle-down (disabled/offloaded), not moved into archive
+        const p = pkgIndex.get(fn)
+        if (!p) continue
+        totals.storeCount++
+        totals.storeBytes += p.size_bytes || 0
+      }
+      return totals
+    }
+    // Prune mode still stores the local-only deps it refuses to delete, so its
+    // `storeBytes` is the "kept, never deleted" figure rather than the whole closure.
+    return { archiveCount: batchSet.size, prune: summarize(true), store: summarize(false), catalogUnavailable }
+  })
+
+  // Archive the selected packages into an archive dir, then handle their now-unneeded
+  // dep closure per `depMode`: 'prune' deletes redownloadable deps (relocating local-only
+  // into the archive), 'store' moves the whole unneeded closure into the archive.
+  // Sticky `is_direct`; already-archived filenames are a no-op (no archive→archive moves).
+  // No Hub refresh here — the confirm dialog already ran refresh-archive-replaceability;
+  // unlikely the catalog moved between preview and click.
+  ipcMain.handle('packages:archive', async (_, { filenames: fnArg, archiveDirId, depMode } = {}) => {
+    const vamDir = getSetting('vam_dir')
+    if (!vamDir) throw new Error('VaM directory not configured')
+    const archiveDirs = getArchiveLibraryDirs()
+    if (archiveDirs.length === 0) throw new Error('No archive directory configured')
+    const dirId = archiveDirId != null ? Number(archiveDirId) : archiveDirs[0].id
+    if (!isArchiveLibraryDir(dirId)) throw new Error(`Not an archive directory: ${archiveDirId}`)
+    const mode = depMode === 'store' ? 'store' : 'prune'
+    const filenames = normalizeFilenameArgs(fnArg)
+
+    return withBulkWindow(async () => {
+      // 1. Move the selected packages into the archive (skip already-archived).
+      const archived = []
+      for (const filename of filenames) {
+        const pkg = getPackageIndex().get(filename)
+        if (!pkg) throw new Error(`Package not found: ${filename}`)
+        if (isPackageArchived(pkg.storage_state)) continue
+        try {
+          await applyStorageState(filename, { storageState: 'archived', libraryDirId: dirId })
+          archived.push(filename)
+        } catch (err) {
+          console.warn(`Archive move failed for ${filename}:`, err.message)
+        }
+      }
+      // 2. Rebuild so the batch's redownloadable demand lifts (Rule 1) and the
+      //    replaceable set reflects the fresh catalog.
+      buildFromDb()
+      // 3. The batch just went inactive, so its extracted presets follow it down.
+      await syncExtractedPresets(archived)
+      // 4. Re-settle the batch's dep closure: prune redownloadable / relocate local-only
+      //    (prune) or move the whole unneeded closure into the archive (store). Deps still
+      //    needed by non-archived packages settle down naturally instead of moving.
+      const closure = new Set()
+      for (const fn of archived) for (const dep of getTransitiveDeps(fn, getForwardDeps())) closure.add(dep)
+      let res = { pruned: 0, relocatedToArchive: 0, settledDown: 0 }
+      if (closure.size > 0) {
+        res = await resettleDeps(closure, { vamDir, prune: mode === 'prune' })
+        buildFromDb()
+      }
+      notify('packages:updated')
+      notify('contents:updated')
+      return {
+        ok: true,
+        archived: archived.length,
+        pruned: res.pruned,
+        storedToArchive: res.relocatedToArchive,
+        settledDown: res.settledDown,
+      }
+    })
+  })
+
+  // Install from archive: activate the explicitly selected archived packages and
+  // download their (transitively) missing dependencies. Thin composition of existing
+  // machinery — enable (cascade-enables inactive deps, incl. pulling archived deps out
+  // of the archive keeping their sticky is_direct), promote only the selected filenames
+  // to direct, then enqueue transitive missing downloads per selected package.
+  ipcMain.handle('packages:install-from-archive', async (_, filenameOrFilenames) => {
+    const vamDir = getSetting('vam_dir')
+    if (!vamDir) throw new Error('VaM directory not configured')
+    const filenames = normalizeFilenameArgs(filenameOrFilenames).filter((fn) => {
+      const pkg = getPackageIndex().get(fn)
+      return pkg && isPackageArchived(pkg.storage_state)
+    })
+    if (filenames.length === 0) return { ok: true, count: 0 }
+
+    // 1. Enable (moves to main enabled + cascade-enables inactive deps from disk).
+    await applyStorageStateChange(filenames, () => 'enable')
+
+    // 2. Promote only the explicitly selected packages to direct (explicit selection
+    //    is user intent); cascade-activated deps keep their sticky is_direct.
+    for (const filename of filenames) {
+      setPackageDirect(filename, true)
+      touchPackageFirstSeen(filename)
+      await syncAutoHideAfterDirectChange(vamDir, filename, true)
+    }
+    const prefs = await readAllPrefs(vamDir)
+    setPrefsMap(prefs)
+    buildFromDb({ skipGraph: true })
+
+    // 3. Queue the transitively-missing deps of each activated package from the Hub
+    //    (covers missing refs of the just-activated deps too).
+    let queued = 0
+    for (const filename of filenames) {
+      try {
+        const res = await enqueueInstallMissing(filename, true)
+        if (res && typeof res.queued === 'number') queued += res.queued
+      } catch (err) {
+        console.warn(`Install-from-archive dep enqueue failed for ${filename}:`, err.message)
+      }
+    }
+
+    notify('packages:updated')
+    notify('contents:updated')
+    return { ok: true, count: filenames.length, queued }
+  })
+
+  // Local-only preview for the Install-from-archive dialog: the same transitive
+  // missing refs `enqueueInstallMissing` will try to fetch. Renderer enriches
+  // these via `packages:enrich-from-hub` without blocking dialog open.
+  ipcMain.handle('packages:install-from-archive-preview', async (_, filenameOrFilenames) => {
+    const filenames = normalizeFilenameArgs(filenameOrFilenames)
+    const refs = new Set()
+    for (const fn of filenames) {
+      const pkg = getPackageIndex().get(fn)
+      if (!pkg || !isPackageArchived(pkg.storage_state)) continue
+      for (const ref of getTransitiveMissingRefs(fn, { includeFallbacks: true })) refs.add(ref)
+    }
+    return { refs: [...refs] }
   })
 
   ipcMain.handle('packages:set-type-override', (_, payload) => {
@@ -618,6 +1000,14 @@ export function registerPackageHandlers() {
 
     return withBulkWindow(async () => {
       let freedBytes = 0
+      // Surviving deps of the removed orphans may need to settle down now that an
+      // orphan no longer demands them (captured before deletion).
+      const resettleCandidates = new Set()
+      for (const fn of orphans) {
+        for (const dep of getTransitiveDeps(fn, getForwardDeps())) {
+          if (!orphans.has(dep)) resettleCandidates.add(dep)
+        }
+      }
       for (const fn of orphans) {
         const pkg = getPackageIndex().get(fn)
         if (pkg) freedBytes += pkg.size_bytes
@@ -626,9 +1016,15 @@ export function registerPackageHandlers() {
       }
 
       buildFromDb()
+      let movedToArchive = 0
+      if (resettleCandidates.size > 0) {
+        const res = await resettleDeps(resettleCandidates, { vamDir: getSetting('vam_dir') })
+        movedToArchive = res.relocatedToArchive
+        if (res.pruned || res.relocatedToArchive || res.settledDown) buildFromDb()
+      }
       notify('packages:updated')
       notify('contents:updated')
-      return { ok: true, count: orphans.size, freedBytes }
+      return { ok: true, count: orphans.size, freedBytes, movedToArchive }
     })
   })
 

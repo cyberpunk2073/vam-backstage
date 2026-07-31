@@ -28,12 +28,23 @@ import { getPackageIndex, patchStorageState } from './store.js'
 import { setStorageState } from './db.js'
 import { recordOwnedPath } from './watcher.js'
 import { notifyToast } from './notify.js'
-import { getLibraryDirPath, classifyMainVarOnDisk, isBrowserAssistLibraryDir } from './library-dirs.js'
+import {
+  getLibraryDirPath,
+  classifyMainVarOnDisk,
+  isBrowserAssistLibraryDir,
+  isArchiveLibraryDir,
+} from './library-dirs.js'
 import { writeSidecar, readSidecarSubpath, removeSidecar } from './browser-assist-sidecar.js'
 import { isLocalPackage } from '@shared/local-package.js'
 import { STORAGE_STATES } from '@shared/storage-state-predicates.js'
 
 const VALID_STORAGE_STATES = new Set(STORAGE_STATES)
+
+/** States whose bytes live bare inside an aux library dir (require a libraryDirId). */
+const AUX_STORAGE_STATES = new Set(['offloaded', 'archived'])
+
+/** enabled > disabled > offloaded > archived — used by planResettle settle-down check. */
+const ACTIVENESS = { enabled: 3, disabled: 2, offloaded: 1, archived: 0 }
 
 /**
  * Rename `from`→`to`, refusing to clobber anything unexpected already at `to`.
@@ -118,7 +129,7 @@ async function removeDisabledMarker(markerPath, contentPath) {
  */
 async function resolveCurrentContentPath(pkg, mainBare) {
   const subpath = pkg.subpath || ''
-  if (pkg.storage_state === 'offloaded') {
+  if (AUX_STORAGE_STATES.has(pkg.storage_state)) {
     const auxDir = getLibraryDirPath(pkg.library_dir_id)
     if (!auxDir) {
       throw new Error(`Cannot resolve current path for ${pkg.filename} (library_dir_id=${pkg.library_dir_id})`)
@@ -132,7 +143,7 @@ async function resolveCurrentContentPath(pkg, mainBare) {
 
 /**
  * @param {string} filename canonical .var filename (PK)
- * @param {{ storageState: 'enabled'|'disabled'|'offloaded', libraryDirId: number|null }} target
+ * @param {{ storageState: 'enabled'|'disabled'|'offloaded'|'archived', libraryDirId: number|null }} target
  * @returns {Promise<{ ok: boolean, fromPath: string|null, toPath: string|null, changed: boolean }>}
  */
 export async function applyStorageState(filename, target) {
@@ -144,11 +155,21 @@ export async function applyStorageState(filename, target) {
   if (!target || !VALID_STORAGE_STATES.has(target.storageState)) {
     throw new Error(`Invalid storageState: ${target?.storageState} (filename=${filename})`)
   }
-  if (target.storageState === 'offloaded' && target.libraryDirId == null) {
-    throw new Error(`Illegal target: offloaded requires a libraryDirId (filename=${filename})`)
+  // Offloaded and archived both live bare in an aux dir; the difference is the
+  // dir's *role* (offload vs archive), so validate the target dir's role matches
+  // the requested state — "location implies state" must not be violated by an
+  // app-driven move that puts an offloaded byte-copy into an archive dir.
+  if (AUX_STORAGE_STATES.has(target.storageState) && target.libraryDirId == null) {
+    throw new Error(`Illegal target: ${target.storageState} requires a libraryDirId (filename=${filename})`)
   }
-  if (target.storageState !== 'offloaded' && target.libraryDirId != null) {
+  if (!AUX_STORAGE_STATES.has(target.storageState) && target.libraryDirId != null) {
     throw new Error(`Illegal target: ${target.storageState} must have libraryDirId=null (filename=${filename})`)
+  }
+  if (target.storageState === 'archived' && !isArchiveLibraryDir(target.libraryDirId)) {
+    throw new Error(`Illegal target: archived requires an archive-role libraryDirId (filename=${filename})`)
+  }
+  if (target.storageState === 'offloaded' && isArchiveLibraryDir(target.libraryDirId)) {
+    throw new Error(`Illegal target: offloaded requires an offload-role libraryDirId (filename=${filename})`)
   }
 
   const pkg = getPackageIndex().get(filename)
@@ -163,6 +184,13 @@ export async function applyStorageState(filename, target) {
   // `<pkg>.var.json` sidecar recording the package's home in `AddonPackages` (its
   // "original folder"), so restore doesn't depend on the physical layout — BA
   // flattens to the aux root, we keep the mirrored subfolder, either works.
+  //
+  // Both checks are deliberately `offloaded`-only, not `AUX_STORAGE_STATES`: a BA
+  // dir converted to archive role still holds sidecars we didn't write and can't
+  // reconstruct, so leaving the archive must not delete them. Converting the dir
+  // back to offload then restores BA's own behavior intact — role flips stay
+  // reversible, at the cost of a stale sidecar beside a package that left an
+  // archive-role BA dir (harmless: BA restores to the root without one).
   const sourceIsBrowserAssist =
     pkg.storage_state === 'offloaded' && isBrowserAssistLibraryDir(pkg.library_dir_id ?? null)
   const targetIsBrowserAssist =
@@ -267,14 +295,19 @@ export function nextStorageStateForIntent({ current, intent, disableTarget }) {
 }
 
 /**
- * Compute install target for a freshly downloaded package, per plan §"Dep install target":
- * target = max(storage_state of installed dependents) under enabled > disabled > offloaded.
+ * Compute install target for a freshly downloaded package:
+ * target = max(storage_state of installed dependents) under enabled > disabled > offloaded > archived.
  *
  * Returns `null` when the file should stay enabled in main (the default landing state after
  * `scanAndUpsert`, so no relocation is needed). Returns a target otherwise.
  *
- * For offloaded targets, picks an aux dir from the dependents' homes — preferring the
- * configured `disable_behavior` target if it matches one of those dirs.
+ * For offloaded/archived targets, picks an aux dir from the dependents' homes — for offload
+ * preferring the configured `disable_behavior` target if it matches one of those dirs.
+ *
+ * The archived tier sits below offloaded: a dep whose *only* remaining dependents are
+ * archived settles into an archive dir (used by the re-settle pass to relocate a
+ * local-only dep alongside the hoard, and by a fresh download that is only demanded by
+ * archived packages so it lands quietly archived rather than active in main).
  *
  * Aux dir validity: dependents reference live aux dirs because `library-dirs:remove`
  * refuses to delete a non-empty dir (and the FK is `ON DELETE RESTRICT`), so any
@@ -291,23 +324,127 @@ export function computeInstallTarget({ dependents, packageIndex, disableBehavior
   let hasEnabled = false
   let hasDisabled = false
   const offloadDirs = new Set()
+  const archiveDirs = new Set()
   for (const fn of dependents) {
     const dep = packageIndex.get(fn)
     if (!dep) continue
     if (dep.storage_state === 'enabled') hasEnabled = true
     else if (dep.storage_state === 'disabled') hasDisabled = true
-    else if (dep.storage_state === 'offloaded' && dep.library_dir_id != null) {
-      offloadDirs.add(dep.library_dir_id)
-    }
+    else if (dep.storage_state === 'offloaded' && dep.library_dir_id != null) offloadDirs.add(dep.library_dir_id)
+    else if (dep.storage_state === 'archived' && dep.library_dir_id != null) archiveDirs.add(dep.library_dir_id)
   }
   if (hasEnabled) return null
   if (hasDisabled) return { storageState: 'disabled', libraryDirId: null }
-  if (offloadDirs.size === 0) return null
-  const targetId =
-    disableBehaviorTargetId != null && offloadDirs.has(disableBehaviorTargetId)
-      ? disableBehaviorTargetId
-      : offloadDirs.values().next().value
-  return { storageState: 'offloaded', libraryDirId: targetId }
+  if (offloadDirs.size > 0) {
+    const targetId =
+      disableBehaviorTargetId != null && offloadDirs.has(disableBehaviorTargetId)
+        ? disableBehaviorTargetId
+        : offloadDirs.values().next().value
+    return { storageState: 'offloaded', libraryDirId: targetId }
+  }
+  if (archiveDirs.size === 0) return null
+  return { storageState: 'archived', libraryDirId: archiveDirs.values().next().value }
+}
+
+/**
+ * Pure planner for the re-settle pass (demand Rule 2). Given candidate
+ * dep filenames and the current graph data, decide each *non-direct, non-archived*
+ * candidate's fate as it settles to the max activeness of its remaining dependents:
+ *   - target strictly less active than current → settle down (recorded in `decisions`)
+ *   - target archived + redownloadable + `prune` → prune (recorded in `toPrune`)
+ *   - target archived + local-only, or `prune` false → relocate into the archive
+ *     (recorded in `decisions` with an archived target)
+ *
+ * Pruned candidates are treated as gone when computing later candidates' dependents,
+ * and each decision feeds forward (via an internal overlay) so a dependency chain
+ * settles consistently and the outcome is order-independent. No side effects — the
+ * caller applies the plan (`applyStorageState` for decisions, delete for `toPrune`).
+ *
+ * Worklist, not a fixpoint sweep: a candidate only needs re-evaluating when one of
+ * its own dependents moved, so a decision re-enqueues exactly the candidates that
+ * watch it. Termination is by monotonicity — every re-evaluation that changes
+ * anything moves a candidate strictly down a four-level ordering.
+ *
+ * `packageIndex` is any `{ get(fn) }` view: the live store index for execution, or a
+ * simulated one (e.g. the archived batch overlaid) for a read-only dialog preview.
+ *
+ * @param {{
+ *   candidates: Iterable<string>,
+ *   packageIndex: { get(fn: string): any },
+ *   reverseDeps: Map<string, Set<string>>,
+ *   replaceableSet: Set<string>,
+ *   disableBehaviorTargetId?: number|null,
+ *   prune?: boolean,
+ * }} params
+ * @returns {{ toPrune: Set<string>, decisions: Map<string, { storageState: string, libraryDirId: number|null }> }}
+ */
+export function planResettle({
+  candidates,
+  packageIndex,
+  reverseDeps,
+  replaceableSet,
+  disableBehaviorTargetId = null,
+  prune = true,
+}) {
+  const overlay = new Map()
+  const get = (fn) => overlay.get(fn) ?? packageIndex.get(fn)
+  const simIndex = { get }
+  const toPrune = new Set()
+  const decisions = new Map()
+
+  const queue = [...new Set(candidates)]
+  // dependent filename → candidates whose target depends on that dependent's state.
+  const watchers = new Map()
+  for (const fn of queue) {
+    for (const d of reverseDeps.get(fn) || []) {
+      const list = watchers.get(d)
+      if (list) list.push(fn)
+      else watchers.set(d, [fn])
+    }
+  }
+  const queued = new Set(queue)
+  const enqueueWatchers = (fn) => {
+    for (const w of watchers.get(fn) || []) {
+      if (queued.has(w)) continue
+      queued.add(w)
+      queue.push(w)
+    }
+  }
+
+  for (let head = 0; head < queue.length; head++) {
+    const fn = queue[head]
+    queued.delete(fn)
+    if (toPrune.has(fn)) continue
+    const pkg = get(fn)
+    if (!pkg || pkg.is_direct || pkg.storage_state === 'archived') continue
+    const allDependents = reverseDeps.get(fn)
+    const dependents = allDependents ? new Set([...allDependents].filter((d) => !toPrune.has(d))) : null
+    const target = computeInstallTarget({ dependents, packageIndex: simIndex, disableBehaviorTargetId })
+    // null ⇒ an enabled dependent remains (stay put) or no dependents at all (leave
+    // to orphan cleanup — never pruned here). A prior decision reaching this on
+    // re-evaluation means every dependent that drove it has since been pruned —
+    // revert it and let the watchers reconsider.
+    if (!target) {
+      if (decisions.delete(fn)) {
+        overlay.delete(fn)
+        enqueueWatchers(fn)
+      }
+      continue
+    }
+    if ((ACTIVENESS[target.storageState] ?? -1) >= (ACTIVENESS[pkg.storage_state] ?? -1)) continue
+    if (target.storageState === 'archived' && prune && replaceableSet.has(fn)) {
+      toPrune.add(fn)
+      // A settle-down decision recorded on an earlier pass (before this candidate's
+      // own dependents moved) is superseded by the prune.
+      decisions.delete(fn)
+      overlay.delete(fn)
+    } else {
+      decisions.set(fn, { storageState: target.storageState, libraryDirId: target.libraryDirId })
+      overlay.set(fn, { ...pkg, storage_state: target.storageState, library_dir_id: target.libraryDirId })
+    }
+    enqueueWatchers(fn)
+  }
+  return { toPrune, decisions }
 }
 
 // Re-exported for legacy import sites; canonical home is `src/shared/disable-behavior.js`.

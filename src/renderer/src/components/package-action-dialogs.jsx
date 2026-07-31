@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { activeBreakingDependents } from '@/lib/package-disable-confirm'
 import { formatBytes } from '@/lib/utils'
+import { isPackageArchived } from '@shared/storage-state-predicates.js'
 
 const CONFIRM_LIST_MAX = 5
 
@@ -29,7 +30,37 @@ function NameList({ items, getName }) {
   )
 }
 
-export function UninstallDialogContent({ pkg, name, hasDependents, dependentNames, onConfirm }) {
+function depNames(deps) {
+  if (!deps?.length) return ''
+  const names = deps.slice(0, 2).map((d) => d.packageName?.split('.').pop() || d.filename)
+  return names.join(', ') + (deps.length > 2 ? ` +${deps.length - 2}` : '')
+}
+
+/** Non-archived dependents — the only ones that demote on uninstall (Rule 1). */
+export function hasPinningDependents(pkg) {
+  return (pkg.dependents || []).some((d) => !isPackageArchived(d.storageState))
+}
+
+/**
+ * Toast copy for a single-package uninstall result — everything the confirm
+ * dialog couldn't promise up front: the target being relocated into the archive
+ * instead of deleted, plus whatever the re-settle pass did to surviving deps.
+ * Empty string when the uninstall was an ordinary delete (no toast needed).
+ */
+export function uninstallOutcomeMessage(res) {
+  const bits = []
+  if (res?.relocatedToArchive) bits.push('Moved to archive (still needed by archived packages)')
+  if (res?.prunedDeps) bits.push(`${res.prunedDeps} unneeded dependenc${res.prunedDeps === 1 ? 'y' : 'ies'} deleted`)
+  if (res?.depsMovedToArchive)
+    bits.push(`${res.depsMovedToArchive} local-only dep${res.depsMovedToArchive === 1 ? '' : 's'} moved to archive`)
+  return bits.join('; ')
+}
+
+/**
+ * Confirm uninstall. Mirrors `packages:uninstall` Rule 1: only non-archived
+ * dependents demote; archive-only + not Hub-replaceable → relocate into archive.
+ */
+export function UninstallDialogContent({ pkg, name, onConfirm }) {
   const contentCount = pkg.contents?.length || pkg.contentCount || 0
   const allRemovableDeps = pkg.removableDeps || []
   const hubRemovableDeps = allRemovableDeps.filter((d) => !d.isLocalOnly)
@@ -37,24 +68,35 @@ export function UninstallDialogContent({ pkg, name, hasDependents, dependentName
   const hubRemovableSize = hubRemovableDeps.reduce((sum, d) => sum + (d.sizeBytes || 0), 0)
   const totalFreed = pkg.sizeBytes + hubRemovableSize
 
+  const pinning = (pkg.dependents || []).filter((d) => !isPackageArchived(d.storageState))
+  const archivedDeps = (pkg.dependents || []).filter((d) => isPackageArchived(d.storageState))
+  // Archive-only + not verifiably replaceable → backend relocates (fail-safe when catalog unknown).
+  const relocate = pinning.length === 0 && archivedDeps.length > 0 && pkg.isHubReplaceable !== true
+  const demote = pinning.length > 0
+
   return (
     <AlertDialogContent>
       <AlertDialogHeader>
         <AlertDialogTitle className="select-text cursor-text">
-          {hasDependents ? `Remove ${name}?` : `Uninstall ${name}?`}
+          {demote ? `Remove ${name}?` : `Uninstall ${name}?`}
         </AlertDialogTitle>
         <AlertDialogDescription asChild>
           <div className="space-y-2 text-sm text-muted-foreground select-text cursor-text">
-            {pkg.isLocalOnly && !hasDependents && (
+            {pkg.isLocalOnly && !demote && !relocate && (
               <p className="text-warning font-medium">
                 This package is not available on the Hub. You will not be able to reinstall it.
               </p>
             )}
-            {hasDependents ? (
+            {demote ? (
               <p>
-                This package is still used by <strong className="text-popover-foreground">{dependentNames}</strong>. It
-                will be kept as a dependency but its {contentCount} content item{contentCount !== 1 ? 's' : ''} will be
-                hidden.
+                This package is still used by <strong className="text-popover-foreground">{depNames(pinning)}</strong>.
+                It will be kept as a dependency but its {contentCount} content item
+                {contentCount !== 1 ? 's' : ''} will be hidden.
+              </p>
+            ) : relocate ? (
+              <p>
+                Still needed by archived <strong className="text-popover-foreground">{depNames(archivedDeps)}</strong>.
+                It will be moved to the archive instead of deleted.
               </p>
             ) : (
               <>
@@ -90,8 +132,8 @@ export function UninstallDialogContent({ pkg, name, hasDependents, dependentName
       </AlertDialogHeader>
       <AlertDialogFooter>
         <AlertDialogCancel>Cancel</AlertDialogCancel>
-        <AlertDialogAction variant={hasDependents ? 'destructive-outline' : 'destructive'} onClick={onConfirm}>
-          {hasDependents ? 'Remove' : 'Uninstall'}
+        <AlertDialogAction variant={demote || relocate ? 'destructive-outline' : 'destructive'} onClick={onConfirm}>
+          {demote || relocate ? 'Remove' : 'Uninstall'}
         </AlertDialogAction>
       </AlertDialogFooter>
     </AlertDialogContent>

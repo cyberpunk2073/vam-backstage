@@ -4,7 +4,7 @@ import { app } from 'electron'
 import { join } from 'path'
 import { LOCAL_PACKAGE_FILENAME, LOCAL_PACKAGE_DISPLAY_NAME } from '@shared/local-package.js'
 
-export const SCHEMA_VERSION = 28
+export const SCHEMA_VERSION = 29
 
 /**
  * Normalize a value to a non-negative integer string, or null. Hub resource/user
@@ -147,6 +147,7 @@ export const MIGRATIONS = [
   [26, applyV26],
   [27, applyV27],
   [28, applyV28],
+  [29, applyV29],
 ]
 
 function migrate() {
@@ -471,6 +472,19 @@ function applyV28() {
 }
 
 /**
+ * v29 — archive-role library directories. `archive` (mirrors `browser_assist`)
+ * marks an aux dir as an *archive* dir rather than an *offload* dir: packages
+ * living in it are `storage_state = 'archived'` (cold storage — indexed and
+ * browsable but exempt from missing-dep, broken, orphan and update logic).
+ * Off (0) by default; every existing aux dir stays an offload dir. State is
+ * derived from the dir's role at scan/watch time, so no package rows are
+ * rewritten here — the post-migration rescan reconciles them.
+ */
+function applyV29() {
+  db.exec(`ALTER TABLE library_dirs ADD COLUMN archive INTEGER NOT NULL DEFAULT 0`)
+}
+
+/**
  * Ensure the synthetic "local content" package row exists. Loose files under
  * `vamDir/Saves` and `vamDir/Custom` are stored as `contents` rows that point
  * at this sentinel so the foreign key holds without nullable columns. The
@@ -495,7 +509,8 @@ function createSchema() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       path TEXT UNIQUE NOT NULL,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      browser_assist INTEGER NOT NULL DEFAULT 0
+      browser_assist INTEGER NOT NULL DEFAULT 0,
+      archive INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS packages (
@@ -772,25 +787,51 @@ export function getDonorVersionsByPackageName(packageName, filename) {
 // Library directories (aux only — main is implicit via vam_dir setting + NULL pointer)
 
 export function listLibraryDirs() {
-  return stmt('SELECT id, path, created_at, browser_assist FROM library_dirs ORDER BY created_at ASC').all()
+  return stmt('SELECT id, path, created_at, browser_assist, archive FROM library_dirs ORDER BY created_at ASC').all()
 }
 
 export function getLibraryDir(id) {
-  return stmt('SELECT id, path, created_at, browser_assist FROM library_dirs WHERE id = ?').get(id)
+  return stmt('SELECT id, path, created_at, browser_assist, archive FROM library_dirs WHERE id = ?').get(id)
 }
 
 export function getLibraryDirByPath(path) {
-  return stmt('SELECT id, path, created_at, browser_assist FROM library_dirs WHERE path = ?').get(path)
+  return stmt('SELECT id, path, created_at, browser_assist, archive FROM library_dirs WHERE path = ?').get(path)
 }
 
-export function insertLibraryDir(path) {
-  const info = stmt('INSERT INTO library_dirs (path) VALUES (?)').run(path)
+export function insertLibraryDir(path, archive = false) {
+  const info = stmt('INSERT INTO library_dirs (path, archive) VALUES (?, ?)').run(path, archive ? 1 : 0)
   return info.lastInsertRowid
 }
 
 /** Toggle the BrowserAssist sidecar mode flag on an aux dir (see applyV26 / storage-state.js). */
 export function setLibraryDirBrowserAssist(id, enabled) {
   stmt('UPDATE library_dirs SET browser_assist = ? WHERE id = ?').run(enabled ? 1 : 0, id)
+}
+
+/**
+ * Flag-only toggle of an aux dir's archive role (`library_dirs.archive`). Does
+ * NOT rewrite package `storage_state` — a bare flip on a non-empty dir leaves
+ * rows inconsistent with location-implies-state, so this stays private and
+ * `setLibraryDirRole` is the only way in.
+ */
+function setLibraryDirArchive(id, on) {
+  stmt('UPDATE library_dirs SET archive = ? WHERE id = ?').run(on ? 1 : 0, id)
+}
+
+/**
+ * Flip an aux dir's role (offload ↔ archive) and re-derive `storage_state` for
+ * every present package in that dir, atomically. `is_direct` is deliberately
+ * untouched (sticky). Bytes never move — only the derived state changes.
+ * Returns the number of package rows reclassified.
+ */
+export function setLibraryDirRole(id, archive) {
+  return db.transaction((dirId, toArchive) => {
+    setLibraryDirArchive(dirId, toArchive)
+    return stmt('UPDATE packages SET storage_state = ? WHERE library_dir_id = ? AND missing_since IS NULL').run(
+      toArchive ? 'archived' : 'offloaded',
+      dirId,
+    ).changes
+  })(id, !!archive)
 }
 
 export function deleteLibraryDir(id) {

@@ -33,6 +33,7 @@ import { useDownloadStore } from '@/stores/useDownloadStore'
 import { useHubStore } from '@/stores/useHubStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
 import { useContentStore } from '@/stores/useContentStore'
+import { useLibraryDirsStore } from '@/stores/useLibraryDirsStore'
 import { useLabelsStore } from '@/stores/useLabelsStore'
 import { useViewStore } from '@/stores/useViewStore'
 import { useRemoteUiStore } from '@/stores/useRemoteUiStore'
@@ -92,11 +93,15 @@ export default function App() {
     // until the user triggers another mutation *with the view mounted*.
     // App-level subscriptions catch every event regardless of active view.
     void useLibraryStore.getState().fetchPackages()
+    // Library dir registry (roles) gates the Archive UI everywhere; load once and
+    // refresh on package updates (dir add/remove/role-flip all notify).
+    void useLibraryDirsStore.getState().fetch()
     const cleanupPackagesUpdated = window.api.onPackagesUpdated(() => {
       useLibraryStore.getState().fetchPackages()
       void useLibraryStore.getState().refreshDetail()
       void useContentStore.getState().refreshSelectedPackageDetail()
       void useHubStore.getState().refreshDetail()
+      void useLibraryDirsStore.getState().fetch()
     })
     const cleanupContentsUpdated = window.api.onContentsUpdated(() => {
       void useLibraryStore.getState().refreshDetail()
