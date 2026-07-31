@@ -15,6 +15,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { SettingRow } from '@/components/SettingRow'
+import { cn } from '@/lib/utils'
+import { META_DENSE } from '@/lib/typography'
 
 /**
  * Generic Display-section row backing any auto-hide setting that has the
@@ -114,30 +117,26 @@ export function AutoHideSwitch({
 
   return (
     <>
-      <label className="flex items-center gap-3 cursor-pointer">
-        <div className="flex-1 min-w-0">
-          <div className="text-xs text-text-primary font-medium">{label}</div>
-          <div className="text-[11px] text-text-tertiary mt-0.5">{description}</div>
-        </div>
+      <SettingRow as="label" label={label} description={description}>
         <Switch checked={enabled} onCheckedChange={(next) => setMode(next ? 'on' : 'off')} disabled={working} />
-      </label>
+      </SettingRow>
 
       <AlertDialog open={mode != null} onOpenChange={onOpenChange}>
         <AlertDialogContent className="max-w-md" size="default">
           <AlertDialogHeader>
             <AlertDialogTitle>{onMode ? hideTitle : unhideTitle}</AlertDialogTitle>
             <AlertDialogDescription asChild>
-              <div className="text-[11px] text-text-tertiary space-y-2">{onMode ? hideBody : unhideBody}</div>
+              <div className="space-y-2">{onMode ? hideBody : unhideBody}</div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           {working && progress && progress.total > 0 && (
             <div className="space-y-2">
-              <div className="flex justify-between text-[11px] text-text-tertiary">
+              <div className={cn('flex justify-between', META_DENSE)}>
                 <span className="truncate pr-2">
                   {verbing} {progressNoun} — {progress.current.toLocaleString()} of {progress.total.toLocaleString()}{' '}
                   packages
                 </span>
-                <span className="shrink-0 text-text-secondary/90">{pct}%</span>
+                <span className="shrink-0 text-text-secondary">{pct}%</span>
               </div>
               <Progress
                 value={pct}
@@ -147,7 +146,7 @@ export function AutoHideSwitch({
             </div>
           )}
           {working && (!progress || progress.total === 0) && (
-            <div className="flex items-center gap-2 text-[11px] text-text-tertiary">
+            <div className={cn('flex items-center gap-2', META_DENSE)}>
               <Loader2 size={14} className="animate-spin shrink-0" />
               {verbing} {progressNoun}…
             </div>

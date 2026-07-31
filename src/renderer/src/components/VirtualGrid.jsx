@@ -1,6 +1,7 @@
 import { useRef, useState, useCallback, useEffect, useLayoutEffect } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ScrollToTopButton } from '@/components/ScrollToTopButton'
+import { EmptyState } from '@/components/EmptyState'
 
 /**
  * Virtualised grid: column count follows min track width; cells share row width
@@ -24,6 +25,7 @@ export function VirtualGrid({
   itemWidth,
   itemHeight,
   fixedHeight = 0,
+  /** Hard lock with padding — grid rhythm; do not change without measuring Library/Hub/Content. */
   gap = 12,
   /** Space between rows (virtual stride). Defaults to `gap`; use a larger value if row height is tight vs column gap. */
   gapY,
@@ -32,6 +34,7 @@ export function VirtualGrid({
   renderSkeleton,
   className = '',
   overscan = 3,
+  /** Hard lock with gap — see gap above. */
   padding = 16,
   scrollResetKey,
   onLayout,
@@ -266,9 +269,7 @@ export function VirtualGrid({
             )
           })}
         </div>
-        {itemCount === 0 && !hideEmptyMessage && (
-          <div className="text-center py-16 text-text-tertiary text-sm">No items found</div>
-        )}
+        {itemCount === 0 && !hideEmptyMessage && <EmptyState>No items found</EmptyState>}
       </div>
       <ScrollToTopButton scrollRef={scrollRef} />
     </div>
@@ -279,6 +280,7 @@ export function VirtualGrid({
  * Virtualised list for table-style layouts. Uses divs with flex for
  * consistent column sizing without nested <table> hacks.
  */
+/** Default rowHeight 37 is a hard lock for Library/Content tables — do not grow without measuring. */
 export function VirtualList({ items, rowHeight = 37, renderRow, className = '', overscan = 5, scrollResetKey }) {
   const scrollRef = useRef(null)
   const committedKeyRef = useRef(scrollResetKey)

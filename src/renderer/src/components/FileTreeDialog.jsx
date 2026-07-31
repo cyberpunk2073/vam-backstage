@@ -12,6 +12,7 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { formatBytes } from '@/lib/utils'
+import { CLARIFY_DENSE, META_COMPACT } from '@/lib/typography'
 
 function varPackageBasename(filename) {
   if (!filename) return ''
@@ -91,7 +92,7 @@ function TreeFolder({ name, node, depth, expanded, onToggle, pathPrefix }) {
         >
           <ChevronRight
             size={12}
-            className={`shrink-0 text-text-tertiary transition-transform duration-100 ${isOpen ? 'rotate-90' : ''}`}
+            className={`shrink-0 text-text-aside transition-transform duration-100 ${isOpen ? 'rotate-90' : ''}`}
           />
           {isOpen ? (
             <FolderOpen size={14} className="shrink-0 text-accent-blue" />
@@ -100,7 +101,7 @@ function TreeFolder({ name, node, depth, expanded, onToggle, pathPrefix }) {
           )}
         </button>
         <span className="text-[11px] text-text-primary truncate min-w-0 flex-1 select-text cursor-text">{name}</span>
-        <span className="text-[10px] text-text-tertiary ml-auto shrink-0 pl-2 tabular-nums">
+        <span className={`${META_COMPACT} ml-auto shrink-0 pl-2 tabular-nums`}>
           {count} &middot; {formatBytes(size)}
         </span>
       </div>
@@ -130,10 +131,8 @@ function TreeFile({ file, depth }) {
   return (
     <div className="flex items-center gap-1 px-1 py-0.5" style={{ paddingLeft: depth * 16 + 20 }}>
       <File size={13} className="shrink-0 text-text-tertiary" />
-      <span className="text-[11px] text-text-secondary truncate select-text cursor-text">{file.name}</span>
-      <span className="text-[10px] text-text-tertiary ml-auto shrink-0 pl-2 tabular-nums">
-        {formatBytes(file.size)}
-      </span>
+      <span className={`${CLARIFY_DENSE} truncate select-text cursor-text`}>{file.name}</span>
+      <span className={`${META_COMPACT} ml-auto shrink-0 pl-2 tabular-nums`}>{formatBytes(file.size)}</span>
     </div>
   )
 }
@@ -213,7 +212,7 @@ export default function FileTreeDialog({ open, onOpenChange, filename }) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg h-[85vh] flex flex-col gap-3">
         <DialogHeader className="flex-row items-center gap-2 pr-8">
-          <DialogTitle className="text-sm truncate">Package files</DialogTitle>
+          <DialogTitle className="truncate">Package files</DialogTitle>
           {tree && allPaths.length > 0 && (
             <Button
               variant="ghost"
@@ -238,7 +237,7 @@ export default function FileTreeDialog({ open, onOpenChange, filename }) {
 
         <div className="flex-1 overflow-y-auto min-h-0 -mx-1">
           {loading && (
-            <div className="flex items-center justify-center py-8 text-text-tertiary gap-2">
+            <div className="flex items-center justify-center py-8 text-text-secondary gap-2">
               <Loader2 size={16} className="animate-spin" /> Reading package…
             </div>
           )}
@@ -264,7 +263,7 @@ export default function FileTreeDialog({ open, onOpenChange, filename }) {
         </div>
 
         {fileList && (
-          <div className="text-[10px] text-text-tertiary border-t border-border pt-2 -mx-4 px-4 -mb-1 tabular-nums">
+          <div className={`${META_COMPACT} border-t border-border pt-2 -mx-4 px-4 -mb-1 tabular-nums`}>
             {fileList.length} file{fileList.length !== 1 ? 's' : ''} &middot; {formatBytes(totalSize)}
           </div>
         )}

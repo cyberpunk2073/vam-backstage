@@ -48,6 +48,7 @@ import { useLibraryStore } from '@/stores/useLibraryStore'
 import { useWishlistStore } from '@/stores/useWishlistStore'
 import { LabelDots } from '@/components/labels/LabelDots'
 import { useLabelObjects } from '@/components/labels/useLabelObjects'
+import { MONO_DENSE, CLARIFY_DENSE, META_DENSE, META_COMPACT } from '@/lib/typography'
 
 /**
  * Derive the "inactive package" visual state (`disabled` or `offloaded`) and
@@ -496,12 +497,13 @@ export function HubCard({
             </div>
           )}
           {minimal && (
+            // pt-8 is gradient runway for the photo scrim, not a text gap.
             <div
               className="absolute bottom-0 inset-x-0 flex items-end gap-2 px-2.5 pb-2 pt-8"
               style={{ background: scrimGradient(0.58) }}
             >
               <div className="min-w-0 flex-1">
-                <div className="text-[12px] font-medium text-white truncate leading-tight" title={resource.title}>
+                <div className="text-xs font-medium text-white truncate leading-tight" title={resource.title}>
                   {resource.title}
                 </div>
                 <div className="text-[10px] text-white/60 truncate">
@@ -527,13 +529,14 @@ export function HubCard({
             <div className="flex items-center gap-2">
               <AuthorAvatar author={resource.username} userId={resource.user_id} size={30} />
               <div className="min-w-0 flex-1">
+                {/* Optical pair: 13px title + 11px by-line — do not flatten to TITLE_* / BODY. */}
                 <div
                   className="text-[13px] font-medium text-text-primary truncate leading-tight"
                   title={resource.title}
                 >
                   {resource.title}
                 </div>
-                <div className="text-[11px] text-text-secondary truncate">
+                <div className={`${CLARIFY_DENSE} truncate`}>
                   by <AuthorLink author={resource.username} onFilterAuthor={onFilterAuthor} />
                 </div>
               </div>
@@ -695,9 +698,10 @@ export function LibraryCard({
           )}
         </div>
         {minimal && (
+          // pt-8 is gradient runway for the photo scrim, not a text gap.
           <div className="absolute bottom-0 inset-x-0 px-2.5 pb-2 pt-8" style={{ background: scrimGradient(0.58) }}>
             <div className="flex items-baseline gap-1.5 min-w-0">
-              <span className="text-[12px] font-medium text-white truncate leading-tight">{name}</span>
+              <span className="text-xs font-medium text-white truncate leading-tight">{name}</span>
             </div>
             <div className="text-[10px] text-white/60 truncate">
               by{' '}
@@ -720,15 +724,12 @@ export function LibraryCard({
           <div className="flex items-center gap-2">
             <AuthorAvatar author={pkg.creator} userId={pkg.hubUserId} size={30} />
             <div className="min-w-0 flex-1">
+              {/* Optical pair: 13px title + 11px version/by — do not flatten to TITLE_* / BODY. */}
               <div className="flex items-baseline gap-2 min-w-0">
-                <span className="text-[13px] font-medium text-text-primary truncate min-w-0">{name}</span>
-                {versionStr && (
-                  <span className="text-[11px] text-text-tertiary font-mono shrink-0 whitespace-nowrap">
-                    v{versionStr}
-                  </span>
-                )}
+                <span className="text-[13px] font-medium text-text-primary truncate min-w-0 leading-tight">{name}</span>
+                {versionStr && <span className={`${MONO_DENSE} shrink-0 whitespace-nowrap`}>v{versionStr}</span>}
               </div>
-              <div className="text-[11px] text-text-secondary truncate">
+              <div className={`${CLARIFY_DENSE} truncate`}>
                 by <AuthorLink author={pkg.creator} onFilterAuthor={onFilterAuthor} />
               </div>
             </div>
@@ -825,10 +826,10 @@ export function LibraryTableRow({
         </div>
         <div className="min-w-0">
           <div className="flex items-baseline gap-2 min-w-0">
-            <span className="text-[12px] font-medium text-text-primary truncate">{name}</span>
-            {versionStr && <span className="text-[10px] text-text-tertiary font-mono shrink-0">v{versionStr}</span>}
+            <span className="text-xs font-medium text-text-primary truncate">{name}</span>
+            {versionStr && <span className={`${MONO_DENSE} shrink-0`}>v{versionStr}</span>}
           </div>
-          <div className="text-[10px] text-text-tertiary truncate">{pkg.filename}</div>
+          <div className={`${META_DENSE} truncate`}>{pkg.filename}</div>
         </div>
       </div>
       <div
@@ -881,7 +882,7 @@ export function LibraryTableRow({
         )}
       </div>
       <div
-        className="flex-1 py-2 px-3 text-[11px] text-text-secondary font-mono"
+        className={`flex-1 py-2 px-3 ${MONO_DENSE}`}
         title={
           pkg.removableSize > 0
             ? `${formatBytes(pkg.sizeBytes)} package + ${formatBytes(pkg.removableSize)} unique deps`
@@ -891,7 +892,7 @@ export function LibraryTableRow({
         {formatBytes(pkg.sizeBytes + (pkg.removableSize || 0))}
       </div>
       <div
-        className="w-16 py-2 px-3 text-[11px] text-text-tertiary flex items-center gap-1 min-w-0"
+        className={`w-16 py-2 px-3 ${META_DENSE} flex items-center gap-1 min-w-0`}
         title={
           [
             wishlisted ? 'On Hub wishlist' : null,
@@ -919,7 +920,7 @@ export function LibraryTableRow({
             ))}
           </span>
         ) : (
-          <span className="text-[10px] text-text-tertiary">{pkg.depCount}</span>
+          <span className={META_COMPACT}>{pkg.depCount}</span>
         )}
       </div>
     </div>
@@ -982,9 +983,9 @@ export function ContentTableRow({
         </div>
         <div className="min-w-0">
           <div className="flex items-baseline gap-2 min-w-0">
-            <span className="text-[12px] font-medium text-text-primary truncate">{item.displayName}</span>
+            <span className="text-xs font-medium text-text-primary truncate">{item.displayName}</span>
           </div>
-          <div className="text-[10px] text-text-tertiary truncate flex items-center gap-1 min-w-0">
+          <div className={`${META_DENSE} truncate flex items-center gap-1 min-w-0`}>
             {isDisabledPkg && <Power size={9} className="shrink-0 text-error" />}
             <span className="truncate">{pkgLabel}</span>
           </div>
@@ -1050,13 +1051,13 @@ export function ContentTableRow({
       </div>
       <div className="w-14 py-2 px-3 text-[11px]">
         {bulkMode ? (
-          <span className={item.hidden ? 'text-error' : 'text-text-tertiary'}>
+          <span className={item.hidden ? 'text-error' : 'text-text-aside'}>
             {item.hidden ? <EyeOff size={12} /> : <Eye size={12} />}
           </span>
         ) : (
           <button
             type="button"
-            className={`cursor-pointer ${item.hidden ? 'text-error' : 'text-text-tertiary hover:text-text-secondary'}`}
+            className={`cursor-pointer ${item.hidden ? 'text-error' : 'text-text-aside hover:text-text-secondary'}`}
             onClick={(e) => {
               e.stopPropagation()
               onToggleHidden?.(item)
@@ -1068,13 +1069,13 @@ export function ContentTableRow({
       </div>
       <div className="w-12 py-2 px-3 text-[11px]">
         {bulkMode ? (
-          <span className={item.favorite ? 'text-warning' : 'text-text-tertiary'}>
+          <span className={item.favorite ? 'text-warning' : 'text-text-aside'}>
             <Star size={12} fill={item.favorite ? 'currentColor' : 'none'} />
           </span>
         ) : (
           <button
             type="button"
-            className={`cursor-pointer ${item.favorite ? 'text-warning' : 'text-text-tertiary hover:text-warning'}`}
+            className={`cursor-pointer ${item.favorite ? 'text-warning' : 'text-text-aside hover:text-warning'}`}
             onClick={(e) => {
               e.stopPropagation()
               onToggleFavorite?.(item)
@@ -1204,7 +1205,7 @@ export function ContentCard({
             }}
             className={`size-7 shrink-0 inline-flex items-center justify-center rounded transition ${bulkMode ? 'pointer-events-none' : 'cursor-pointer'} ${
               isHidden
-                ? `opacity-100 text-error bg-transparent ${THUMB_OUTLINE_ICON_SHADOW} ${bulkMode ? '' : 'group-hover:text-error/70 group-hover:bg-black/50 group-hover:backdrop-blur-sm'}`
+                ? `opacity-100 text-error bg-transparent ${THUMB_OUTLINE_ICON_SHADOW} ${bulkMode ? '' : 'group-hover:text-error group-hover:bg-black/50 group-hover:backdrop-blur-sm'}`
                 : `opacity-0 text-white/70 bg-black/50 backdrop-blur-sm ${bulkMode ? '' : 'group-hover:opacity-100'}`
             }`}
           >
@@ -1228,7 +1229,7 @@ export function ContentCard({
         </div>
         <div className="absolute bottom-0 inset-x-0 px-2.5 pb-2 pt-8" style={{ background: scrimGradient(0.66) }}>
           <div className="text-[11px] font-medium text-white truncate leading-tight">{item.displayName}</div>
-          <div className="text-[9px] text-white/50 truncate">{pkgLabel}</div>
+          <div className="text-[10px] text-white/50 truncate">{pkgLabel}</div>
         </div>
         <LabelDots labels={labelObjs} inheritedLabels={inheritedLabelObjs} />
       </div>
@@ -1366,7 +1367,7 @@ export function DepRow({ dep, depth = 0, renderChildren = true, onNavigate, onIn
           } ${dep.isRoot ? 'text-[11px] font-medium text-text-primary' : `text-[11px] ${dep.resolution === 'exact' || dep.resolution === 'latest' ? 'text-text-primary' : 'text-text-secondary'}`}`}
         />
         {dep.sizeBytes != null && (
-          <span className="text-[10px] text-text-tertiary font-mono shrink-0">{formatBytes(dep.sizeBytes)}</span>
+          <span className={`${META_DENSE} font-mono shrink-0`}>{formatBytes(dep.sizeBytes)}</span>
         )}
         {depStatusTag(dep, dlStatus, dlProgress, onInstall)}
       </div>

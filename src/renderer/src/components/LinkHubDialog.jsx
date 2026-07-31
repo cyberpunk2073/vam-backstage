@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { HubCard } from '@/components/PackageCard'
 import { toast } from '@/components/Toast'
+import { CLARIFY_DENSE } from '@/lib/typography'
 import { useLibraryStore } from '@/stores/useLibraryStore'
 
 /**
@@ -98,8 +99,8 @@ export default function LinkHubDialog({ pkg, open, onOpenChange }) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm gap-3">
         <DialogHeader>
-          <DialogTitle className="text-sm">Link to Hub</DialogTitle>
-          <DialogDescription className="text-[12px]">
+          <DialogTitle>Link to Hub</DialogTitle>
+          <DialogDescription>
             Paste a Hub resource link or ID to manually match this package. Use this when the automatic match is missing
             or wrong.
           </DialogDescription>
@@ -111,7 +112,7 @@ export default function LinkHubDialog({ pkg, open, onOpenChange }) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="https://hub.virtamate.com/resources/… or ID"
-            className="text-[12px] pr-8"
+            className="text-xs pr-8"
           />
           {loading && (
             <Loader2
@@ -122,7 +123,7 @@ export default function LinkHubDialog({ pkg, open, onOpenChange }) {
         </div>
 
         {input.trim() !== '' && !rid ? (
-          <p className="text-[11px] text-text-tertiary px-0.5">Paste a full Hub resource link or a numeric ID.</p>
+          <p className={`${CLARIFY_DENSE} px-0.5`}>Paste a full Hub resource link or a numeric ID.</p>
         ) : error ? (
           <p className="text-[11px] text-error px-0.5">{error}</p>
         ) : null}

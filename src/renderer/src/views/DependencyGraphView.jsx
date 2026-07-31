@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { Graph } from '@cosmos.gl/graph'
 import { Loader2, Maximize2, Play, Pause, AlertTriangle, X, RotateCcw, Lightbulb } from 'lucide-react'
 import { useGraphStore } from '@/stores/useGraphStore'
+import { BODY_DENSE, EMPHASIS } from '@/lib/typography'
 
 /*
  * Cosmos engine caveats:
@@ -907,11 +908,13 @@ export default function DependencyGraphView() {
         </div>
       )}
 
-      <div className="pointer-events-none absolute left-3 top-3 z-10 max-w-xs rounded-md bg-elevated/90 px-3 py-2 text-xs text-text-secondary shadow-sm">
+      <div
+        className={`pointer-events-none absolute left-3 top-3 z-10 max-w-xs rounded-md bg-elevated/90 px-3 py-2 shadow-sm ${BODY_DENSE}`}
+      >
         <div className="mb-1.5 font-medium text-text-primary">Dependency graph</div>
         {!warningDismissed && (
           <div className="pointer-events-auto mb-2 flex items-start gap-2 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1.5 text-text-secondary leading-snug">
-            <AlertTriangle size={12} className="mt-0.5 shrink-0 text-warning/70" />
+            <AlertTriangle size={12} className="mt-0.5 shrink-0 text-warning" />
             <span className="min-w-0 flex-1">
               Experimental — have fun and mess around with your library. May be removed in future versions. If you think
               it&apos;s cool, it would be nice if you shared what your library constellation looks like.
@@ -920,13 +923,13 @@ export default function DependencyGraphView() {
               type="button"
               onClick={dismissWarning}
               title="Dismiss"
-              className="-mr-0.5 -mt-0.5 shrink-0 cursor-pointer rounded p-0.5 text-text-tertiary hover:bg-white/10 hover:text-text-primary"
+              className="-mr-0.5 -mt-0.5 shrink-0 cursor-pointer rounded p-0.5 text-text-aside hover:bg-white/10 hover:text-text-primary"
             >
               <X size={12} />
             </button>
           </div>
         )}
-        <div className="mb-2 text-text-tertiary leading-snug">Every enabled package as one force field</div>
+        <div className="mb-2 text-text-secondary leading-snug">Every enabled package as one force field</div>
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
             <span className="inline-block h-2.5 w-2.5 rounded-full bg-accent-blue" />
@@ -939,7 +942,7 @@ export default function DependencyGraphView() {
           <div className="mt-1 text-text-tertiary">
             {stats.nodes} nodes · {stats.links} links
           </div>
-          <div className="text-text-tertiary">Bigger = more links (dependencies + dependents)</div>
+          <div className="text-text-secondary">Bigger = more links (dependencies + dependents)</div>
         </div>
       </div>
 
@@ -984,17 +987,17 @@ export default function DependencyGraphView() {
           format={(v) => v.toFixed(2)}
         />
         {!frictionHintDismissed && (
-          <div className="flex items-start gap-2 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1.5 text-text-tertiary leading-snug">
-            <Lightbulb size={12} className="mt-0.5 shrink-0 text-accent-blue/80" />
+          <div className="flex items-start gap-2 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1.5 text-text-secondary leading-snug">
+            <Lightbulb size={12} className="mt-0.5 shrink-0 text-accent-blue" />
             <span className="min-w-0 flex-1">
-              Tip: drag <span className="text-text-secondary">Friction</span> to 0 to let the layout settle, then pull
-              it back up to freeze things in place.
+              Tip: drag <span className={EMPHASIS}>Friction</span> to 0 to let the layout settle, then pull it back up
+              to freeze things in place.
             </span>
             <button
               type="button"
               onClick={dismissFrictionHint}
               title="Dismiss"
-              className="-mr-0.5 -mt-0.5 shrink-0 cursor-pointer rounded p-0.5 text-text-tertiary hover:bg-white/10 hover:text-text-primary"
+              className="-mr-0.5 -mt-0.5 shrink-0 cursor-pointer rounded p-0.5 text-text-aside hover:bg-white/10 hover:text-text-primary"
             >
               <X size={12} />
             </button>

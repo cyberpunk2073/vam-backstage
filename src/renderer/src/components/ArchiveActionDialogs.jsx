@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn, formatBytes } from '@/lib/utils'
+import { EMPHASIS, ASIDE, META, SECTION_LABEL, CLARIFY } from '@/lib/typography'
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`
 
@@ -37,8 +38,8 @@ function RadioRow({ checked, onSelect, title, children }) {
         aria-hidden="true"
       />
       <span className="min-w-0">
-        <span className="block text-sm font-medium text-popover-foreground">{title}</span>
-        <span className="block text-[11px] text-muted-foreground">{children}</span>
+        <span className={cn('block text-sm', EMPHASIS)}>{title}</span>
+        <span className={cn('block', CLARIFY)}>{children}</span>
       </span>
     </button>
   )
@@ -153,14 +154,14 @@ function ArchiveDialogBody({ filenames, archiveDirs, onConfirm }) {
           Archive {count === 1 ? '1 package' : `${count} packages`}?
         </AlertDialogTitle>
         <AlertDialogDescription asChild>
-          <div className="space-y-3 text-sm text-muted-foreground select-text cursor-text">
+          <div className="space-y-3 select-text cursor-text">
             <p>
               Moved to cold storage: kept on disk and browsable in the Archived section, but dormant. VaM won&apos;t
               load it and the app won&apos;t prompt for its missing dependencies.
             </p>
             {archiveDirs.length > 1 && (
               <div className="space-y-1">
-                <span className="text-[11px] uppercase tracking-wide text-text-tertiary">Archive directory</span>
+                <span className={SECTION_LABEL}>Archive directory</span>
                 <Select value={String(archiveDirId)} onValueChange={(v) => setArchiveDirId(Number(v))}>
                   <SelectTrigger className="h-8 bg-elevated text-xs">
                     <SelectValue />
@@ -176,7 +177,7 @@ function ArchiveDialogBody({ filenames, archiveDirs, onConfirm }) {
               </div>
             )}
             {loading && !preview ? (
-              <p className="rounded border border-border bg-elevated/40 px-2.5 py-2 text-[12px] leading-relaxed text-text-tertiary">
+              <p className={cn('rounded border border-border bg-elevated/40 px-2.5 py-2 leading-relaxed', META)}>
                 Calculating dependency options…
               </p>
             ) : canPrune ? (
@@ -195,17 +196,19 @@ function ArchiveDialogBody({ filenames, archiveDirs, onConfirm }) {
                 >
                   {storeText}
                 </RadioRow>
-                <p className="text-[11px] text-text-tertiary px-0.5">
+                {/* Bears on the choice being made in the radio above it, so it is a clarification
+                    rather than an aside — skipping it can lead to picking the wrong mode. */}
+                <p className={cn(CLARIFY, 'px-0.5')}>
                   Packages currently on the Hub are occasionally delisted later, so only drop what you&apos;re
                   comfortable re-acquiring if that happens.
                 </p>
               </div>
             ) : (
-              <p className="rounded border border-border bg-elevated/40 px-2.5 py-2 text-[12px] leading-relaxed">
+              <p className={cn('rounded border border-border bg-elevated/40 px-2.5 py-2 leading-relaxed', CLARIFY)}>
                 {noPruneNote}
               </p>
             )}
-            <p className="text-[11px]">Dependencies still needed by other non-archived packages are never touched.</p>
+            <p className={ASIDE}>Dependencies still needed by other non-archived packages are never touched.</p>
           </div>
         </AlertDialogDescription>
       </AlertDialogHeader>
@@ -213,7 +216,8 @@ function ArchiveDialogBody({ filenames, archiveDirs, onConfirm }) {
         {/* Out of flow so showing/hiding never reflows the dialog or leaves a gap. */}
         <span
           className={cn(
-            'absolute left-4 top-1/2 -translate-y-1/2 flex items-center gap-1.5 text-[11px] text-text-tertiary pointer-events-none transition-opacity duration-200',
+            'absolute left-4 top-1/2 -translate-y-1/2 flex items-center gap-1.5 pointer-events-none transition-opacity duration-200',
+            META,
             hubRefreshing ? 'opacity-100' : 'opacity-0',
           )}
           aria-live="polite"
@@ -297,12 +301,13 @@ function InstallFromArchiveDialogBody({ pkgs, onConfirm }) {
       <AlertDialogHeader>
         <AlertDialogTitle className="select-text cursor-text">Install {name} from archive?</AlertDialogTitle>
         <AlertDialogDescription asChild>
-          <div className="space-y-2 text-sm text-muted-foreground select-text cursor-text">
+          <div className="space-y-2 select-text cursor-text">
+            {/* Worked example of the six-role model: body → emphasis → semantic → aside. */}
             <p>{count === 1 ? 'The package' : 'The packages'} will be activated and moved into your main library.</p>
             {!hubBill ? (
               <>
                 {missingHint > 0 ? (
-                  <p className="text-popover-foreground">
+                  <p className={EMPHASIS}>
                     {missingHint} missing dependenc{missingHint === 1 ? 'y' : 'ies'}. Checking Hub availability…
                   </p>
                 ) : (
@@ -320,7 +325,7 @@ function InstallFromArchiveDialogBody({ pkgs, onConfirm }) {
             ) : (
               <>
                 {hubBill.downloadable > 0 && (
-                  <p className="text-popover-foreground">
+                  <p className={EMPHASIS}>
                     {hubBill.downloadable} dependenc{hubBill.downloadable === 1 ? 'y' : 'ies'} will be downloaded from
                     the Hub
                     {hubBill.bytes > 0 ? ` (~${formatBytes(hubBill.bytes)})` : ''}.
@@ -335,7 +340,7 @@ function InstallFromArchiveDialogBody({ pkgs, onConfirm }) {
                 )}
               </>
             )}
-            <p className="text-[11px]">
+            <p className={ASIDE}>
               Dependencies already stored in the archive are activated from disk, not re-downloaded. Download size is
               approximate (Hub may substitute a nearby version; further deps can appear after install).
             </p>

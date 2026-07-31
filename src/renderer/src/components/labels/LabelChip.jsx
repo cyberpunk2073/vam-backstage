@@ -161,7 +161,7 @@ export const LabelChip = forwardRef(function LabelChip(
               renaming && 'invisible pointer-events-none',
               useFilled || useOutline
                 ? 'text-current opacity-70 hover:opacity-100'
-                : 'text-text-tertiary hover:text-text-primary',
+                : 'text-text-aside hover:text-text-primary',
             )}
             aria-label={`Remove ${label.name}`}
           >

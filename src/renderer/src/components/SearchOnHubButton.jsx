@@ -22,7 +22,7 @@ export function SearchOnHubButton({ author, onNavigate }) {
           type="button"
           onClick={handleClick}
           aria-label={`Search Hub for ${author}`}
-          className="shrink-0 -my-1 p-0.5 rounded text-text-tertiary hover:text-accent-blue transition-colors cursor-pointer"
+          className="shrink-0 -my-1 p-0.5 rounded text-text-aside hover:text-accent-blue transition-colors cursor-pointer"
         >
           <ArrowRight size={13} strokeWidth={2.5} />
         </button>

@@ -6,7 +6,6 @@
 @custom-variant dark (&:where(.dark *));
 
 @theme inline {
-    --font-heading: var(--font-sans);
     --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
 
     /* App palette — dark only, single source of truth */
@@ -16,9 +15,27 @@
     --color-hover: #1f2029;
     --color-active: #272833;
     --color-border-bright: #2e303b;
+    /* Text ladder — never opacity-modify these (/60, opacity-80, etc). If a tier is missing,
+       add a token. Semantic (success/warning/error) stays at the enclosing body size.
+       Recipes and role assignment: src/renderer/src/lib/typography.js. */
     --color-text-primary: #e8e9ed;
+    /* Inline emphasis inside prose. Deliberately short of primary: at font-medium on a dark
+       background, full primary halates and the surrounding paragraph reads as competing.
+       Steps 2.4:1 over secondary — enough to pick a term out of a line, not enough to shout. */
+    --color-text-emphasis: #d0d1de;
     --color-text-secondary: #82849a;
-    --color-text-tertiary: #4e5064;
+    /* Structural chrome: uppercase group labels, table headers, counts, sizes, timestamps.
+       Subordinate to prose but not skippable — you look at a column header on purpose. ~3.9:1,
+       an even step below secondary and above aside. */
+    --color-text-tertiary: #6b6e84;
+    /* Skippable: footnotes you lose nothing by not reading, resting states of icon buttons that
+       brighten on hover, disabled and struck-through items. Deliberately under the AA floor —
+       getting out of the way is the entire job. */
+    --color-text-aside: #57596e;
+    /* Below aside, and tracked separately on purpose: placeholders mark absence rather than
+       content, so they should be free to move without dragging every aside and chrome label
+       along with them. */
+    --color-text-placeholder: #4e5064;
     --color-accent-blue: #4a91f1;
     --color-accent-pink: #ef5bed;
     --color-accent-purple: #8b5cf6;

@@ -78,6 +78,7 @@ export const HUB_CATEGORY_COLORS = {
  * Shared footprint for thumbnail overlays and detail-panel chip rows (library type, DEP, content
  * category, legacy/additional tags). Keeps height/padding/text size aligned; use `border-0` on
  * overlays so borders elsewhere don’t change the box.
+ * Hard lock with LabelChip heights — do not resize in the name of typography consistency.
  */
 export const THUMB_CHIP_BOX =
   'inline-flex shrink-0 items-center justify-center h-[18px] min-h-[18px] px-1.5 rounded box-border text-[9px] font-semibold leading-none whitespace-nowrap'

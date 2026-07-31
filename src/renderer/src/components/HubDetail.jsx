@@ -52,6 +52,8 @@ import { getHubResourceLicense } from '@/lib/licenses'
 import { LicenseTag } from '@/components/LicenseTag'
 import { Tag } from '@/components/ui/tag'
 import { toFullHubUrl } from '@/lib/hub-panel-url'
+import { GroupHeading } from '@/components/GroupHeading'
+import { EMPHASIS, BODY_DENSE, CLARIFY_DENSE, META_DENSE, MONO_DENSE } from '@/lib/typography'
 
 const HUB_INTERACTIONS_ENABLED = true
 
@@ -122,8 +124,8 @@ function StatTooltip({ content, side = 'top', delay = HUB_STAT_TOOLTIP_DELAY, ch
 function DiscoveryHint({ label }) {
   return (
     <>
-      <span className="font-medium">{label}</span>
-      <span className="block text-text-tertiary mt-0.5">{HUB_SIGNED_OUT_HINT}</span>
+      <span className={EMPHASIS}>{label}</span>
+      <span className="block text-text-secondary mt-0.5">{HUB_SIGNED_OUT_HINT}</span>
     </>
   )
 }
@@ -138,14 +140,14 @@ function RatingStat({ ratingAvg, ratingWeighted, ratingCount, loggedIn, rated, r
   const countLine = ratingCount === 1 ? '1 rating' : `${formatNumber(ratingCount)} ratings`
   const tip = (
     <>
-      <span className="font-medium">{ratingCount > 0 ? countLine : 'Not yet rated'}</span>
+      <span className={EMPHASIS}>{ratingCount > 0 ? countLine : 'Not yet rated'}</span>
       {ratingCount > 0 && (
         <>
-          <span className="block font-medium">{formatStarRating(ratingAvg)} average</span>
-          <span className="block font-medium">{formatStarRating(ratingWeighted)} weighted</span>
+          <span className={`block ${EMPHASIS}`}>{formatStarRating(ratingAvg)} average</span>
+          <span className={`block ${EMPHASIS}`}>{formatStarRating(ratingWeighted)} weighted</span>
         </>
       )}
-      <span className="block text-text-tertiary mt-0.5">
+      <span className="block text-text-secondary mt-0.5">
         {loggedIn ? (rated ? 'Click to remove your like' : 'Click to like (a positive rating)') : HUB_SIGNED_OUT_HINT}
       </span>
     </>
@@ -166,7 +168,7 @@ function RatingStat({ ratingAvg, ratingWeighted, ratingCount, loggedIn, rated, r
           onClick={onRate}
           disabled={busy}
           className={`flex items-center gap-1.5 transition-colors disabled:cursor-default cursor-pointer ${
-            rated ? 'text-warning' : ratedDown ? 'text-error' : 'text-text-tertiary hover:text-warning'
+            rated ? 'text-warning' : ratedDown ? 'text-error' : 'text-text-aside hover:text-warning'
           }`}
         >
           {face}
@@ -194,7 +196,7 @@ function LikeStat({ count, loggedIn, liked, busy, onLike }) {
         disabled={busy}
         title={liked ? 'Remove like' : 'Like'}
         className={`flex items-center gap-1.5 transition-colors disabled:cursor-default cursor-pointer ${
-          liked ? 'text-accent-blue' : 'text-text-tertiary hover:text-accent-blue'
+          liked ? 'text-accent-blue' : 'text-text-aside hover:text-accent-blue'
         }`}
       >
         {face}
@@ -218,7 +220,7 @@ function FavoriteStat({ loggedIn, favorited, favoriteCount, busy, onFavorite }) 
       onClick={onFavorite}
       disabled={busy}
       title={favorited ? 'Remove favorite' : 'Add to favorites'}
-      className="flex items-center gap-1.5 text-text-tertiary transition-colors hover:text-accent-pink disabled:hover:text-text-tertiary disabled:cursor-default cursor-pointer"
+      className="flex items-center gap-1.5 text-text-aside transition-colors hover:text-accent-pink disabled:hover:text-text-aside disabled:cursor-default cursor-pointer"
     >
       <Heart size={13} className={favorited ? 'fill-current text-accent-pink' : ''} />
       {favoriteCount == null ? (
@@ -240,7 +242,7 @@ function BookmarkStat({ loggedIn, bookmarked, busy, onBookmark }) {
       onClick={onBookmark}
       disabled={busy}
       title={bookmarked ? 'Remove bookmark' : 'Bookmark'}
-      className="flex items-center text-text-tertiary transition-colors hover:text-accent-blue disabled:opacity-50 cursor-pointer"
+      className="flex items-center text-text-aside transition-colors hover:text-accent-blue disabled:opacity-50 cursor-pointer"
     >
       <Bookmark size={14} className={bookmarked ? 'fill-current text-accent-blue' : ''} />
     </button>
@@ -249,6 +251,10 @@ function BookmarkStat({ loggedIn, bookmarked, busy, onBookmark }) {
 
 // --- Hub Detail ---
 
+/**
+ * Section vertical ladder (mt-1.5 / 2 / 2.5 / 3 / 4) is tuned per block type — do not flatten
+ * to a single space-y in the name of consistency.
+ */
 export default function HubDetail({
   ref,
   resource,
@@ -790,7 +796,7 @@ export default function HubDetail({
               >
                 <ChevronLeft size={14} />
               </Button>
-              <span className="text-[11px] text-text-tertiary tabular-nums min-w-[42px] text-center select-none">
+              <span className={`${META_DENSE} tabular-nums min-w-[42px] text-center select-none`}>
                 {position.n} / {position.total}
               </span>
               <Button
@@ -819,7 +825,7 @@ export default function HubDetail({
           size="icon-xs"
           onClick={handleClose}
           aria-label="Close detail"
-          className="shrink-0 text-text-tertiary hover:text-text-secondary hover:bg-muted/35"
+          className="shrink-0 text-text-aside hover:text-text-secondary hover:bg-muted/35"
         >
           <X size={12} strokeWidth={1.75} />
         </Button>
@@ -842,12 +848,13 @@ export default function HubDetail({
               ) : null}
             </div>
 
+            {/* Optical pair: title + version — tuned by eye; do not flatten to TITLE_* / MONO_DENSE alone. */}
             <div className="flex items-baseline gap-2">
               <h2 className="text-[16px] font-semibold text-text-primary select-text cursor-text">{title}</h2>
               {detailLoading ? (
                 <div className="h-3.5 w-12 skeleton rounded" />
               ) : pkg.version_string ? (
-                <span className="text-xs text-text-tertiary font-mono select-text cursor-text">
+                <span className="text-xs text-text-secondary font-mono select-text cursor-text">
                   {pkg.version_string}
                 </span>
               ) : null}
@@ -865,8 +872,11 @@ export default function HubDetail({
               >
                 <AuthorAvatar author={username} userId={pkg.user_id} size={32} />
                 <div>
+                  {/* The size step carries the hierarchy here, so the caption stays on secondary.
+                      Stepping size, color and weight all at once made the pair read as mismatched
+                      rather than as a name with a role beneath it. */}
                   <div className="text-xs text-text-primary font-medium">{username}</div>
-                  <div className="text-[10px] text-text-tertiary">Package author</div>
+                  <div className="text-[10px] text-text-secondary">Package author</div>
                 </div>
               </button>
             ) : (
@@ -920,11 +930,11 @@ export default function HubDetail({
 
             {/* Description */}
             {pkg.tag_line && (
-              <p className="text-xs text-text-secondary leading-relaxed mt-3 select-text cursor-text">{pkg.tag_line}</p>
+              <p className={`${BODY_DENSE} leading-relaxed mt-3 select-text cursor-text`}>{pkg.tag_line}</p>
             )}
 
             {/* Stats */}
-            <div className="flex items-center gap-4 mt-3 py-2.5 border-y border-border text-[12px]">
+            <div className="flex items-center gap-4 mt-3 py-2.5 border-y border-border text-xs">
               <span className="flex items-center gap-1.5 text-text-tertiary">
                 <Download size={13} />
                 <span className="text-text-primary font-medium">
@@ -966,7 +976,7 @@ export default function HubDetail({
                 onClick={() => toggleWishlist(pkg)}
                 title={wishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
                 aria-label={wishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
-                className={`ml-auto -my-1 p-1 rounded cursor-pointer transition-colors ${wishlisted ? 'text-accent-blue' : 'text-text-tertiary hover:text-text-secondary'}`}
+                className={`ml-auto -my-1 p-1 rounded cursor-pointer transition-colors ${wishlisted ? 'text-accent-blue' : 'text-text-aside hover:text-text-secondary'}`}
               >
                 <Pin size={15} fill={wishlisted ? 'currentColor' : 'none'} />
               </button>
@@ -1060,9 +1070,7 @@ export default function HubDetail({
             {depCount > 0 ? (
               <div className="mt-4">
                 <div className="flex items-center gap-2 mb-2">
-                  <span className="text-[10px] uppercase tracking-wider text-text-tertiary font-medium">
-                    Package files <span className="normal-case">({depCount + deps.length})</span>
-                  </span>
+                  <GroupHeading count={depCount + deps.length}>Package files</GroupHeading>
                 </div>
                 {detailLoading ? (
                   <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
@@ -1085,7 +1093,7 @@ export default function HubDetail({
                 ) : null}
               </div>
             ) : !detailLoading ? (
-              <div className="mt-3 text-[11px] text-text-tertiary">No dependencies</div>
+              <div className={`mt-3 ${CLARIFY_DENSE}`}>No dependencies</div>
             ) : null}
           </div>
           <ResizeHandle
@@ -1137,7 +1145,7 @@ export default function HubDetail({
                     addressInputRef.current?.blur()
                   }
                 }}
-                className="flex-1 min-w-0 bg-transparent outline-none text-[11px] text-text-secondary font-mono select-text cursor-text"
+                className={`flex-1 min-w-0 bg-transparent outline-none ${MONO_DENSE} select-text cursor-text`}
               />
             </div>
             <Button
@@ -1189,7 +1197,7 @@ export default function HubDetail({
                 type="button"
                 key={tab.key}
                 onClick={() => selectTab(tab.key)}
-                className={`px-4 py-2 text-xs border-b-2 transition-colors cursor-pointer ${browserTab === tab.key ? 'border-accent-blue text-text-primary' : 'border-transparent text-text-tertiary hover:text-text-secondary'}`}
+                className={`px-4 py-2 text-xs border-b-2 transition-colors cursor-pointer ${browserTab === tab.key ? 'border-accent-blue text-text-primary' : 'border-transparent text-text-aside hover:text-text-secondary'}`}
               >
                 {tab.label}
               </button>

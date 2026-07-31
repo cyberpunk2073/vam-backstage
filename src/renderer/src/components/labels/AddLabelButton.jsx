@@ -29,7 +29,7 @@ export function AddLabelButton({ appliedIds = [], onApplyToTarget, ariaLabel = '
         aria-label={ariaLabel}
         className={cn(
           'inline-flex items-center justify-center h-5 w-5 box-border rounded cursor-pointer transition-colors',
-          'border border-dashed border-border text-text-tertiary hover:text-text-primary hover:border-text-tertiary',
+          'border border-dashed border-border text-text-aside hover:text-text-primary hover:border-text-tertiary',
           'data-[state=open]:border-text-tertiary data-[state=open]:text-text-primary',
         )}
       >

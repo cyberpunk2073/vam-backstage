@@ -3,6 +3,7 @@ import { User } from 'lucide-react'
 import { PolarityTagChip, rankSuggestions, stripNegationPrefix } from './chip-utils'
 import { useCombobox } from './useCombobox'
 import { ChipRow, ComboboxField, ComboboxLabel, ComboboxPopup, ComboboxRow } from './Combobox'
+import { META_DENSE } from '@/lib/typography'
 
 /**
  * Author filter: single live positive substring (chip-less) + optional exclude
@@ -125,7 +126,7 @@ export function AuthorAutocomplete({
               onHover={() => combobox.setHlIndex(i)}
             >
               <ComboboxLabel negate={pendingNegate}>{name}</ComboboxLabel>
-              <span className="text-text-tertiary text-[11px] shrink-0">{count}</span>
+              <span className={`${META_DENSE} shrink-0`}>{count}</span>
             </ComboboxRow>
           ))}
         </ComboboxPopup>

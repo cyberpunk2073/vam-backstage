@@ -4,6 +4,7 @@ import { LabelChip } from '@/components/labels/LabelChip'
 import { LabelManageMenu } from '@/components/labels/LabelManageMenu'
 import { useLabelRename } from '@/components/labels/useLabelRename'
 import { labelColor } from '@/lib/labels'
+import { META_DENSE } from '@/lib/typography'
 import { stripNegationPrefix } from './chip-utils'
 import { usePolarityList } from './usePolarityList'
 import { useCombobox } from './useCombobox'
@@ -129,7 +130,7 @@ export function LabelsAutocomplete({
                 >
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: labelColor(label) }} />
                   <ComboboxLabel negate={pendingNegate}>{label.name}</ComboboxLabel>
-                  {total > 0 && <span className="text-text-tertiary text-[11px] shrink-0">{total}</span>}
+                  {total > 0 && <span className={`${META_DENSE} shrink-0`}>{total}</span>}
                 </ComboboxRow>
               </LabelManageMenu>
             )

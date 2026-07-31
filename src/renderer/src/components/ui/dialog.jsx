@@ -33,6 +33,7 @@ function DialogOverlay({ className, ...props }) {
   )
 }
 
+/** Default `gap-4` suits alerts. Contentful dialogs (WhatsNew, LinkHub, FileTree) override to `gap-3`. */
 function DialogContent({ className, children, showCloseButton = true, ...props }) {
   return (
     <DialogPortal>
@@ -63,6 +64,7 @@ function DialogHeader({ className, ...props }) {
   return <div data-slot="dialog-header" className={cn('flex flex-col gap-2', className)} {...props} />
 }
 
+/** Footer bleed `-mx-4 -mb-4 p-4` is paired with DialogContent's `p-4` — keep them in lockstep. */
 function DialogFooter({ className, showCloseButton = false, children, ...props }) {
   return (
     <div
@@ -84,12 +86,14 @@ function DialogTitle({ className, ...props }) {
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn('font-heading text-base leading-none font-medium', className)}
+      className={cn('text-base leading-none font-medium', className)}
       {...props}
     />
   )
 }
 
+/** Roomy body via muted-foreground (= secondary). Do not override size/color at call sites —
+ *  extend this primitive with a variant if a denser dialog is genuinely needed. */
 function DialogDescription({ className, ...props }) {
   return (
     <DialogPrimitive.Description

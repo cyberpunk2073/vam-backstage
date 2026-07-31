@@ -70,6 +70,7 @@ function AlertDialogHeader({ className, ...props }) {
   )
 }
 
+/** Footer bleed paired with AlertDialogContent's `p-4` — keep them in lockstep. */
 function AlertDialogFooter({ className, ...props }) {
   return (
     <div
@@ -101,7 +102,7 @@ function AlertDialogTitle({ className, ...props }) {
     <AlertDialogPrimitive.Title
       data-slot="alert-dialog-title"
       className={cn(
-        'font-heading text-base font-medium text-popover-foreground group-data-[size=default]/alert-dialog-content:group-has-data-[slot=alert-dialog-media]/alert-dialog-content:col-start-2',
+        'text-base font-medium text-popover-foreground group-data-[size=default]/alert-dialog-content:group-has-data-[slot=alert-dialog-media]/alert-dialog-content:col-start-2',
         className,
       )}
       {...props}
@@ -109,6 +110,7 @@ function AlertDialogTitle({ className, ...props }) {
   )
 }
 
+/** Roomy body. Do not override size/color at call sites — extend with a variant if needed. */
 function AlertDialogDescription({ className, ...props }) {
   return (
     <AlertDialogPrimitive.Description

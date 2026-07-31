@@ -6,6 +6,8 @@ import { highlightSegments, parseSmartQuery, spliceToken, tokenAtCaret } from '@
 import { rankSuggestions } from './chip-utils'
 import { useCombobox } from './useCombobox'
 import { ComboboxLabel, ComboboxPopup, ComboboxRow } from './Combobox'
+import { SectionLabel } from '@/components/SectionLabel'
+import { BODY_DENSE, CLARIFY_DENSE, META_DENSE } from '@/lib/typography'
 
 const FIELD_CLASS = {
   author: 'text-accent-blue',
@@ -266,7 +268,7 @@ export function SmartSearchBar({
             combobox.onKeyDown(e)
             if (e.key === 'Enter' && !e.defaultPrevented) e.preventDefault()
           }}
-          className={`relative z-1 block w-full min-w-0 resize-none rounded-md border border-input bg-transparent py-1.75 pl-2.5 pr-6 text-xs leading-4 transition-[height,border-color] duration-100 outline-none placeholder:text-text-tertiary focus-visible:border-ring/50 ${
+          className={`relative z-1 block w-full min-w-0 resize-none rounded-md border border-input bg-transparent py-1.75 pl-2.5 pr-6 text-xs leading-4 transition-[height,border-color] duration-100 outline-none placeholder:text-text-placeholder focus-visible:border-ring/50 ${
             focused
               ? 'field-sizing-content h-auto min-h-8 max-h-16 overflow-x-hidden overflow-y-auto whitespace-pre-wrap wrap-break-word'
               : 'h-8 overflow-hidden whitespace-pre'
@@ -281,7 +283,7 @@ export function SmartSearchBar({
               onChange('')
               combobox.setOpen(false)
             }}
-            className="absolute right-1 top-1.5 z-10 size-5 text-text-tertiary hover:text-text-secondary"
+            className="absolute right-1 top-1.5 z-10 size-5 text-text-aside hover:text-text-secondary"
             aria-label="Clear search"
           >
             <X size={12} />
@@ -303,15 +305,15 @@ export function SmartSearchBar({
             >
               {m.color ? <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: m.color }} /> : null}
               <ComboboxLabel negate={active.negate}>{m.label}</ComboboxLabel>
-              {m.count > 0 && <span className="text-text-tertiary text-[11px] shrink-0">{m.count}</span>}
+              {m.count > 0 && <span className={`${META_DENSE} shrink-0`}>{m.count}</span>}
             </ComboboxRow>
           ))}
         </ComboboxPopup>
       ) : showReference ? (
         <div className="absolute z-30 left-0 right-0 mt-1 px-2.5 py-2 bg-popover border border-border rounded shadow-lg flex flex-col gap-1.5">
           <div className="flex items-baseline gap-1.5">
-            <span className="text-[10px] uppercase tracking-wide text-text-tertiary shrink-0">e.g.</span>
-            <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-pre text-xs opacity-65">
+            <SectionLabel className="shrink-0">e.g.</SectionLabel>
+            <span className={`min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-pre ${BODY_DENSE}`}>
               {EXAMPLE_SEGMENTS.map((seg, i) => (
                 <span key={i} className={segmentClass(seg)}>
                   {seg.text}
@@ -319,24 +321,24 @@ export function SmartSearchBar({
               ))}
             </span>
           </div>
-          <div className="flex flex-col gap-0.5 text-[11px]">
+          <div className={`flex flex-col gap-0.5 ${CLARIFY_DENSE}`}>
             {legend.map(({ sigil, label, field }) => (
               <div key={sigil} className="flex items-center gap-1.5">
-                <span
-                  className={`min-w-3 text-center font-medium opacity-80 ${field ? FIELD_CLASS[field] : NEGATE_CLASS}`}
-                >
+                <span className={`min-w-3 text-center font-medium ${field ? FIELD_CLASS[field] : NEGATE_CLASS}`}>
                   {sigil}
                 </span>
-                <span className="text-text-tertiary">{label}</span>
+                <span>{label}</span>
               </div>
             ))}
           </div>
         </div>
       ) : showDiscovery ? (
-        <div className="absolute z-30 left-0 right-0 mt-1 px-2.5 py-1.5 bg-popover border border-border rounded shadow-lg text-[11px] text-text-tertiary flex items-center gap-x-2.5 gap-y-1 flex-wrap">
+        <div
+          className={`absolute z-30 left-0 right-0 mt-1 px-2.5 py-1.5 bg-popover border border-border rounded shadow-lg ${CLARIFY_DENSE} flex items-center gap-x-2.5 gap-y-1 flex-wrap`}
+        >
           {legend.map(({ sigil, label, field }) => (
             <span key={sigil} className="whitespace-nowrap">
-              <span className={`font-medium opacity-70 ${field ? FIELD_CLASS[field] : NEGATE_CLASS}`}>{sigil}</span>
+              <span className={`font-medium ${field ? FIELD_CLASS[field] : NEGATE_CLASS}`}>{sigil}</span>
               <span className="ml-1">{label}</span>
             </span>
           ))}

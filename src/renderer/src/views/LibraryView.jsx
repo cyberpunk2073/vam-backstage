@@ -84,6 +84,9 @@ import { ContentCategory, buildContentGallery } from '@/components/ContentCatego
 import FileTreeDialog from '@/components/FileTreeDialog'
 import { openLightbox } from '@/components/ThumbnailLightbox'
 import { VirtualGrid, VirtualList } from '@/components/VirtualGrid'
+import { EmptyState } from '@/components/EmptyState'
+import { GroupHeading } from '@/components/GroupHeading'
+import { ASIDE_COMPACT, BODY, CLARIFY_DENSE, META_DENSE, MONO_DENSE, SECTION_LABEL } from '@/lib/typography'
 import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
 import { useKeyboardNav } from '@/hooks/useKeyboardNav'
 import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
@@ -982,14 +985,14 @@ export default function LibraryView({ onNavigate, navContext }) {
                   className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded cursor-pointer border border-border hover:bg-elevated text-[11px] text-text-primary disabled:cursor-progress disabled:opacity-70 disabled:hover:bg-transparent"
                 >
                   {bulkToggleIntent ? (
-                    <Loader2 size={16} className="shrink-0 animate-spin text-text-tertiary" />
+                    <Loader2 size={16} className="shrink-0 animate-spin text-text-aside" />
                   ) : (
                     <Power
                       size={16}
                       className={cn(
                         'shrink-0',
                         bulkEnabledState.mixed
-                          ? 'text-text-tertiary'
+                          ? 'text-text-aside'
                           : bulkEnabledState.allDisabled
                             ? 'text-error'
                             : 'text-text-secondary',
@@ -1031,7 +1034,7 @@ export default function LibraryView({ onNavigate, navContext }) {
                   className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap h-7 pl-2.5 pr-2 rounded-md cursor-pointer border border-border/90 bg-elevated/60 hover:bg-elevated hover:border-border text-[11px] font-medium text-text-primary shadow-sm transition-colors"
                 >
                   Type
-                  <ChevronDown size={14} className="text-text-tertiary shrink-0 opacity-90" strokeWidth={2.25} />
+                  <ChevronDown size={14} className="text-text-aside shrink-0" strokeWidth={2.25} />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="max-h-64 overflow-y-auto min-w-48">
@@ -1068,9 +1071,9 @@ export default function LibraryView({ onNavigate, navContext }) {
                 type="button"
                 className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap h-7 pl-2.5 pr-2 rounded-md cursor-pointer border border-border/90 bg-elevated/60 hover:bg-elevated hover:border-border text-[11px] font-medium text-text-primary shadow-sm transition-colors"
               >
-                <Tag size={12} className="text-text-tertiary shrink-0" />
+                <Tag size={12} className="text-text-aside shrink-0" />
                 Labels
-                <ChevronDown size={14} className="text-text-tertiary shrink-0 opacity-90" strokeWidth={2.25} />
+                <ChevronDown size={14} className="text-text-aside shrink-0" strokeWidth={2.25} />
               </button>
             </LabelApplyPopover>
             <span className="shrink-0 whitespace-nowrap text-[11px] text-text-primary font-medium tabular-nums">
@@ -1086,7 +1089,7 @@ export default function LibraryView({ onNavigate, navContext }) {
               </button>
               <button
                 type="button"
-                className="shrink-0 whitespace-nowrap text-[10px] text-text-tertiary hover:text-text-secondary cursor-pointer transition-colors"
+                className="shrink-0 whitespace-nowrap text-[10px] text-text-aside hover:text-text-secondary cursor-pointer transition-colors"
                 onClick={() => clearBulkSelection()}
               >
                 Deselect
@@ -1098,7 +1101,7 @@ export default function LibraryView({ onNavigate, navContext }) {
               title="Clear selection"
               aria-label="Clear selection"
               onClick={() => clearBulkSelection()}
-              className="p-1.5 rounded cursor-pointer text-text-tertiary hover:text-text-primary hover:bg-elevated shrink-0"
+              className="p-1.5 rounded cursor-pointer text-text-aside hover:text-text-primary hover:bg-elevated shrink-0"
             >
               <X size={16} />
             </button>
@@ -1123,7 +1126,7 @@ export default function LibraryView({ onNavigate, navContext }) {
               onRefreshMissing={fetchMissingDeps}
               onRefreshUpdates={refreshUpdateCheck}
             />
-            <span className="shrink-0 whitespace-nowrap text-[11px] text-text-tertiary">
+            <span className={cn('shrink-0 whitespace-nowrap', META_DENSE)}>
               {statusFilter === 'missing'
                 ? `${missingDeps?.length ?? '…'} missing dependencies`
                 : statusFilter === 'updates' && updateCheckResults == null
@@ -1131,7 +1134,7 @@ export default function LibraryView({ onNavigate, navContext }) {
                   : `${filtered.length} packages`}
             </span>
             {activeFilterCount > 0 && (
-              <span className="shrink-0 flex items-center gap-1.5 whitespace-nowrap text-[11px] text-text-tertiary">
+              <span className={cn('shrink-0 flex items-center gap-1.5 whitespace-nowrap', META_DENSE)}>
                 <span aria-hidden="true">·</span>
                 <span>
                   {activeFilterCount} {activeFilterCount === 1 ? 'filter' : 'filters'}
@@ -1142,7 +1145,7 @@ export default function LibraryView({ onNavigate, navContext }) {
                     type="button"
                     onClick={() => resetFilters()}
                     title="Reset all filters to their defaults"
-                    className="text-text-tertiary hover:text-text-secondary transition-colors cursor-pointer"
+                    className="text-text-aside hover:text-text-secondary transition-colors cursor-pointer"
                   >
                     Reset
                   </button>
@@ -1167,7 +1170,7 @@ export default function LibraryView({ onNavigate, navContext }) {
                       setViewMode('grid')
                     }}
                     title="Compact cards"
-                    className={`p-1.5 rounded cursor-pointer ${compactCards && viewMode !== 'table' ? 'bg-hover text-text-primary' : 'text-text-tertiary'}`}
+                    className={`p-1.5 rounded cursor-pointer ${compactCards && viewMode !== 'table' ? 'bg-hover text-text-primary' : 'text-text-aside'}`}
                   >
                     <Grid3x3 size={14} />
                   </button>
@@ -1177,14 +1180,14 @@ export default function LibraryView({ onNavigate, navContext }) {
                       setViewMode('grid')
                     }}
                     title="Detailed cards"
-                    className={`p-1.5 rounded cursor-pointer ${!compactCards && viewMode !== 'table' ? 'bg-hover text-text-primary' : 'text-text-tertiary'}`}
+                    className={`p-1.5 rounded cursor-pointer ${!compactCards && viewMode !== 'table' ? 'bg-hover text-text-primary' : 'text-text-aside'}`}
                   >
                     <Grid2x2 size={14} />
                   </button>
                   <button
                     onClick={() => setViewMode('table')}
                     title="Table"
-                    className={`p-1.5 rounded cursor-pointer ${viewMode === 'table' ? 'bg-hover text-text-primary' : 'text-text-tertiary'}`}
+                    className={`p-1.5 rounded cursor-pointer ${viewMode === 'table' ? 'bg-hover text-text-primary' : 'text-text-aside'}`}
                   >
                     <List size={14} />
                   </button>
@@ -1209,6 +1212,7 @@ export default function LibraryView({ onNavigate, navContext }) {
           <VirtualGrid
             items={filtered}
             itemWidth={cardWidth}
+            // Hard lock — card footer height; do not change without measuring cards.
             itemHeight={compactCards ? cardWidth : cardWidth + 84}
             fixedHeight={compactCards ? 0 : 84}
             className="flex-1"
@@ -1239,7 +1243,7 @@ export default function LibraryView({ onNavigate, navContext }) {
         ) : (
           <div className="flex-1 flex flex-col overflow-hidden p-4">
             <div className="border border-border rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
-              <div className="bg-elevated text-[10px] uppercase tracking-wider text-text-tertiary flex border-b border-border shrink-0">
+              <div className={`bg-elevated ${SECTION_LABEL} flex border-b border-border shrink-0`}>
                 {bulkActive && (
                   <div className="w-8 shrink-0 flex items-center justify-center border-r border-border/50 py-2">
                     <input
@@ -1298,23 +1302,29 @@ export default function LibraryView({ onNavigate, navContext }) {
             </div>
             {filtered.length === 0 &&
               (statusFilter === 'archived' ? (
-                <div className="text-center py-16 px-6 max-w-md mx-auto space-y-2">
-                  <p className="text-sm text-text-secondary">No archived packages yet</p>
-                  <p className="text-[12px] text-text-tertiary leading-relaxed">
-                    Drop <span className="font-mono">.var</span> files into an archive folder to stash them without
-                    installing, or Archive an installed package from its menu. They stay browsable here but dormant: no
-                    missing-dep prompts, and VaM never loads them.
-                  </p>
+                <div className="text-center py-16 px-6 max-w-md mx-auto">
+                  <EmptyState
+                    className="py-0"
+                    clarification={
+                      <>
+                        Drop <span className="font-mono">.var</span> files into an archive folder to stash them without
+                        installing, or Archive an installed package from its menu. They stay browsable here but dormant:
+                        no missing-dep prompts, and VaM never loads them.
+                      </>
+                    }
+                  >
+                    No archived packages yet
+                  </EmptyState>
                   <button
                     type="button"
-                    className="text-[12px] text-accent-blue hover:underline cursor-pointer"
+                    className="mt-2 block mx-auto text-xs text-accent-blue hover:underline cursor-pointer"
                     onClick={() => useViewStore.getState().setView('settings')}
                   >
-                    Manage archive directories in Settings
+                    Manage archive folders in Settings
                   </button>
                 </div>
               ) : (
-                <div className="text-center py-16 text-text-tertiary text-sm">No packages found</div>
+                <EmptyState>No packages found</EmptyState>
               ))}
           </div>
         )}
@@ -1341,7 +1351,7 @@ export default function LibraryView({ onNavigate, navContext }) {
               Remove {bulkRemoveSummary.items.length} package{bulkRemoveSummary.items.length !== 1 ? 's' : ''}?
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
-              <div className="space-y-2 text-sm text-muted-foreground select-text cursor-text">
+              <div className="space-y-2 select-text cursor-text">
                 {bulkRemoveSummary.direct.length > 0 && (
                   <p>
                     {bulkRemoveSummary.direct.length} installed package
@@ -1491,7 +1501,7 @@ function ToolbarActions({
               ? `Re-check Hub availability (${missingLastCheckedText})`
               : 'Re-check Hub availability'
           }
-          className="text-text-tertiary hover:text-text-secondary cursor-pointer p-1 transition-colors"
+          className="text-text-aside hover:text-text-secondary cursor-pointer p-1 transition-colors"
         >
           {anyLoading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
         </button>
@@ -1512,7 +1522,7 @@ function ToolbarActions({
           <AlertDialogHeader>
             <AlertDialogTitle>Remove all orphan dependencies?</AlertDialogTitle>
             <AlertDialogDescription asChild>
-              <div className="space-y-2 text-sm text-muted-foreground">
+              <div className="space-y-2">
                 <p>
                   {statusCounts.orphan} orphan dependenc{statusCounts.orphan !== 1 ? 'ies' : 'y'} will be permanently
                   deleted from disk.
@@ -1553,11 +1563,11 @@ function ToolbarActions({
           onClick={onRefreshUpdates}
           disabled={updateCheckLoading}
           title={lastCheckedText ? `Re-check for updates (${lastCheckedText})` : 'Re-check for updates'}
-          className="text-text-tertiary hover:text-text-secondary cursor-pointer p-1 transition-colors"
+          className="text-text-aside hover:text-text-secondary cursor-pointer p-1 transition-colors"
         >
           {anyLoading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
         </button>
-        {lastCheckedText && <span className="text-[10px] text-text-tertiary">Checked {lastCheckedText}</span>}
+        {lastCheckedText && <span className={META_DENSE}>Checked {lastCheckedText}</span>}
       </>
     )
   }
@@ -1571,20 +1581,18 @@ function MissingDepsTable({ data, loading, hubDetailsLoading, scrollResetKey, on
   if (!data || data.length === 0) {
     if (loading) {
       return (
-        <div className="flex-1 flex items-center justify-center text-text-tertiary text-sm gap-2">
+        <div className={cn('flex-1 flex items-center justify-center gap-2', BODY)}>
           <Loader2 size={16} className="animate-spin" /> Loading missing dependencies…
         </div>
       )
     }
-    return (
-      <div className="flex-1 flex items-center justify-center text-text-tertiary text-sm">No missing dependencies</div>
-    )
+    return <EmptyState className="flex-1 flex items-center justify-center py-0">No missing dependencies</EmptyState>
   }
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4">
       <div className="border border-border rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
-        <div className="bg-elevated text-[10px] uppercase tracking-wider text-text-tertiary flex border-b border-border shrink-0">
+        <div className={`bg-elevated ${SECTION_LABEL} flex border-b border-border shrink-0`}>
           <div className="flex-3 py-2 px-3 font-medium">Package</div>
           <div className="w-32 shrink-0 py-2 px-3 font-medium">Version</div>
           <div className="flex-2 py-2 px-3 font-medium">Author</div>
@@ -1702,19 +1710,27 @@ function MissingDepRow({ item, hubDetailsLoading, onNavigateBroken }) {
       <div className="flex-3 py-2 px-3 truncate">
         <span className="text-text-primary select-text cursor-text">{item.displayName}</span>
       </div>
-      <div className="w-32 shrink-0 py-2 px-3 truncate text-text-tertiary select-text cursor-text">
-        {item.version === 'latest'
-          ? 'any'
-          : item.version === 'min'
-            ? `v${item.minVersion}+`
-            : item.version
-              ? `v${item.version}`
-              : '—'}
+      <div className="w-32 shrink-0 py-2 px-3 truncate text-text-secondary select-text cursor-text">
+        {item.version === 'latest' ? (
+          'any'
+        ) : item.version === 'min' ? (
+          <span className="font-mono">v{item.minVersion}+</span>
+        ) : item.version ? (
+          <span className="font-mono">v{item.version}</span>
+        ) : (
+          '—'
+        )}
         {item.isFallback && item.fallbackVersion && (
-          <span className="text-text-quaternary text-[10px]"> — have v{item.fallbackVersion}</span>
+          <span className={CLARIFY_DENSE}>
+            {' — have '}
+            <span className="font-mono">v{item.fallbackVersion}</span>
+          </span>
         )}
         {!hub?.isExact && hub?.hubVersion && !hub.installedLocally && (
-          <span className="text-text-quaternary text-[10px]"> → v{hub.hubVersion}</span>
+          <span className={CLARIFY_DENSE}>
+            {' → '}
+            <span className="font-mono">v{hub.hubVersion}</span>
+          </span>
         )}
       </div>
       <div className="flex-2 py-2 px-3 truncate text-text-secondary">{item.creator}</div>
@@ -1774,7 +1790,7 @@ function LibraryBulkPanel({ bulkSelectedPackages }) {
         <div className="text-sm font-semibold text-text-primary">
           {bulkSelectedPackages.length} package{bulkSelectedPackages.length !== 1 ? 's' : ''} selected
         </div>
-        <div className="text-[11px] text-text-tertiary mt-1">{formatBytes(totalSize)}</div>
+        <div className={cn(META_DENSE, 'mt-1')}>{formatBytes(totalSize)}</div>
       </div>
     </div>
   )
@@ -1897,11 +1913,13 @@ function UpdateActions({ pkg, updateInfo }) {
     const checkFailed = isUpdateCheckFailed(updateInfo)
     return (
       <div className="rounded border border-border bg-elevated/40 px-2.5 py-2">
-        <div className="flex items-center gap-1.5 text-[11px] font-medium text-text-secondary">
+        <div className={cn('flex items-center gap-1.5 font-medium', CLARIFY_DENSE)}>
           <ArrowUpCircle size={11} className="shrink-0" />
-          {checkFailed ? `v${updateInfo.hubVersion} unchecked` : `v${updateInfo.hubVersion} unavailable`}
+          <span>
+            <span className="font-mono">v{updateInfo.hubVersion}</span> {checkFailed ? 'unchecked' : 'unavailable'}
+          </span>
         </div>
-        <p className="text-[10px] text-text-tertiary mt-1 leading-relaxed">
+        <p className={cn(CLARIFY_DENSE, 'mt-1')}>
           {checkFailed
             ? 'The hub could not be reached, so this version’s availability is unknown. Re-check to try again.'
             : 'A newer version is listed on the hub but can’t be downloaded — it is a paid or externally hosted resource, or the hub no longer serves that version.'}
@@ -2111,11 +2129,11 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-2 min-w-0">
                 <span className="text-sm font-semibold text-text-primary truncate select-text cursor-text">{name}</span>
-                <span className="text-[11px] text-text-tertiary shrink-0 select-text cursor-text">v{pkg.version}</span>
+                <span className={`${MONO_DENSE} shrink-0 select-text cursor-text`}>v{pkg.version}</span>
               </div>
               <div className="flex items-center gap-1.5 mt-0.5">
                 <AuthorAvatar author={pkg.creator} userId={pkg.hubUserId} size={16} />
-                <span className="text-[11px] text-text-secondary">
+                <span className={CLARIFY_DENSE}>
                   by <AuthorLink author={pkg.creator} onFilterAuthor={onFilterAuthor} />
                 </span>
                 {isPromotionalLink(pkg.promotionalLink) && (
@@ -2237,7 +2255,7 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                     onConfirm={handleForceRemove}
                   />
                 </AlertDialog>
-                <p className="text-[10px] text-text-tertiary leading-relaxed px-0.5">
+                <p className={cn(CLARIFY_DENSE, 'px-0.5')}>
                   Installing activates the package and downloads its missing dependencies.
                 </p>
               </div>
@@ -2302,7 +2320,10 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                     </AlertDialog>
                   )}
                 </div>
-                <p className="text-[10px] text-text-tertiary mt-1 leading-relaxed px-0.5">
+                {/* The pinning case explains why "Remove" won't actually delete, so it has to read.
+                    The Frees line only restates the size already on the button, so it drops to the
+                    compact aside — at 11px it matched the button label and stopped receding. */}
+                <p className={cn(hasPinning ? CLARIFY_DENSE : ASIDE_COMPACT, 'mt-1 px-0.5')}>
                   {hasPinning ? (
                     <>Used by {pinningNames}. Stays as dependency, content auto-hidden.</>
                   ) : pkg.removableSize > 0 ? (
@@ -2321,7 +2342,7 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                     <Plus size={12} /> Add to Library
                   </Button>
                   {hiddenContentCount > 0 && (
-                    <p className="text-[10px] text-text-tertiary mt-1 px-0.5">
+                    <p className={cn(CLARIFY_DENSE, 'mt-1 px-0.5')}>
                       Unhides {hiddenContentCount} content item{hiddenContentCount !== 1 ? 's' : ''}
                     </p>
                   )}
@@ -2337,7 +2358,7 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                             ? `Force remove — breaks ${pkg.dependents.length} package${pkg.dependents.length !== 1 ? 's' : ''}`
                             : undefined
                         }
-                        className={`flex-1 min-w-0 text-[10px] ${hasDependents ? 'text-text-tertiary hover:border-error/30 hover:text-error/70' : ''}`}
+                        className={`flex-1 min-w-0 text-[10px] ${hasDependents ? 'text-text-aside hover:border-error/30 hover:text-error' : ''}`}
                       >
                         <Trash2 size={10} />
                         {hasDependents ? (
@@ -2411,10 +2432,10 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
           </div>
         </div>
 
-        {/* Description */}
+        {/* Description — py-3 (not sibling p-4): continuous prose wants slightly less air. */}
         {pkg.description && (
           <div className="px-4 py-3 border-b border-border">
-            <p className="text-[11px] text-text-secondary leading-relaxed select-text cursor-text">
+            <p className={cn(CLARIFY_DENSE, 'select-text cursor-text')}>
               {pkg.description.length > 300 ? pkg.description.slice(0, 300).trimEnd() + '…' : pkg.description}
             </p>
           </div>
@@ -2440,9 +2461,9 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
         {/* Dependents */}
         {pkg.dependents?.length > 0 && (
           <div className="p-4 border-b border-border">
-            <div className="text-[11px] font-medium text-text-primary mb-2">
-              Used by <span className="text-text-tertiary font-normal">({pkg.dependents.length})</span>
-            </div>
+            <GroupHeading count={pkg.dependents.length} className="mb-2">
+              Used by
+            </GroupHeading>
             <DependentsList items={pkg.dependents} onSelectPackage={handleSelectPackage} />
           </div>
         )}
@@ -2450,17 +2471,14 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
         {/* Content */}
         <div className="p-4 border-b border-border">
           <div className="flex items-center justify-between gap-2 mb-2 min-w-0">
-            <span className="text-[11px] font-medium text-text-primary">
-              Content{' '}
-              <span className="text-text-tertiary font-normal">
-                {hasContent ? `(${contentCount})` : '(none detected)'}
-              </span>
-            </span>
+            <GroupHeading as="span" count={hasContent ? contentCount : 'none detected'}>
+              Content
+            </GroupHeading>
             <div className="flex items-center gap-3 shrink-0">
               <button
                 type="button"
                 onClick={() => setFileTreeOpen(true)}
-                className="text-[10px] text-text-tertiary hover:text-accent-blue transition-colors cursor-pointer flex items-center gap-1"
+                className="text-[10px] text-text-aside hover:text-accent-blue transition-colors cursor-pointer flex items-center gap-1"
               >
                 <FolderTree size={11} /> Browse files
               </button>
@@ -2582,7 +2600,7 @@ function DepIssueAction({ Icon, label, description, actionLabel, onAction }) {
         </span>
       </HoverCardTrigger>
       <HoverCardContent align="end" className="max-w-[220px]">
-        <p className="text-[11px] leading-snug text-text-secondary">
+        <p className={CLARIFY_DENSE}>
           {description}{' '}
           <button
             type="button"
@@ -2641,6 +2659,7 @@ function DepList({
 
   return (
     <div>
+      {/* Sticky header cancels parent p-4 to paint flush; pb-2 replaces the usual GroupHeading mb-2. */}
       <div className="sticky top-0 z-10 bg-surface -mx-4 px-4 -mt-4 pt-4 pb-2 flex items-center justify-between gap-2 min-w-0 flex-nowrap">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           {showSearch ? (
@@ -2655,14 +2674,14 @@ function DepList({
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={handleSearchKeyDown}
                 placeholder={`Filter ${total} dependencies…`}
-                className="w-full h-6 pl-7 pr-7 text-[11px] bg-elevated rounded border border-border text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent-blue/40"
+                className="w-full h-6 pl-7 pr-7 text-[11px] bg-elevated rounded border border-border text-text-primary placeholder:text-text-placeholder focus:outline-none focus:border-accent-blue/40"
               />
               {query && (
                 <button
                   type="button"
                   onClick={() => setQuery('')}
                   title="Clear filter"
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary cursor-pointer"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-text-aside hover:text-text-secondary cursor-pointer"
                 >
                   <X size={11} />
                 </button>
@@ -2670,9 +2689,9 @@ function DepList({
             </div>
           ) : (
             <div className="flex h-6 min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:thin]">
-              <span className="shrink-0 whitespace-nowrap text-[11px] font-medium text-text-primary">
-                Dependencies <span className="text-text-tertiary font-normal">({depCount})</span>
-              </span>
+              <GroupHeading as="span" count={depCount} className="shrink-0 whitespace-nowrap">
+                Dependencies
+              </GroupHeading>
             </div>
           )}
         </div>
@@ -2703,7 +2722,7 @@ function DepList({
               type="button"
               onClick={handleCollapse}
               title="Collapse"
-              className="shrink-0 cursor-pointer p-0.5 text-text-tertiary hover:text-text-secondary transition-colors"
+              className="shrink-0 cursor-pointer p-0.5 text-text-aside hover:text-text-secondary transition-colors"
             >
               <X size={14} />
             </button>
@@ -2712,7 +2731,7 @@ function DepList({
       </div>
       <div className="border border-border rounded overflow-hidden divide-y divide-border">
         {visible.length === 0 ? (
-          <div className="px-2 py-2 text-[10px] text-text-tertiary text-center">No matches</div>
+          <div className={`px-2 py-2 ${CLARIFY_DENSE} text-center`}>No matches</div>
         ) : (
           visible.map(({ dep, depth }, i) => (
             <DepRow
@@ -2728,7 +2747,7 @@ function DepList({
           <button
             type="button"
             onClick={() => setExpanded(true)}
-            className="w-full px-2 py-1.5 text-[10px] text-text-tertiary hover:bg-elevated hover:text-text-secondary cursor-pointer text-center transition-colors"
+            className="w-full px-2 py-1.5 text-[10px] text-text-aside hover:bg-elevated hover:text-text-secondary cursor-pointer text-center transition-colors"
           >
             + {remaining} more
           </button>
@@ -2740,7 +2759,7 @@ function DepList({
             type="button"
             onClick={handleCollapse}
             title="Collapse"
-            className="w-full px-2 py-1.5 text-[10px] text-text-tertiary hover:bg-elevated hover:text-text-secondary cursor-pointer text-center transition-colors flex items-center justify-center"
+            className="w-full px-2 py-1.5 text-[10px] text-text-aside hover:bg-elevated hover:text-text-secondary cursor-pointer text-center transition-colors flex items-center justify-center"
           >
             <ChevronUp size={12} />
           </button>
@@ -2773,7 +2792,7 @@ function DependentsList({ items, onSelectPackage }) {
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className="w-full px-2 py-1.5 text-[10px] text-text-tertiary hover:bg-elevated hover:text-text-secondary cursor-pointer text-center transition-colors"
+          className="w-full px-2 py-1.5 text-[10px] text-text-aside hover:bg-elevated hover:text-text-secondary cursor-pointer text-center transition-colors"
         >
           + {remaining} more
         </button>
@@ -2782,7 +2801,7 @@ function DependentsList({ items, onSelectPackage }) {
         <button
           type="button"
           onClick={() => setExpanded(false)}
-          className="w-full py-1 flex items-center justify-center text-text-tertiary hover:bg-elevated hover:text-text-secondary cursor-pointer transition-colors"
+          className="w-full py-1 flex items-center justify-center text-text-aside hover:bg-elevated hover:text-text-secondary cursor-pointer transition-colors"
         >
           <ChevronUp size={14} />
         </button>

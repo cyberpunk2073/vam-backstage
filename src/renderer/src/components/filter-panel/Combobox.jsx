@@ -33,7 +33,7 @@ export function ComboboxField({
           variant="ghost"
           size="icon-xs"
           onClick={onClear}
-          className="absolute right-1 top-0.5 text-text-tertiary hover:text-text-secondary"
+          className="absolute right-1 top-0.5 text-text-aside hover:text-text-secondary"
           aria-label={clearLabel}
         >
           <X size={12} />
@@ -108,7 +108,7 @@ export function ChipRow({ onClear, showClear = true, children }) {
         <button
           type="button"
           onClick={onClear}
-          className="text-[10px] text-text-tertiary hover:text-text-secondary cursor-pointer px-1"
+          className="text-[10px] text-text-aside hover:text-text-secondary cursor-pointer px-1"
         >
           Clear
         </button>

@@ -27,7 +27,10 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import ResizeHandle from './ResizeHandle'
+import { SectionLabel } from './SectionLabel'
+import { EmptyState } from './EmptyState'
 import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
+import { VALUE, CLARIFY_DENSE, ASIDE_DENSE, META_DENSE } from '@/lib/typography'
 
 function formatSpeed(bytesPerSec) {
   if (!bytesPerSec || bytesPerSec <= 0) return ''
@@ -118,7 +121,7 @@ export default function DownloadsPanel({ onClose }) {
   return (
     <div className="flex shrink-0" style={{ width: panelWidth }}>
       <div className="flex-1 min-w-0 bg-surface border-r border-border flex flex-col h-full">
-        {/* Title */}
+        {/* Title — compact panel chrome at 13px; do not promote to TITLE_*. */}
         <div className="h-11 flex items-center justify-between px-4 border-b border-border shrink-0">
           <span className="text-[13px] font-medium text-text-primary flex items-center gap-2">
             <Download size={15} /> Downloads
@@ -130,7 +133,7 @@ export default function DownloadsPanel({ onClose }) {
 
         {/* Aggregate status */}
         {hasInFlight && (
-          <div className="flex items-center gap-2 px-4 py-2 border-b border-border shrink-0 text-[11px] text-text-secondary">
+          <div className={`flex items-center gap-2 px-4 py-2 border-b border-border shrink-0 ${CLARIFY_DENSE}`}>
             {paused ? (
               <Pause size={12} className="text-text-tertiary shrink-0" />
             ) : (
@@ -152,7 +155,7 @@ export default function DownloadsPanel({ onClose }) {
               <Button
                 variant="ghost"
                 size="icon-xs"
-                className="text-text-tertiary hover:text-text-secondary"
+                className="text-text-aside hover:text-text-secondary"
                 title={paused ? 'Resume downloads' : 'Pause downloads'}
                 onClick={paused ? resumeAll : pauseAll}
               >
@@ -161,7 +164,7 @@ export default function DownloadsPanel({ onClose }) {
               <Button
                 variant="ghost"
                 size="icon-xs"
-                className="text-text-tertiary hover:text-error"
+                className="text-text-aside hover:text-error"
                 title="Cancel all downloads"
                 onClick={() => setConfirmCancelOpen(true)}
               >
@@ -211,9 +214,7 @@ export default function DownloadsPanel({ onClose }) {
                 >
                   <Clock size={12} className="text-text-tertiary shrink-0" />
                   <div className="min-w-0 flex-1">
-                    <div className="text-xs text-text-primary truncate select-text cursor-text">
-                      {downloadLabel(item)}
-                    </div>
+                    <div className={`${VALUE} truncate select-text cursor-text`}>{downloadLabel(item)}</div>
                   </div>
                 </div>
               )}
@@ -237,11 +238,9 @@ export default function DownloadsPanel({ onClose }) {
                 >
                   <XCircle size={12} className="text-error shrink-0" />
                   <div className="min-w-0 flex-1">
-                    <div className="text-xs text-text-primary truncate select-text cursor-text">
-                      {downloadLabel(item)}
-                    </div>
+                    <div className={`${VALUE} truncate select-text cursor-text`}>{downloadLabel(item)}</div>
                     {item.error && (
-                      <div className="text-[10px] text-error truncate select-text cursor-text">{item.error}</div>
+                      <div className="text-xs text-error truncate select-text cursor-text">{item.error}</div>
                     )}
                   </div>
                   <div className="flex items-center gap-0.5 shrink-0">
@@ -253,7 +252,7 @@ export default function DownloadsPanel({ onClose }) {
                       size="icon-xs"
                       onClick={() => removeFailed(item.id)}
                       title="Remove"
-                      className="text-text-tertiary hover:text-error"
+                      className="text-text-aside hover:text-error"
                     >
                       <Trash2 size={12} />
                     </Button>
@@ -277,11 +276,9 @@ export default function DownloadsPanel({ onClose }) {
                 >
                   <CheckCircle size={12} className="text-success shrink-0" />
                   <div className="min-w-0 flex-1">
-                    <div className="text-xs text-text-primary truncate select-text cursor-text">
-                      {downloadLabel(item)}
-                    </div>
+                    <div className={`${VALUE} truncate select-text cursor-text`}>{downloadLabel(item)}</div>
                   </div>
-                  <span className="text-[10px] text-text-tertiary shrink-0">
+                  <span className={`${META_DENSE} shrink-0`}>
                     {formatTimeAgo(item.completed_at ? item.completed_at * 1000 : 0)}
                   </span>
                 </div>
@@ -290,10 +287,9 @@ export default function DownloadsPanel({ onClose }) {
           )}
 
           {!hasAny && (
-            <div className="flex flex-col items-center justify-center py-12 text-text-tertiary">
-              <Download size={24} className="opacity-20 mb-2" />
-              <span className="text-[11px]">No downloads</span>
-            </div>
+            <EmptyState dense icon={<Download size={24} className="text-text-tertiary" />}>
+              No downloads
+            </EmptyState>
           )}
         </div>
       </div>
@@ -310,10 +306,8 @@ function ActiveItem({ item, liveProgress, onCancel }) {
   return (
     <div className="group/active px-4 py-1.5 hover:bg-elevated transition-colors">
       <div className="flex items-center gap-1.5 mb-1">
-        <div className="min-w-0 flex-1 text-xs text-text-primary truncate select-text cursor-text">
-          {downloadLabel(item)}
-        </div>
-        <span className="text-[10px] text-text-tertiary shrink-0">
+        <div className={`min-w-0 flex-1 ${VALUE} truncate select-text cursor-text`}>{downloadLabel(item)}</div>
+        <span className={`${META_DENSE} shrink-0`}>
           {progress}%{speed > 0 ? ` · ${formatSpeed(speed)}` : ''}
         </span>
         <Button
@@ -321,7 +315,7 @@ function ActiveItem({ item, liveProgress, onCancel }) {
           size="icon-xs"
           onClick={() => onCancel(item.id)}
           title="Cancel"
-          className="opacity-0 group-hover/active:opacity-100 text-text-tertiary hover:text-error transition-opacity shrink-0"
+          className="opacity-0 group-hover/active:opacity-100 text-text-aside hover:text-error transition-opacity shrink-0"
         >
           <XCircle size={12} />
         </Button>
@@ -336,8 +330,8 @@ function Section({ title, count, action, children }) {
   return (
     <div className="py-2">
       <div className="flex items-center gap-2 px-4 mb-1">
-        <span className="text-[11px] uppercase tracking-wider text-text-tertiary font-medium">{title}</span>
-        <span className="text-[10px] text-text-tertiary">{count}</span>
+        <SectionLabel>{title}</SectionLabel>
+        <span className={META_DENSE}>{count}</span>
         {actions.length > 0 && (
           <div className="ml-auto flex items-center gap-2">
             {actions.map((a) => (
@@ -345,7 +339,7 @@ function Section({ title, count, action, children }) {
                 key={a.label}
                 type="button"
                 onClick={a.onClick}
-                className="text-[10px] text-text-tertiary hover:text-text-secondary cursor-pointer transition-colors"
+                className={`${ASIDE_DENSE} hover:text-text-secondary cursor-pointer transition-colors`}
               >
                 {a.label}
               </button>
@@ -372,7 +366,7 @@ function CappedSection({ title, count, action, items, renderItem }) {
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className="w-full px-2 py-1.5 text-[10px] text-text-tertiary hover:bg-elevated hover:text-text-secondary cursor-pointer text-center transition-colors"
+          className={`w-full px-2 py-1.5 ${ASIDE_DENSE} hover:bg-elevated hover:text-text-secondary cursor-pointer text-center transition-colors`}
         >
           + {remaining} more
         </button>
@@ -381,7 +375,7 @@ function CappedSection({ title, count, action, items, renderItem }) {
         <button
           type="button"
           onClick={() => setExpanded(false)}
-          className="w-full py-1 flex items-center justify-center text-text-tertiary hover:bg-elevated hover:text-text-secondary cursor-pointer transition-colors"
+          className="w-full py-1 flex items-center justify-center text-text-aside hover:bg-elevated hover:text-text-secondary cursor-pointer transition-colors"
         >
           <ChevronUp size={14} />
         </button>

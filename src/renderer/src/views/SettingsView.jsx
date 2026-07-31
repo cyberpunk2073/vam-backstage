@@ -24,7 +24,18 @@ import {
   Boxes,
   X,
 } from 'lucide-react'
-import { formatBytes } from '@/lib/utils'
+import { cn, formatBytes } from '@/lib/utils'
+import { SettingRow } from '@/components/SettingRow'
+import {
+  TITLE_PAGE,
+  TITLE_SECTION,
+  LABEL,
+  BODY_DENSE,
+  EMPHASIS,
+  META_DENSE,
+  CLARIFY,
+  CLARIFY_DENSE,
+} from '@/lib/typography'
 import { parseDisableBehavior, disableBehaviorMoveTo, DISABLE_BEHAVIOR_SUFFIX } from '@shared/disable-behavior.js'
 import { DEFAULT_REMOTE_PORT, normalizeConnectUrl } from '@shared/remote-config.js'
 import { toast } from '@/components/Toast'
@@ -728,12 +739,12 @@ export default function SettingsView() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-[640px] mx-auto py-8 px-6 space-y-6">
-        <h1 className="text-lg font-semibold text-text-primary">Settings</h1>
+        <h1 className={TITLE_PAGE}>Settings</h1>
 
         {/* Library */}
         <Section title="Library">
           <div>
-            <div className="text-sm text-text-primary font-medium flex items-center gap-1.5 mb-2">
+            <div className={cn(LABEL, 'flex items-center gap-1.5 mb-2')}>
               <HardDrive size={14} className="text-text-tertiary" />
               VaM Directory
             </div>
@@ -742,7 +753,7 @@ export default function SettingsView() {
                 text={vamDir || ''}
                 className="flex-1 min-w-0 h-10 bg-elevated border border-border rounded-lg px-3 flex items-center text-xs text-text-secondary font-mono truncate select-text cursor-text"
               >
-                {vamDir || <span className="italic text-text-tertiary font-sans">Not configured</span>}
+                {vamDir || <span className="italic text-text-placeholder font-sans">Not configured</span>}
               </TruncateWithTooltip>
               <Button variant="outline" size="lg" onClick={handleBrowseDir} className="shrink-0 h-10 px-3.5">
                 <FolderOpen size={14} /> Browse
@@ -756,13 +767,10 @@ export default function SettingsView() {
                 archive is introduced as something a folder can additionally do —
                 a symmetric Offload-vs-Archive presentation made the shared 90%
                 (move packages somewhere VaM won't load them) look like a fork. */}
-            <div>
-              <div className="text-xs text-text-primary font-medium">Offload folders</div>
-              <div className="text-[11px] text-text-tertiary mt-0.5">
-                Folders outside AddonPackages that VaM never loads. Packages parked there stay in your library and come
-                back in one click.
-              </div>
-            </div>
+            <SettingRow
+              label="Offload folders"
+              description="Folders outside AddonPackages that VaM never loads. Packages parked there stay in your library and come back in one click."
+            />
             {/* Registered folders, detected candidates and the add action are one
                 bordered object: they are the same list at three stages, and pulling
                 Add out into the header made it compete with per-row state. */}
@@ -773,11 +781,11 @@ export default function SettingsView() {
                 // already defined in the header above, so this says the one thing
                 // that header can't: any of these folders can go further.
                 <div className="px-3 py-3 space-y-2">
-                  <p className="text-[11px] text-text-tertiary pb-0.5">
-                    No folders yet. Any folder you add can also be an{' '}
-                    <span className="font-medium text-text-secondary">Archive</span>: cold storage that lets you drop
-                    the dependencies the Hub can re-download and fetches them back when you install the package again
-                    from the archive, so a hoard costs a fraction of the disk.
+                  {/* pb-0.5 on top of space-y-2: deliberate 2px nudge before the button. */}
+                  <p className={cn(BODY_DENSE, 'pb-0.5')}>
+                    No folders yet. Any folder you add can also be an <span className={EMPHASIS}>Archive</span>: cold
+                    storage that lets you drop the dependencies the Hub can re-download and fetches them back when you
+                    install the package again from the archive, so a hoard costs a fraction of the disk.
                   </p>
                   <Button
                     variant="outline"
@@ -825,10 +833,12 @@ export default function SettingsView() {
                   disabled={libDirsBusy === 'add'}
                   className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-text-secondary cursor-pointer hover:bg-hover hover:text-text-primary disabled:cursor-progress disabled:opacity-60 disabled:hover:bg-transparent transition-colors"
                 >
+                  {/* No color of its own: the icon is part of the button's label, so it has to
+                      track the hover brighten instead of staying pinned to a dim tone. */}
                   {libDirsBusy === 'add' ? (
-                    <Loader2 size={14} className="shrink-0 animate-spin text-text-tertiary" />
+                    <Loader2 size={14} className="shrink-0 animate-spin" />
                   ) : (
-                    <Plus size={14} className="shrink-0 text-text-tertiary" />
+                    <Plus size={14} className="shrink-0" />
                   )}
                   Add folder…
                 </button>
@@ -837,13 +847,11 @@ export default function SettingsView() {
           </div>
 
           {offloadAuxDirs.length > 0 && (
-            <div className="flex items-start gap-3">
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-text-primary font-medium">When disabling a package</div>
-                <div className="text-[11px] text-text-tertiary mt-0.5">
-                  Either use VaM&apos;s native disable behavior, or move the package to an offload directory.
-                </div>
-              </div>
+            <SettingRow
+              as="div"
+              label="When disabling a package"
+              description="Either use VaM's native disable behavior, or move the package to an offload directory."
+            >
               <Select value={disableBehavior} onValueChange={handleDisableBehaviorChange}>
                 <SelectTrigger
                   className="shrink-0 min-w-[180px] max-w-[240px] h-9 text-xs"
@@ -864,7 +872,7 @@ export default function SettingsView() {
                   ))}
                 </SelectContent>
               </Select>
-            </div>
+            </SettingRow>
           )}
 
           <div className="space-y-3 border-t border-border pt-3">
@@ -895,7 +903,7 @@ export default function SettingsView() {
                     </Button>
                   </span>
                 </TooltipTrigger>
-                <TooltipContent side="bottom" className="block w-72 py-2 text-left leading-relaxed">
+                <TooltipContent side="bottom" prose>
                   {RESCAN_LIBRARY_HINT}
                 </TooltipContent>
               </Tooltip>
@@ -914,7 +922,7 @@ export default function SettingsView() {
                     </Button>
                   </span>
                 </TooltipTrigger>
-                <TooltipContent side="bottom" className="block w-72 py-2 text-left leading-relaxed">
+                <TooltipContent side="bottom" prose>
                   {VERIFY_INTEGRITY_HINT}
                 </TooltipContent>
               </Tooltip>
@@ -933,7 +941,7 @@ export default function SettingsView() {
                     </Button>
                   </span>
                 </TooltipTrigger>
-                <TooltipContent side="bottom" className="block w-72 py-2 text-left leading-relaxed">
+                <TooltipContent side="bottom" prose>
                   {SCAN_HUB_DETAILS_HINT}
                 </TooltipContent>
               </Tooltip>
@@ -942,10 +950,10 @@ export default function SettingsView() {
               </Button>
             </div>
             {hubScanning && hubScanProgress && (
-              <div className="text-[11px] text-text-tertiary">
+              <div className={META_DENSE}>
                 Scanning {hubScanProgress.current} / {hubScanProgress.total}
                 {hubScanProgress.found != null && (
-                  <span className="ml-1.5 text-text-tertiary/80">
+                  <span className="ml-1.5 text-text-tertiary">
                     · {hubScanProgress.found} on Hub
                     {hubScanProgress.phase === 'fetching' && ' · fetching details'}
                   </span>
@@ -953,53 +961,19 @@ export default function SettingsView() {
               </div>
             )}
             {verifying && verifyProgress && (
-              <div className="text-[11px] text-text-tertiary">
+              <div className={META_DENSE}>
                 Checking {verifyProgress.step} / {verifyProgress.total}
                 {verifyProgress.filename && (
-                  <span className="ml-1.5 text-text-tertiary/70 select-text cursor-text">
-                    {verifyProgress.filename}
-                  </span>
+                  <span className="ml-1.5 text-text-tertiary select-text cursor-text">{verifyProgress.filename}</span>
                 )}
               </div>
             )}
-            {scanResult && (
-              <div
-                className={`flex items-start gap-2 p-3 rounded-lg text-xs ${
-                  scanResult.error
-                    ? 'bg-error/10 border border-error/20 text-error'
-                    : scanResult.success
-                      ? 'bg-success/10 border border-success/20 text-success'
-                      : 'bg-accent-blue/10 border border-accent-blue/20 text-accent-blue'
-                }`}
-              >
-                {scanResult.error ? (
-                  <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                ) : scanResult.success ? (
-                  <CheckCircle size={14} className="shrink-0 mt-0.5" />
-                ) : (
-                  <HardDrive size={14} className="shrink-0 mt-0.5" />
-                )}
-                <div className="min-w-0">
-                  <span className="select-text cursor-text">
-                    {scanResult.error || scanResult.success || scanResult.info}
-                  </span>
-                  {scanResult.corruptedFiles?.length > 0 && (
-                    <ul className="mt-1.5 space-y-0.5 text-[11px] opacity-80">
-                      {scanResult.corruptedFiles.map((f) => (
-                        <li key={f} className="select-text cursor-text truncate font-mono">
-                          · {f}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
-            )}
+            <ResultBanner result={scanResult} details={scanResult?.corruptedFiles} mono />
           </div>
         </Section>
 
         <Section title="Behavior" description="How packages and content are managed.">
-          <div className="space-y-3">
+          <div className="space-y-5">
             <AutoHideSwitch
               settingKey="auto_hide_deps"
               label="Auto-hide dependency content"
@@ -1054,34 +1028,26 @@ export default function SettingsView() {
               noun="clothing items"
             />
             {!isRemoteClient && (
-              <label className="flex items-center gap-3 cursor-pointer">
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs text-text-primary font-medium">Move files when dragging them in</div>
-                  <div className="text-[11px] text-text-tertiary mt-0.5">
-                    Drag-and-drop moves packages into your library instead of copying them, so the originals are
-                    removed.
-                  </div>
-                </div>
+              <SettingRow
+                as="label"
+                label="Move files when dragging them in"
+                description="Drag-and-drop moves packages into your library instead of copying them, so the originals are removed."
+              >
                 <Switch checked={moveOnImport} onCheckedChange={handleToggleMoveOnImport} />
-              </label>
+              </SettingRow>
             )}
-            <label
-              className="flex items-center gap-3 cursor-pointer"
+            <SettingRow
+              as="label"
               title={remoteSectionForced ? "Can't be hidden while a client/host connection is active." : undefined}
+              label="Client-server mode"
+              description="Show the network options for using one library from several devices. Leave off if you only run this app on a single PC."
             >
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-text-primary font-medium">Client-server mode</div>
-                <div className="text-[11px] text-text-tertiary mt-0.5">
-                  Show the network options for using one library from several devices. Leave off if you only run this
-                  app on a single PC.
-                </div>
-              </div>
               <Switch
                 checked={remoteEnabled || remoteSectionForced}
                 disabled={remoteSectionForced}
                 onCheckedChange={handleToggleRemoteEnabled}
               />
-            </label>
+            </SettingRow>
           </div>
         </Section>
 
@@ -1092,30 +1058,25 @@ export default function SettingsView() {
             description="Use one library from several devices. Run this app on the PC that stores your library (the host), then point another device on the same network at it to browse and manage that library remotely."
           >
             {isRemoteClient ? (
-              <div className="space-y-4">
-                <div className="flex items-start gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs text-text-primary font-medium flex items-center gap-1.5">
-                      <PlugZap size={14} className="text-accent-blue shrink-0" />
-                      Running as remote client
-                    </div>
-                    <div className="text-[11px] text-text-tertiary mt-0.5 select-text cursor-text font-mono break-all">
-                      {window.api.remote.url}
-                    </div>
-                  </div>
+              <div className="space-y-5">
+                <SettingRow
+                  icon={<PlugZap size={14} className="text-accent-blue shrink-0" />}
+                  label="Running as remote client"
+                  description={window.api.remote.url}
+                  descriptionClassName="select-text cursor-text font-mono break-all"
+                >
                   <Button variant="outline" size="lg" onClick={handleDisconnect} className="shrink-0 text-xs">
                     <Plug size={14} /> Disconnect
                   </Button>
-                </div>
-                <label className="flex items-center gap-3 cursor-pointer border-t border-border pt-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs text-text-primary font-medium">Reconnect on launch</div>
-                    <div className="text-[11px] text-text-tertiary mt-0.5">
-                      Connect to this host automatically each time the app starts. Disconnecting turns this off.
-                    </div>
-                  </div>
+                </SettingRow>
+                <SettingRow
+                  as="label"
+                  className="border-t border-border pt-4"
+                  label="Reconnect on launch"
+                  description="Connect to this host automatically each time the app starts. Disconnecting turns this off."
+                >
                   <Switch checked={autoConnectArmed} onCheckedChange={handleToggleClientAutoConnect} />
-                </label>
+                </SettingRow>
               </div>
             ) : (
               <div className="space-y-4">
@@ -1130,7 +1091,7 @@ export default function SettingsView() {
                       type="button"
                       onClick={dismissRemoteWarning}
                       title="Dismiss"
-                      className="shrink-0 -mt-0.5 -mr-0.5 text-warning/60 hover:text-warning cursor-pointer"
+                      className="shrink-0 -mt-0.5 -mr-0.5 text-warning hover:text-warning cursor-pointer"
                     >
                       <X size={13} />
                     </button>
@@ -1138,11 +1099,11 @@ export default function SettingsView() {
                 )}
                 <div className="flex items-end gap-2">
                   <div className="flex-1 min-w-0" title={HOST_SERVE_TOOLTIP}>
-                    <div className="text-xs text-text-primary font-medium flex items-center gap-1.5">
+                    <div className={cn(LABEL, 'flex items-center gap-1.5')}>
                       <Network size={14} className="text-text-tertiary shrink-0" />
                       Host this library
                     </div>
-                    <div className="text-[11px] text-text-tertiary mt-0.5">
+                    <div className={cn(CLARIFY_DENSE, 'mt-0.5')}>
                       {remoteStatus?.running ? (
                         <>
                           Reachable at{' '}
@@ -1184,26 +1145,25 @@ export default function SettingsView() {
                   )}
                 </div>
 
-                <label className="flex items-center gap-3 cursor-pointer" title={HOST_SERVE_TOOLTIP}>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs text-text-primary font-medium">Start server on launch</div>
-                    <div className="text-[11px] text-text-tertiary mt-0.5">
-                      Automatically start hosting on the port above each time you open VaM Backstage.
-                    </div>
-                  </div>
+                <SettingRow
+                  as="label"
+                  title={HOST_SERVE_TOOLTIP}
+                  label="Start server on launch"
+                  description="Automatically start hosting on the port above each time you open VaM Backstage."
+                >
                   <Switch checked={serveOnLaunch} onCheckedChange={handleToggleServeOnLaunch} />
-                </label>
+                </SettingRow>
 
                 <div className="flex items-end gap-2 border-t border-border pt-4">
                   <div
                     className="flex-1 min-w-0"
                     title="To launch straight into client mode, start with --connect=<host> (or set VAM_CONNECT)."
                   >
-                    <div className="text-xs text-text-primary font-medium flex items-center gap-1.5">
+                    <div className={cn(LABEL, 'flex items-center gap-1.5')}>
                       <PlugZap size={14} className="text-text-tertiary shrink-0" />
                       Connect to a host
                     </div>
-                    <div className="text-[11px] text-text-tertiary mt-0.5">
+                    <div className={cn(CLARIFY_DENSE, 'mt-0.5')}>
                       From another device, enter the host&apos;s address (e.g. its IP, like 192.168.1.5) to use its
                       library here. The app relaunches as a client.
                     </div>
@@ -1226,52 +1186,41 @@ export default function SettingsView() {
                   </Button>
                 </div>
 
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs text-text-primary font-medium">Connect on launch</div>
-                    <div className="text-[11px] text-text-tertiary mt-0.5">
-                      Start as a client pointed at the address above every time the app opens. Disconnecting from the
-                      connection screen turns this off.
-                    </div>
-                  </div>
+                <SettingRow
+                  as="label"
+                  label="Connect on launch"
+                  description="Start as a client pointed at the address above every time the app opens. Disconnecting from the connection screen turns this off."
+                >
                   <Switch checked={autoConnectArmed} onCheckedChange={handleToggleAutoConnect} />
-                </label>
+                </SettingRow>
               </div>
             )}
           </Section>
         )}
 
         <Section title="Display" description="Control how library content appears.">
-          <div className="space-y-3">
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-text-primary font-medium">Blur thumbnails</div>
-                <div className="text-[11px] text-text-tertiary mt-0.5">
-                  Apply a blur to all package and content thumbnail images to keep it SFW.
-                </div>
-              </div>
+          <div className="space-y-5">
+            <SettingRow
+              as="label"
+              label="Blur thumbnails"
+              description="Apply a blur to all package and content thumbnail images to keep it SFW."
+            >
               <Switch checked={blurThumbnails} onCheckedChange={setBlurThumbnails} />
-            </label>
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-text-primary font-medium">Dim inactive packages</div>
-                <div className="text-[11px] text-text-tertiary mt-0.5">
-                  When ON, disabled and offloaded packages are greyed out with a small corner icon. When OFF, they
-                  render at full color with an informational chip (handy if a large part of your library is archived).
-                </div>
-              </div>
+            </SettingRow>
+            <SettingRow
+              as="label"
+              label="Dim inactive packages"
+              description="When ON, disabled and offloaded packages are greyed out with a small corner icon. When OFF, they render at full color with an informational chip (handy if a large part of your library is archived)."
+            >
               <Switch checked={dimInactive} onCheckedChange={setDimInactive} />
-            </label>
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-text-primary font-medium">Skip confirmation when disabling packages</div>
-                <div className="text-[11px] text-text-tertiary mt-0.5">
-                  When ON, disabling a package that has dependents or cascade-disabled deps runs immediately with no
-                  confirmation dialog.
-                </div>
-              </div>
+            </SettingRow>
+            <SettingRow
+              as="label"
+              label="Skip confirmation when disabling packages"
+              description="When ON, disabling a package that has dependents or cascade-disabled deps runs immediately with no confirmation dialog."
+            >
               <Switch checked={suppressDisablePackageWarning} onCheckedChange={setSuppressDisablePackageWarning} />
-            </label>
+            </SettingRow>
           </div>
         </Section>
 
@@ -1284,13 +1233,10 @@ export default function SettingsView() {
             <div className="space-y-4">
               {hubLoggedIn && (
                 <div className="space-y-3">
-                  <div>
-                    <div className="text-xs text-text-primary font-medium">Import Hub lists to wishlist</div>
-                    <div className="text-[11px] text-text-tertiary mt-0.5">
-                      Reads your Hub favorites or bookmarks and adds them to the local wishlist. Already-wishlisted
-                      items are skipped.
-                    </div>
-                  </div>
+                  <SettingRow
+                    label="Import Hub lists to wishlist"
+                    description="Reads your Hub favorites or bookmarks and adds them to the local wishlist. Already-wishlisted items are skipped."
+                  />
                   <div className="space-y-3">
                     <div className="flex flex-wrap gap-2">
                       <Button
@@ -1323,7 +1269,7 @@ export default function SettingsView() {
                       </Button>
                     </div>
                     {wishlistImportProgress && wishlistImporting && (
-                      <div className="text-[11px] text-text-tertiary select-text cursor-text">
+                      <div className={cn(META_DENSE, 'select-text cursor-text')}>
                         {formatWishlistImportProgress(wishlistImportProgress)}
                       </div>
                     )}
@@ -1334,14 +1280,10 @@ export default function SettingsView() {
 
               {baDirPresent && (
                 <div className={`space-y-3 ${hubLoggedIn ? 'border-t border-border pt-4' : ''}`}>
-                  <div>
-                    <div className="text-xs text-text-primary font-medium">Sync with BrowserAssist</div>
-                    <div className="text-[11px] text-text-tertiary mt-0.5">
-                      Write User tags (scene-real / scene-look / scene-other) plus user-defined Labels into JayJayWon
-                      BrowserAssist settings — package Labels onto package rows, and content Labels (own + inherited
-                      from package) onto matching resources in this app&apos;s library.
-                    </div>
-                  </div>
+                  <SettingRow
+                    label="Sync with BrowserAssist"
+                    description="Write User tags (scene-real / scene-look / scene-other) plus user-defined Labels into JayJayWon BrowserAssist settings — package Labels onto package rows, and content Labels (own + inherited from package) onto matching resources in this app's library."
+                  />
                   <div className="space-y-3">
                     <Button
                       variant="outline"
@@ -1372,38 +1314,32 @@ export default function SettingsView() {
             danger
             description="Debug logging and database tools. In release builds, tap the app version below seven times to show this section."
           >
-            <div className="space-y-4">
+            <div className="space-y-5">
               {developerUnlocked && !isDev && (
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs text-text-primary font-medium flex items-center gap-1.5">
-                      <CurlyBraces size={14} className="text-text-tertiary shrink-0" />
-                      Developer options unlocked
-                    </div>
-                    <div className="text-[11px] text-text-tertiary mt-0.5">
-                      Turn off to hide this section again (tap the version seven times to re-enable).
-                    </div>
-                  </div>
+                <SettingRow
+                  as="label"
+                  icon={<CurlyBraces size={14} className="text-text-tertiary shrink-0" />}
+                  label="Developer options unlocked"
+                  description="Turn off to hide this section again (tap the version seven times to re-enable)."
+                >
                   <Switch
                     checked
                     onCheckedChange={(on) => {
                       if (!on) void handleDisableDeveloperOptions()
                     }}
                   />
-                </label>
+                </SettingRow>
               )}
-              <div className="flex items-start gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs text-text-primary font-medium flex items-center gap-1.5">
-                    <FlaskConical size={14} className="text-text-tertiary shrink-0" />
-                    Update channel
-                  </div>
-                  <div className="text-[11px] text-text-tertiary mt-0.5">
-                    {updateChannel === 'dev'
-                      ? 'Pulls ephemeral builds from the latest master commit. Unstable; may contain bugs or in-progress features. Downgrades are not supported — stable updates resume only once a stable release is newer than your current dev build.'
-                      : 'Stable releases only. Switch to Dev to receive ephemeral builds from master (unstable, no downgrade path).'}
-                  </div>
-                </div>
+              <SettingRow
+                as="div"
+                icon={<FlaskConical size={14} className="text-text-tertiary shrink-0" />}
+                label="Update channel"
+                description={
+                  updateChannel === 'dev'
+                    ? 'Pulls ephemeral builds from the latest master commit. Unstable; may contain bugs or in-progress features. Downgrades are not supported — stable updates resume only once a stable release is newer than your current dev build.'
+                    : 'Stable releases only. Switch to Dev to receive ephemeral builds from master (unstable, no downgrade path).'
+                }
+              >
                 <Select value={updateChannel} onValueChange={handleChannelChange}>
                   <SelectTrigger className="shrink-0 min-w-[110px]" aria-label="Update channel">
                     <SelectValue />
@@ -1413,20 +1349,16 @@ export default function SettingsView() {
                     <SelectItem value="dev">Dev (unstable)</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
+              </SettingRow>
 
-              <label className="flex items-center gap-3 cursor-pointer">
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs text-text-primary font-medium flex items-center gap-1.5">
-                    <Bug size={14} className="text-text-tertiary shrink-0" />
-                    Debug log Hub requests
-                  </div>
-                  <div className="text-[11px] text-text-tertiary mt-0.5">
-                    Print Hub API request and response bodies to the main process console.
-                  </div>
-                </div>
+              <SettingRow
+                as="label"
+                icon={<Bug size={14} className="text-text-tertiary shrink-0" />}
+                label="Debug log Hub requests"
+                description="Print Hub API request and response bodies to the main process console."
+              >
                 <Switch checked={hubDebugRequests} onCheckedChange={handleToggleHubDebug} />
-              </label>
+              </SettingRow>
 
               <div className="border-t border-border pt-4 flex flex-wrap items-center gap-3">
                 <AlertDialog>
@@ -1445,7 +1377,7 @@ export default function SettingsView() {
                     <AlertDialogHeader>
                       <AlertDialogTitle className="select-text cursor-text">Forget deleted data?</AlertDialogTitle>
                       <AlertDialogDescription asChild>
-                        <div className="text-[11px] text-text-tertiary space-y-2">
+                        <div className="space-y-2">
                           <p>
                             The app keeps the identity and settings (hub link, labels, type override, content
                             visibility) of {deletedData.packages} package{deletedData.packages === 1 ? '' : 's'} whose
@@ -1488,7 +1420,7 @@ export default function SettingsView() {
                     <AlertDialogHeader>
                       <AlertDialogTitle className="select-text cursor-text">Nuke local database?</AlertDialogTitle>
                       <AlertDialogDescription asChild>
-                        <div className="text-[11px] text-text-tertiary space-y-2">
+                        <div className="space-y-2">
                           <p>
                             This deletes the app&apos;s SQLite database (packages, contents, downloads metadata, and
                             settings) and quits. Your AddonPackages folder is not touched.
@@ -1512,7 +1444,9 @@ export default function SettingsView() {
 
         {/* About */}
         <div className="pt-4 border-t border-border">
-          <div className="text-[11px] text-text-tertiary space-y-1">
+          <div className={cn(META_DENSE, 'space-y-1')}>
+            {/* A version string presented as selectable text; the button is only a hidden tap
+                target, so this is metadata rather than a control's resting state. */}
             <button
               type="button"
               onClick={handleAboutVersionTap}
@@ -1540,13 +1474,13 @@ function Section({ title, description, danger, icon: Icon, children }) {
           }}
         />
       )}
-      <div className="p-4 space-y-3">
+      <div className="p-4 space-y-4">
         <div>
-          <h2 className="text-[15px] font-semibold tracking-tight text-text-primary flex items-center gap-2">
+          <h2 className={cn(TITLE_SECTION, 'flex items-center gap-2')}>
             {Icon && <Icon size={16} className="text-text-tertiary shrink-0" />}
             {title}
           </h2>
-          {description && <p className="text-[11px] mt-1 text-text-tertiary">{description}</p>}
+          {description && <p className={cn(BODY_DENSE, 'mt-1')}>{description}</p>}
         </div>
         {children}
       </div>
@@ -1554,26 +1488,37 @@ function Section({ title, description, danger, icon: Icon, children }) {
   )
 }
 
-/** Result callout with error / warning / success tones plus an optional list of warnings. */
-function ResultBanner({ result }) {
+/**
+ * Result callout with error / warning / success / info tones plus an optional detail list.
+ *
+ * The detail list is the clarification tier of the banner's own body: one size step down,
+ * same tone color. It used to be dimmed with `opacity-80` / `opacity-90` — two values for
+ * one role — which fakes a tier the palette does not have.
+ *
+ * `mono` is for lists of file paths, where alignment and truncation matter more than rhythm.
+ */
+function ResultBanner({ result, details, mono }) {
   if (!result) return null
-  const hasWarnings = result.warnings?.length > 0
+  const list = details ?? result.warnings
+  const hasList = list?.length > 0
   const tone = result.error
     ? 'bg-error/10 border border-error/20 text-error'
-    : hasWarnings
+    : hasList
       ? 'bg-warning/10 border border-warning/20 text-warning'
-      : 'bg-success/10 border border-success/20 text-success'
-  const Icon = result.error || hasWarnings ? AlertTriangle : CheckCircle
+      : result.success
+        ? 'bg-success/10 border border-success/20 text-success'
+        : 'bg-accent-blue/10 border border-accent-blue/20 text-accent-blue'
+  const Icon = result.error || hasList ? AlertTriangle : result.success ? CheckCircle : HardDrive
   return (
     <div className={`flex items-start gap-2 p-3 rounded-lg text-xs ${tone}`}>
       <Icon size={14} className="shrink-0 mt-0.5" />
-      <div className="min-w-0 space-y-1.5">
-        <span className="select-text cursor-text">{result.error || result.success}</span>
-        {hasWarnings && (
-          <ul className="mt-1 space-y-0.5 text-[11px] opacity-90">
-            {result.warnings.map((w, i) => (
-              <li key={`${i}:${w}`} className="select-text cursor-text">
-                · {w}
+      <div className="min-w-0">
+        <span className="select-text cursor-text">{result.error || result.success || result.info}</span>
+        {hasList && (
+          <ul className={cn('mt-1 space-y-0.5 text-[11px]', mono && 'font-mono')}>
+            {list.map((d, i) => (
+              <li key={`${i}:${d}`} className={cn('select-text cursor-text', mono && 'truncate')}>
+                · {d}
               </li>
             ))}
           </ul>
@@ -1644,7 +1589,7 @@ function AuxDirRow({
               size="icon-sm"
               disabled={disabled}
               title="Folder options"
-              className="shrink-0 text-text-tertiary hover:text-text-primary"
+              className="shrink-0 text-text-aside hover:text-text-primary"
             >
               <MoreHorizontal size={14} />
             </Button>
@@ -1665,7 +1610,7 @@ function AuxDirRow({
                       Share with BrowserAssist
                     </DropdownMenuCheckboxItem>
                   </TooltipTrigger>
-                  <TooltipContent side="left" className="block w-72 py-2 text-left leading-relaxed">
+                  <TooltipContent side="left" prose>
                     {d.archive
                       ? 'Offload folders only. BrowserAssist never handles archived packages. Turn Archive off for this folder to change the setting.'
                       : BROWSER_ASSIST_HINT}
@@ -1688,7 +1633,7 @@ function AuxDirRow({
       {/* Facts about this folder, nothing else. The mode used to append its own
           one-liner here, which read as a fourth statistic — the eye can't tell
           "48.2 GB" and "nothing pruned" apart when they share a separator. */}
-      <div className="pl-6 mt-0.5 text-[11px] text-text-tertiary truncate">
+      <div className={cn(META_DENSE, 'pl-6 mt-0.5 truncate')}>
         <span className="tabular-nums">
           {d.packageCount.toLocaleString()} package{d.packageCount === 1 ? '' : 's'} · {formatBytes(d.sizeBytes)}
         </span>
@@ -1697,7 +1642,7 @@ function AuxDirRow({
             <TooltipTrigger asChild>
               <span className="cursor-help"> · shared with BrowserAssist</span>
             </TooltipTrigger>
-            <TooltipContent side="bottom" align="start" className="block w-72 py-2 text-left leading-relaxed">
+            <TooltipContent side="bottom" align="start" prose>
               {BROWSER_ASSIST_HINT}
             </TooltipContent>
           </Tooltip>
@@ -1711,13 +1656,13 @@ function AuxDirRow({
               Stop tracking this {d.archive ? 'archive' : 'offload'} directory?
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
-              <div className="text-[13px] leading-relaxed text-text-secondary space-y-2.5">
+              <div className="leading-relaxed space-y-2.5">
                 <p>
-                  <span className="font-mono text-text-primary select-text cursor-text">
+                  <span className="font-mono text-text-emphasis select-text cursor-text">
                     {shortenLibraryPath(d.path, vamDir)}
                   </span>{' '}
                   currently holds{' '}
-                  <span className="font-medium text-text-primary">
+                  <span className={EMPHASIS}>
                     {d.packageCount.toLocaleString()} package{d.packageCount === 1 ? '' : 's'}
                   </span>
                   . Removing it un-registers the folder and hides those packages from Backstage.
@@ -1752,28 +1697,26 @@ function AuxDirRow({
               Turn Archive {targetRole === 'archive' ? 'on' : 'off'} for this folder?
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
-              <div className="text-[13px] leading-relaxed text-text-secondary space-y-2.5">
+              <div className="leading-relaxed space-y-2.5">
                 <p>
-                  <span className="font-mono text-text-primary select-text cursor-text">
+                  <span className="font-mono text-text-emphasis select-text cursor-text">
                     {shortenLibraryPath(d.path, vamDir)}
                   </span>{' '}
                   holds{' '}
-                  <span className="font-medium text-text-primary">
+                  <span className={EMPHASIS}>
                     {d.packageCount.toLocaleString()} package{d.packageCount === 1 ? '' : 's'}
                   </span>
                   , and all of them change state with the folder.
                 </p>
                 {targetRole === 'offload' ? (
                   <p>
-                    They become <span className="font-medium text-text-primary">offloaded</span>: they reappear in your
-                    default library views and start reporting their missing dependencies again, so expect the Missing
-                    list to grow.
+                    They become <span className={EMPHASIS}>offloaded</span>: they reappear in your default library views
+                    and start reporting their missing dependencies again, so expect the Missing list to grow.
                   </p>
                 ) : (
                   <p>
-                    They become <span className="font-medium text-text-primary">archived</span>: they drop out of your
-                    default library views and the Missing tab, and the app stops prompting to download their
-                    dependencies.
+                    They become <span className={EMPHASIS}>archived</span>: they drop out of your default library views
+                    and the Missing tab, and the app stops prompting to download their dependencies.
                   </p>
                 )}
                 <p>
@@ -1782,7 +1725,7 @@ function AuxDirRow({
                     ' No dependencies are removed either; that only happens when you archive an individual package.'}
                 </p>
                 {targetRole === 'archive' && disablePointsHere && (
-                  <p className="text-[12px] text-text-tertiary">
+                  <p className={CLARIFY}>
                     &ldquo;Disable → move here&rdquo; currently points at this folder and will revert to VaM native.
                   </p>
                 )}
@@ -1825,12 +1768,12 @@ function SuggestionRow({ s, vamDir, disabled, onAdd, onDismiss }) {
             >
               {shortenLibraryPath(s.path, vamDir)}
             </TruncateWithTooltip>
-            <div className="truncate text-[11px] text-text-tertiary">
+            <div className={cn(CLARIFY_DENSE, 'truncate')}>
               {s.label}&apos;s offload folder · {s.varCount.toLocaleString()} var{s.varCount === 1 ? '' : 's'} found
             </div>
           </div>
         </TooltipTrigger>
-        <TooltipContent side="bottom" align="start" className="block w-72 py-2 text-left leading-relaxed">
+        <TooltipContent side="bottom" align="start" prose>
           Backstage found the default offload folder of a tool you have installed, and it already holds packages. Adding
           it registers the folder as Offload: no files move and nothing is deleted.
         </TooltipContent>
@@ -1843,7 +1786,7 @@ function SuggestionRow({ s, vamDir, disabled, onAdd, onDismiss }) {
         size="icon-sm"
         onClick={() => onDismiss(s.id)}
         title="Dismiss suggestion"
-        className="shrink-0 text-text-tertiary hover:text-text-primary"
+        className="shrink-0 text-text-aside hover:text-text-primary"
       >
         <X size={14} />
       </Button>
@@ -1867,7 +1810,7 @@ function ArchiveSwitch({ archived, disabled, onRequest }) {
           <label
             htmlFor={id}
             className={`text-[11px] select-none ${disabled ? 'opacity-50' : ''} ${
-              archived ? 'text-text-primary font-medium' : 'text-text-tertiary'
+              archived ? 'text-text-primary font-medium' : 'text-text-aside'
             }`}
           >
             Archive
@@ -1919,10 +1862,10 @@ function ArchiveSummary() {
         <Boxes size={13} className="shrink-0 text-text-tertiary" />
         Archive
       </div>
-      <div className="mt-0.5 text-[11px] text-text-secondary">
+      <div className={cn(BODY_DENSE, 'mt-0.5')}>
         An offload folder that can also reclaim the disk unneeded dependencies take up.
       </div>
-      <ul className="mt-1.5 space-y-1 text-[11px] text-text-tertiary">
+      <ul className={cn(CLARIFY_DENSE, 'mt-1.5 space-y-1')}>
         {ARCHIVE_FACTS.map((fact) => (
           <li key={fact} className="flex gap-1.5">
             <span aria-hidden>·</span>
@@ -2005,7 +1948,9 @@ function getDisableBehaviorTooltip(value, auxDirs) {
 function StatRow({ label, value, warn }) {
   return (
     <>
-      <span className="text-text-tertiary">{label}</span>
+      {/* Secondary, not tertiary: the value beside it is primary, and an aside-toned label
+          against a primary value reads as a mismatched pair rather than a hierarchy. */}
+      <span className="text-text-secondary">{label}</span>
       <span className={`font-medium ${warn ? 'text-warning' : 'text-text-primary'}`}>{value}</span>
     </>
   )

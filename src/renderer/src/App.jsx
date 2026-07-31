@@ -360,7 +360,7 @@ function RemoteGate() {
             {isError ? status.error : status?.url || window.api.remote.url}
           </AlertDialogDescription>
           {!isError && slowConnect && (
-            <p className="col-start-2 text-[12px] text-text-tertiary">
+            <p className="col-start-2 text-xs text-text-secondary">
               This is taking longer than usual — the server may be offline. You can start locally instead.
             </p>
           )}
@@ -383,7 +383,7 @@ function NavButton({ item, active, onClick, badge, badgePaused, errorBadge }) {
     <button
       onClick={onClick}
       title={item.label}
-      className={`relative w-10 h-10 rounded-lg flex items-center justify-center transition-all duration-150 cursor-pointer ${active ? 'bg-hover text-accent-blue' : 'text-text-tertiary hover:text-text-secondary hover:bg-elevated'}`}
+      className={`relative w-10 h-10 rounded-lg flex items-center justify-center transition-all duration-150 cursor-pointer ${active ? 'bg-hover text-accent-blue' : 'text-text-aside hover:text-text-secondary hover:bg-elevated'}`}
     >
       {active && (
         <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-[7px] w-[3px] h-5 rounded-r-full bg-linear-to-b from-accent-blue to-accent-pink" />

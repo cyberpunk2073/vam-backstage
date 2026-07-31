@@ -517,7 +517,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
                     size={12}
                     className={
                       bulkEnableUi.mixed
-                        ? 'shrink-0 text-text-tertiary'
+                        ? 'shrink-0 text-text-aside'
                         : bulkEnableUi.allDisabled
                           ? 'shrink-0 text-error'
                           : 'shrink-0 text-text-secondary'

@@ -4,6 +4,7 @@ import { openLightbox, openLightboxGallery } from './ThumbnailLightbox'
 import { getContentGradient } from '@/lib/utils'
 import { useThumbnail } from '@/hooks/createBlobCacheHook'
 import { useContentStore } from '@/stores/useContentStore'
+import { SectionLabel } from '@/components/SectionLabel'
 
 export function contentThumbKey(item) {
   return item.thumbnailPath ? `ct:${item.packageFilename}\0${item.thumbnailPath}` : null
@@ -71,7 +72,7 @@ export function ContentRow({ item, onSelect, gallery, suppressHiddenStyle = fals
         {thumbUrl && <img src={thumbUrl} className="thumb absolute inset-0 w-full h-full object-cover" alt="" />}
       </div>
       <span
-        className={`text-[11px] flex-1 min-w-0 truncate ${item.hidden && !suppressHiddenStyle ? 'text-text-tertiary line-through' : 'text-text-primary'}`}
+        className={`text-[11px] flex-1 min-w-0 truncate ${item.hidden && !suppressHiddenStyle ? 'text-text-aside line-through' : 'text-text-primary'}`}
       >
         {item.displayName}
         {item.tag && (
@@ -88,14 +89,14 @@ export function ContentRow({ item, onSelect, gallery, suppressHiddenStyle = fals
       <button
         type="button"
         onClick={handleToggleHidden}
-        className={`cursor-pointer ${item.hidden ? 'text-error' : 'text-text-tertiary hover:text-text-secondary'}`}
+        className={`cursor-pointer ${item.hidden ? 'text-error' : 'text-text-aside hover:text-text-secondary'}`}
       >
         {item.hidden ? <EyeOff size={12} /> : <Eye size={12} />}
       </button>
       <button
         type="button"
         onClick={handleToggleFavorite}
-        className={`cursor-pointer ${item.favorite ? 'text-warning' : 'text-text-tertiary'}`}
+        className={`cursor-pointer ${item.favorite ? 'text-warning' : 'text-text-aside'}`}
       >
         <Star size={12} fill={item.favorite ? 'currentColor' : 'none'} />
       </button>
@@ -132,20 +133,21 @@ export function ContentCategory({ items, label, onSelectRow, gallery, suppressHi
   return (
     <div className="group/cat">
       <div className="flex items-center gap-1.5 mb-1">
-        <button
+        <SectionLabel
+          as="button"
           type="button"
           onClick={() => toggleCategory(label)}
-          className="flex items-center gap-1 text-[9px] uppercase tracking-wider text-text-tertiary font-medium cursor-pointer"
+          className="flex items-center gap-1 cursor-pointer"
         >
           {expanded ? <ChevronDown size={11} className="shrink-0" /> : <ChevronRight size={11} className="shrink-0" />}
           {label}
           <span className="normal-case tracking-normal">({items.length})</span>
-        </button>
+        </SectionLabel>
         <div className="flex items-center gap-0.5 ml-auto opacity-0 group-hover/cat:opacity-100 transition-opacity">
           <button
             type="button"
             onClick={handleToggleHidden}
-            className={`cursor-pointer p-0.5 rounded hover:bg-elevated transition-colors ${allHidden ? 'text-error' : 'text-text-tertiary hover:text-text-secondary'}`}
+            className={`cursor-pointer p-0.5 rounded hover:bg-elevated transition-colors ${allHidden ? 'text-error' : 'text-text-aside hover:text-text-secondary'}`}
             title={allHidden ? 'Show all' : 'Hide all'}
           >
             {allHidden ? <EyeOff size={10} /> : <Eye size={10} />}
@@ -153,7 +155,7 @@ export function ContentCategory({ items, label, onSelectRow, gallery, suppressHi
           <button
             type="button"
             onClick={handleToggleFavorite}
-            className={`cursor-pointer p-0.5 rounded hover:bg-elevated transition-colors ${allFavorite ? 'text-warning' : 'text-text-quaternary hover:text-warning'}`}
+            className={`cursor-pointer p-0.5 rounded hover:bg-elevated transition-colors ${allFavorite ? 'text-warning' : 'text-text-aside hover:text-warning'}`}
             title={allFavorite ? 'Unfavorite all' : 'Favorite all'}
           >
             <Star size={10} fill={allFavorite ? 'currentColor' : 'none'} />

@@ -24,7 +24,7 @@ const CommandInput = React.forwardRef(({ className, ...props }, ref) => {
       <CmdkCommand.Input
         ref={ref}
         className={cn(
-          'flex h-8 w-full rounded-md bg-transparent py-2 text-xs outline-none placeholder:text-text-tertiary disabled:cursor-not-allowed disabled:opacity-50',
+          'flex h-8 w-full rounded-md bg-transparent py-2 text-xs outline-none placeholder:text-text-placeholder disabled:cursor-not-allowed disabled:opacity-50',
           className,
         )}
         {...props}
@@ -50,7 +50,7 @@ const CommandEmpty = React.forwardRef(({ className, ...props }, ref) => {
   return (
     <CmdkCommand.Empty
       ref={ref}
-      className={cn('py-2 text-center text-[11px] text-text-tertiary', className)}
+      className={cn('py-2 text-center text-[11px] text-text-secondary', className)}
       {...props}
     />
   )

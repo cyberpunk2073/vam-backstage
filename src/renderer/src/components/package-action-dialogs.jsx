@@ -10,6 +10,7 @@ import {
 import { activeBreakingDependents } from '@/lib/package-disable-confirm'
 import { formatBytes } from '@/lib/utils'
 import { isPackageArchived } from '@shared/storage-state-predicates.js'
+import { EMPHASIS, CLARIFY } from '@/lib/typography'
 
 const CONFIRM_LIST_MAX = 5
 
@@ -19,13 +20,13 @@ function NameList({ items, getName }) {
   const shown = items.slice(0, cap)
   const remaining = items.length - shown.length
   return (
-    <ul className="mt-1.5 mb-0.5 space-y-0.5 text-[11px] list-none p-0">
+    <ul className={`mt-1.5 mb-0.5 space-y-0.5 list-none p-0 ${CLARIFY}`}>
       {shown.map((item, i) => (
-        <li key={i} className="text-muted-foreground truncate">
+        <li key={i} className="text-text-secondary truncate">
           · {getName(item)}
         </li>
       ))}
-      {remaining >= 2 && <li className="text-muted-foreground/60">…and {remaining} more</li>}
+      {remaining >= 2 && <li className="text-text-secondary">…and {remaining} more</li>}
     </ul>
   )
 }
@@ -81,7 +82,7 @@ export function UninstallDialogContent({ pkg, name, onConfirm }) {
           {demote ? `Remove ${name}?` : `Uninstall ${name}?`}
         </AlertDialogTitle>
         <AlertDialogDescription asChild>
-          <div className="space-y-2 text-sm text-muted-foreground select-text cursor-text">
+          <div className="space-y-2 select-text cursor-text">
             {pkg.isLocalOnly && !demote && !relocate && (
               <p className="text-warning font-medium">
                 This package is not available on the Hub. You will not be able to reinstall it.
@@ -89,14 +90,14 @@ export function UninstallDialogContent({ pkg, name, onConfirm }) {
             )}
             {demote ? (
               <p>
-                This package is still used by <strong className="text-popover-foreground">{depNames(pinning)}</strong>.
-                It will be kept as a dependency but its {contentCount} content item
+                This package is still used by <strong className={EMPHASIS}>{depNames(pinning)}</strong>. It will be kept
+                as a dependency but its {contentCount} content item
                 {contentCount !== 1 ? 's' : ''} will be hidden.
               </p>
             ) : relocate ? (
               <p>
-                Still needed by archived <strong className="text-popover-foreground">{depNames(archivedDeps)}</strong>.
-                It will be moved to the archive instead of deleted.
+                Still needed by archived <strong className={EMPHASIS}>{depNames(archivedDeps)}</strong>. It will be
+                moved to the archive instead of deleted.
               </p>
             ) : (
               <>
@@ -124,7 +125,7 @@ export function UninstallDialogContent({ pkg, name, onConfirm }) {
                     {contentCount} content item{contentCount !== 1 ? 's' : ''} will no longer appear in VaM.
                   </p>
                 )}
-                <p className="text-popover-foreground font-medium">Total space freed: {formatBytes(totalFreed)}</p>
+                <p className={EMPHASIS}>Total space freed: {formatBytes(totalFreed)}</p>
               </>
             )}
           </div>
@@ -149,11 +150,11 @@ export function DisablePackageDialogContent({ pkg, name, onConfirm }) {
       <AlertDialogHeader>
         <AlertDialogTitle className="select-text cursor-text">Disable {name}?</AlertDialogTitle>
         <AlertDialogDescription asChild>
-          <div className="space-y-2 text-sm text-muted-foreground select-text cursor-text">
+          <div className="space-y-2 select-text cursor-text">
             <p>The package will be marked as disabled. VaM will not load it.</p>
             {dependents.length > 0 && (
               <div>
-                <p className="text-destructive font-medium">
+                <p className="text-error font-medium">
                   {dependents.length} package{dependents.length !== 1 ? 's' : ''} that depend on this will break:
                 </p>
                 <NameList items={dependents} getName={(d) => d.packageName?.split('.').pop() || d.filename} />
@@ -190,7 +191,7 @@ export function ForceRemoveDialogContent({ pkg, name, hasDependents, onConfirm }
           {hasDependents ? `Force remove ${name}?` : `Remove ${name}?`}
         </AlertDialogTitle>
         <AlertDialogDescription asChild>
-          <div className="space-y-2 text-sm text-muted-foreground select-text cursor-text">
+          <div className="space-y-2 select-text cursor-text">
             {pkg.isLocalOnly && (
               <p className="text-warning font-medium">
                 This package is not available on the Hub. You will not be able to reinstall it.
@@ -200,12 +201,12 @@ export function ForceRemoveDialogContent({ pkg, name, hasDependents, onConfirm }
             {hasDependents ? (
               <>
                 <div>
-                  <p className="text-destructive font-medium">
+                  <p className="text-error font-medium">
                     {dependents.length} package{dependents.length !== 1 ? 's' : ''} that depend on this will break:
                   </p>
                   <NameList items={dependents} getName={(d) => d.packageName?.split('.').pop() || d.filename} />
                 </div>
-                <p className="text-destructive/80">This cannot be undone.</p>
+                <p className="text-error">This cannot be undone.</p>
               </>
             ) : (
               <p>Nothing depends on this package, so it is safe to remove.</p>

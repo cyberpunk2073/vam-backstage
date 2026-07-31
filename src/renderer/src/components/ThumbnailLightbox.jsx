@@ -160,7 +160,7 @@ export function ThumbnailLightbox() {
       )}
       {isGallery && (
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 pointer-events-none">
-          {label && <span className="max-w-[70vw] truncate text-[12px] text-white/80">{label}</span>}
+          {label && <span className="max-w-[70vw] truncate text-xs text-white/80">{label}</span>}
           {total > 1 && (
             <span className="text-[11px] text-white/50 tabular-nums">
               {safeIndex + 1} / {total}

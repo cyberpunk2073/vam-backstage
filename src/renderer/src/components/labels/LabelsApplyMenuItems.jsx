@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { ContextMenuItem } from '@/components/ui/context-menu'
 import { labelColor } from '@/lib/labels'
+import { CLARIFY_DENSE } from '@/lib/typography'
 import { sortLabelsByName } from './labelHelpers'
 import { LabelStateCheckbox } from './LabelStateCheckbox'
 
@@ -12,7 +13,7 @@ export function LabelsApplyMenuItems({ labels, stateById, onToggle }) {
   const sorted = useMemo(() => sortLabelsByName(labels), [labels])
 
   if (sorted.length === 0) {
-    return <div className="px-2 py-1.5 text-[11px] text-text-tertiary">No labels yet</div>
+    return <div className={`px-2 py-1.5 ${CLARIFY_DENSE}`}>No labels yet</div>
   }
 
   return (

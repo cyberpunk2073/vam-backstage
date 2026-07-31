@@ -288,7 +288,7 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
               ) : (
                 <EyeOff
                   size={12}
-                  className={bulkVisibilityUi.mixed ? 'shrink-0 text-text-tertiary' : 'shrink-0 text-text-secondary'}
+                  className={bulkVisibilityUi.mixed ? 'shrink-0 text-text-aside' : 'shrink-0 text-text-secondary'}
                 />
               )}
               {bulkVisibilityUi.label} ({bulkSelectedIds.length})
@@ -299,7 +299,7 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
                 className={cn(
                   'shrink-0',
                   bulkFavoriteUi.allFav && !bulkFavoriteUi.mixed && 'text-text-secondary',
-                  bulkFavoriteUi.mixed && 'text-text-tertiary',
+                  bulkFavoriteUi.mixed && 'text-text-aside',
                   bulkFavoriteUi.allUnfav && !bulkFavoriteUi.mixed && 'text-warning',
                 )}
                 fill={bulkFavoriteUi.allFav && !bulkFavoriteUi.mixed ? 'none' : 'currentColor'}

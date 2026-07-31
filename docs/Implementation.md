@@ -196,23 +196,26 @@ App.jsx
 
 ### Color Palette (Dark-Only)
 
-| Token            | Hex       | Usage                    |
-| ---------------- | --------- | ------------------------ |
-| `base`           | `#0a0b10` | App background           |
-| `surface`        | `#111218` | Card/panel backgrounds   |
-| `elevated`       | `#191a22` | Raised surfaces          |
-| `hover`          | `#1f2029` | Hover states, borders    |
-| `active`         | `#272833` | Active/pressed states    |
-| `border-bright`  | `#2e303b` | Prominent borders        |
-| `text-primary`   | `#e8e9ed` | Primary text             |
-| `text-secondary` | `#82849a` | Secondary text           |
-| `text-tertiary`  | `#4e5064` | Muted text, placeholders |
-| `accent-blue`    | `#4a91f1` | Primary accent           |
-| `accent-pink`    | `#ef5bed` | Secondary accent         |
-| `accent-purple`  | `#8b5cf6` | Tertiary accent          |
-| `success`        | `#34d399` | Positive states          |
-| `warning`        | `#fbbf24` | Warning states           |
-| `error`          | `#f87171` | Error states             |
+| Token              | Hex       | Usage                                                 |
+| ------------------ | --------- | ----------------------------------------------------- |
+| `base`             | `#0a0b10` | App background                                        |
+| `surface`          | `#111218` | Card/panel backgrounds                                |
+| `elevated`         | `#191a22` | Raised surfaces                                       |
+| `hover`            | `#1f2029` | Hover states, borders                                 |
+| `active`           | `#272833` | Active/pressed states                                 |
+| `border-bright`    | `#2e303b` | Prominent borders                                     |
+| `text-primary`     | `#e8e9ed` | Titles, labels, values                                |
+| `text-emphasis`    | `#d0d1de` | Inline emphasis inside prose                          |
+| `text-secondary`   | `#82849a` | Body and clarification prose                          |
+| `text-tertiary`    | `#6b6e84` | Structural chrome: group labels, headers, metadata    |
+| `text-aside`       | `#57596e` | Skippable footnotes, resting control states, disabled |
+| `text-placeholder` | `#4e5064` | Input placeholders, unset values                      |
+| `accent-blue`      | `#4a91f1` | Primary accent                                        |
+| `accent-pink`      | `#ef5bed` | Secondary accent                                      |
+| `accent-purple`    | `#8b5cf6` | Tertiary accent                                       |
+| `success`          | `#34d399` | Positive states                                       |
+| `warning`          | `#fbbf24` | Warning states                                        |
+| `error`            | `#f87171` | Error states                                          |
 
 Colors are defined as CSS custom properties in `main.css` via `@theme` and consumed through Tailwind utilities (`bg-base`, `text-text-secondary`, `border-accent-blue`, etc.).
 
@@ -249,9 +252,87 @@ Three deterministic gradient functions generate unique visual identities from st
 
 All gradients are computed client-side with no server dependency and serve as the immediate visual fallback while real thumbnails load asynchronously.
 
+### Typography
+
+Geist Variable (system sans-serif fallback). `user-select: none` by default for an app-chrome feel — see the text-selectability rule for when to opt into selection.
+
+Prose uses roles across two density scales. **Source of truth for recipes and role assignment:** `src/renderer/src/lib/typography.js` (file header + per-constant JSDoc). Prefer those constants or `SettingRow` / `EmptyState` / `SectionLabel` / `GroupHeading` over hand-rolled size/color combos. Text token rationale lives next to the CSS variables in `src/renderer/src/assets/main.css`.
+
+| Role          | Roomy (dialogs, pages)                                       | Dense (settings, panels, cards)                                  |
+| ------------- | ------------------------------------------------------------ | ---------------------------------------------------------------- |
+| Title         | `TITLE_PAGE` / `TITLE_SECTION` / `TITLE_DIALOG`              | `TITLE_GROUP` (via `GroupHeading`)                               |
+| Label         | —                                                            | `LABEL` (`text-xs font-medium text-text-primary`)                |
+| Value         | —                                                            | `VALUE` (`text-xs text-text-primary`)                            |
+| Body          | `BODY` (`text-sm text-text-secondary`)                       | `BODY_DENSE` (`text-xs text-text-secondary`)                     |
+| Emphasis      | `EMPHASIS` (`font-medium text-text-emphasis`, inherits size) | same                                                             |
+| Clarification | `CLARIFY` (`text-xs text-text-secondary`)                    | `CLARIFY_DENSE` (`text-[11px] leading-snug text-text-secondary`) |
+| Metadata      | `META` (`text-xs text-text-tertiary`)                        | `META_DENSE` / `META_COMPACT`                                    |
+| Aside         | `ASIDE` (`text-xs text-text-aside`)                          | `ASIDE_DENSE` / `ASIDE_COMPACT`                                  |
+
+Assign each sentence a role: would skipping this line make a worse decision? If yes → body or clarification. If no → metadata or aside. Metadata and aside were one tier until they pulled apart: chrome has to stay legible because you look at a column header or a file size deliberately, while an aside has to get out of the way. Delete it and lose no information → aside; carries a fact found nowhere else → metadata. A label whose value is primary belongs on secondary rather than either tier.
+
+`META_COMPACT` / `ASIDE_COMPACT` (10px) are only for surfaces whose own controls run 10-11px — table cells, the Library detail action column. Everywhere else the dense scale applies.
+
+`LABEL` names a control; `VALUE` _is_ the content, so it stays at normal weight. `text-emphasis` and `text-placeholder` sit outside the primary/secondary/tertiary ladder (see `main.css`). Semantic colors stay at the enclosing body size. `SECTION_LABEL` is uppercase chrome; `GroupHeading` (`TITLE_GROUP`) is capitalized content-group headings with count via `count` — one uppercase level per panel.
+
+The scale comes from the _surface_, not the component: `EmptyState` defaults to roomy; pass `dense` inside side panels.
+
+**Rules of thumb:** ≤2 sizes and ≤3 colors per block. Size steps between body and clarification; color steps between clarification and aside. Never put body/clarification on tertiary/aside. Never opacity-modify theme text tokens. Do not invent `text-[Npx]` for prose outside the recipes (retired: 9 / 13 / 15 / 17 / 22px; `text-[10px]` chrome/chips only; `text-base` headings only). Photo overlays may use `text-white/NN`. Never override `DialogDescription` / `AlertDialogDescription` size or color. App code uses `text-text-*`; shadcn aliases stay inside `components/ui/*`.
+
+**Settled details:** `SettingRow` stacks in `space-y-5`. Status bar stays `ASIDE_DENSE`. Downloads panel title stays `text-[13px] font-medium` (do not promote to `TITLE_*`). Version strings use `MONO_DENSE`; `by` lines use `CLARIFY_DENSE`. Optical pairs tuned by eye (HubDetail title+version / author+role; PackageCard title+author at `text-[13px]`) keep their sizes with inline notes. `FirstRun.jsx` is a separate pass.
+
+**References:** Settings Behavior card (`SettingRow`); `ArchiveActionDialogs.jsx` (worked example of the roles); `FirstRun.jsx` ~613 (inline emphasis).
+
+### Rhythm
+
+Vertical gaps follow from the relationship between elements, not from per-call-site invention. There is no spacing-constants module — spacing lives in components where a component owns it (see JSDoc on `SettingRow`, `EmptyState`, `GroupHeading`, `SectionLabel`, dialog/tooltip primitives), and in this section otherwise.
+
+**Dense** (settings, panels, cards, tables):
+
+- identity pair (title over by-line, name over category): no margin — the size step carries it
+- label over its description: `mt-0.5`
+- label over its control: `mb-2` on the label
+- control or status over its hint: `mt-1`
+- block group heading over its content: `mb-2`
+- action button stack: `space-y-1.5`
+- content group stack: `space-y-2`
+- peer setting rows: `space-y-5`
+- section card: `p-4`, body `space-y-4`, title over description `mt-1`
+- list row `px-3 py-2`, compact list row `py-1.5`, table cell `py-2 px-3`
+- soft divider before a subordinate block: `border-t border-border pt-4` (`pt-3` only above a compact stats grid)
+- inline warning callout `px-2.5 py-2`, result callout `p-3` (dismissible remote warning at `p-2.5` is a single-site leftover — converge if retouched)
+- uppercase `SectionLabel` over its items: `mb-1`; FilterPanel keeps `mb-1.5`
+
+**Roomy** (dialogs, page prose):
+
+- page column `py-8 px-6`, sections `space-y-6`
+- dialog shell `gap-4` for alerts; contentful dialogs (`WhatsNewDialog`, `LinkHubDialog`, `FileTreeDialog`) override to `gap-3`
+- dialog label over its control: `space-y-1`
+- prose block inside a dialog description: `space-y-2`
+- body over clarification: `mt-1`
+- empty state `py-16` roomy, `py-8` dense; use `EmptyState`'s `overlay` prop for `pt-16` overlays
+
+**Leading:** dense roles at arbitrary px bake `leading-snug` in the constant. Scale-token prose inherits Tailwind's pairing; override to `leading-relaxed` only for multi-line roomy prose. Token roles (`META_*`, `MONO_DENSE`, `TITLE_GROUP`, `VALUE`) and `CLARIFY` never carry leading in the constant.
+
+**Conflict rules:** a hint that is the last child of an action stack takes the stack gap only — do not stack `mt-1` on `space-y-1.5`. Inline flex group headings leave margin to the row; `GroupHeading` is margin-free by design.
+
+**Hazards:** `cn` / `twMerge` resolves by class order — overlay padding must be `py-0 pt-16`, never the reverse. Tailwind v4 `space-y-*` sets `margin-block-end` and does nothing for inline children.
+
+**Named exceptions — do not "fix":**
+
+- `LibraryView` DepList sticky header: `-mx-4 px-4 -mt-4 pt-4 pb-2` cancels parent `p-4`; `pb-2` replaces usual `mb-2`
+- Library detail description band: `px-4 py-3` (siblings `p-4`) — continuous prose wants less air
+- `FilterPanel`: `space-y-px` / `py-1.5` — densest surface; do not open up
+- `PackageCard` photo scrim `pt-8` is gradient runway, not a text gap
+- Settings folder list `pb-0.5` on a `space-y-2` container — deliberate 2px nudge before a button
+- Card/table identity pairs carry no margin (including Content detail name/category against a 48px thumb)
+- `HubDetail` section ladder `mt-1.5 / 2 / 2.5 / 3 / 4` tuned per block type
+- Dialog footer bleed `-mx-4 -mb-4 p-4` paired with `DialogContent`'s `p-4`
+
+**Hard locks — never change without measuring:** Library card footer `84`, `HUB_CARD_FOOTER_PX = 120`, table `rowHeight={37}`, `VirtualGrid` `gap=12` / `padding=16`, fixed chrome heights (`h-11` / `h-10` / `h-8` / `h-7` / `h-6`), chip geometry (`THUMB_CHIP_BOX`, `LabelChip` heights). `FirstRun.jsx` is out of scope.
+
 ### Other Visual Details
 
-- **Typography**: Geist Variable font (system sans-serif fallback); `user-select: none` by default for an app-chrome feel.
 - **Scrollbars**: custom 6px — transparent track, `border-bright` thumb, `text-tertiary` on hover, 3px border-radius.
 - **Privacy mode**: when enabled, `html[data-blur-thumbs]` triggers a strong CSS blur filter on all `.thumb` elements. Preference lives in renderer localStorage (`useRemoteUiStore`) so it stays per-machine (including remote clients) rather than in the host SQLite settings.
 

@@ -4,6 +4,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Command, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { cn } from '@/lib/utils'
 import { labelColor } from '@/lib/labels'
+import { CLARIFY_DENSE } from '@/lib/typography'
 import { sortLabelsByName } from './labelHelpers'
 import { LabelStateCheckbox } from './LabelStateCheckbox'
 
@@ -112,7 +113,7 @@ export function LabelApplyPopover({
           <CommandInput ref={inputRef} placeholder="Search or create…" value={search} onValueChange={setSearch} />
           <CommandList>
             {listIsEmpty ? (
-              <div className="py-2 px-2 text-center text-[11px] text-text-tertiary">{emptyMessage}</div>
+              <div className={`py-2 px-2 text-center ${CLARIFY_DENSE}`}>{emptyMessage}</div>
             ) : (
               <>
                 {showCreate && (

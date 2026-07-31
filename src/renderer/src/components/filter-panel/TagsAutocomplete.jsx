@@ -4,6 +4,7 @@ import { PolarityTagChip, rankSuggestions, stripNegationPrefix } from './chip-ut
 import { usePolarityList } from './usePolarityList'
 import { useCombobox } from './useCombobox'
 import { ChipRow, ComboboxField, ComboboxLabel, ComboboxPopup, ComboboxRow } from './Combobox'
+import { META_DENSE } from '@/lib/typography'
 
 export function TagsAutocomplete({
   value = [],
@@ -91,7 +92,7 @@ export function TagsAutocomplete({
               onHover={() => combobox.setHlIndex(i)}
             >
               <ComboboxLabel negate={pendingNegate}>{tag}</ComboboxLabel>
-              <span className="text-text-tertiary text-[11px] shrink-0">{count}</span>
+              <span className={`${META_DENSE} shrink-0`}>{count}</span>
             </ComboboxRow>
           ))}
         </ComboboxPopup>

@@ -32,7 +32,7 @@ const MAX_DOTS_WITH_COUNTER = 3
 
 function LabelRow({ label, muted }) {
   return (
-    <div className={cn('flex items-center gap-2 leading-tight', muted && 'text-popover-foreground/65')}>
+    <div className={cn('flex items-center gap-2 leading-tight', muted ? 'text-text-secondary' : 'text-text-primary')}>
       <span className="block w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: labelColor(label) }} />
       <span className="truncate">{label.name}</span>
     </div>
@@ -79,13 +79,13 @@ export function LabelDots({ labels, inheritedLabels, className }) {
         </div>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="flex flex-col gap-1 items-start py-2 max-w-xs">
-        <div className="text-xs font-semibold">Labels</div>
+        <div className="text-xs font-semibold text-text-primary">Labels</div>
         {labels.map((l) => (
           <LabelRow key={l.id} label={l} />
         ))}
         {extraInherited.length > 0 && (
           <>
-            <div className="text-xs font-semibold mt-1.5 text-popover-foreground/65">From package</div>
+            <div className="text-xs font-semibold mt-1.5 text-text-secondary">From package</div>
             {extraInherited.map((l) => (
               <LabelRow key={l.id} label={l} muted />
             ))}

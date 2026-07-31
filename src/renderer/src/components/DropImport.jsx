@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { toast } from '@/components/Toast'
 import { formatBytes } from '@/lib/utils'
+import { CLARIFY } from '@/lib/typography'
 
 // A package filename ends in `.var`. `.var.disabled` is deliberately excluded —
 // that's a VaM/library on-disk state, not something a user should import. A
@@ -424,7 +425,7 @@ export default function DropImport() {
           <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-accent-blue/60 bg-surface/80 px-10 py-8 text-center shadow-2xl">
             <PackagePlus size={40} className="text-accent-blue" />
             <div className="text-sm font-medium text-text-primary">Drop to add to your library</div>
-            <div className="text-xs text-text-secondary">Release .var files or folders to import them</div>
+            <div className={CLARIFY}>Release .var files or folders to import them</div>
           </div>
         </div>
       )}
@@ -459,7 +460,7 @@ export default function DropImport() {
                       {pending?.items.map((m, i) => (
                         <li
                           key={`${m.name}-${i}`}
-                          className="truncate text-xs text-text-secondary select-text cursor-text"
+                          className={`truncate ${CLARIFY} select-text cursor-text`}
                           title={m.file.name === m.name ? m.name : `${m.file.name} → ${m.name}`}
                         >
                           {m.name}
@@ -467,7 +468,7 @@ export default function DropImport() {
                       ))}
                     </ul>
                     {pending?.skipped > 0 && (
-                      <p className="mt-2 text-xs text-text-tertiary">
+                      <p className={`mt-2 ${CLARIFY}`}>
                         {pending.skipped} other file{pending.skipped === 1 ? '' : 's'} ignored (not .var).
                       </p>
                     )}
@@ -479,7 +480,7 @@ export default function DropImport() {
                     )}
                     {importing && (
                       <div className="mt-3">
-                        <div className="flex justify-between text-xs text-text-secondary">
+                        <div className={`flex justify-between ${CLARIFY}`}>
                           <span>
                             {isInstallPhase
                               ? `Installing ${progress?.installCount ?? count} package${(progress?.installCount ?? count) === 1 ? '' : 's'}…`

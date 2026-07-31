@@ -24,6 +24,8 @@ import { parseCommaTags, suggestionCounts } from '@/lib/suggestion-counts'
 import { SearchOnHubButton } from '@/components/SearchOnHubButton'
 import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
 import { VirtualGrid } from '@/components/VirtualGrid'
+import { EmptyState } from '@/components/EmptyState'
+import { META_DENSE } from '@/lib/typography'
 import { HubBrowsedRail } from '@/components/HubBrowsedRail'
 import { useHubRangeLoader } from '@/hooks/useHubRangeLoader'
 import { useHubNavGestures } from '@/hooks/useHubNavGestures'
@@ -35,6 +37,7 @@ const HUB_SEARCH_DEBOUNCE_MS = 320
  * full-width action button row, so it's taller: author+stats block (~68px) + button row
  * (pt-2 8 + gradient button 32 + pb-3 12 = ~52px) ≈ 120px.
  */
+/** Hard lock — virtualization footer height; do not change without measuring cards. */
 const HUB_CARD_FOOTER_PX = 120
 
 /**
@@ -756,7 +759,7 @@ export default function HubView({ onNavigate }) {
                 dismissTransientOverlays()
                 setGalleryMode('hub')
               }}
-              className={`px-2 py-1 rounded cursor-pointer transition-colors ${!wishlistMode ? 'bg-hover text-text-primary' : 'text-text-tertiary hover:text-text-secondary'}`}
+              className={`px-2 py-1 rounded cursor-pointer transition-colors ${!wishlistMode ? 'bg-hover text-text-primary' : 'text-text-aside hover:text-text-secondary'}`}
             >
               Hub
             </button>
@@ -766,13 +769,13 @@ export default function HubView({ onNavigate }) {
                 dismissTransientOverlays()
                 setGalleryMode('wishlist')
               }}
-              className={`px-2 py-1 rounded cursor-pointer transition-colors flex items-center gap-1 ${wishlistMode ? 'bg-hover text-text-primary' : 'text-text-tertiary hover:text-text-secondary'}`}
+              className={`px-2 py-1 rounded cursor-pointer transition-colors flex items-center gap-1 ${wishlistMode ? 'bg-hover text-text-primary' : 'text-text-aside hover:text-text-secondary'}`}
             >
               Wishlist
               {wishlistCount > 0 && <span className="tabular-nums opacity-70">{wishlistCount}</span>}
             </button>
           </div>
-          <span className="text-[11px] text-text-tertiary">
+          <span className={META_DENSE}>
             {wishlistMode
               ? wishlistLoading && !wishlistLoaded
                 ? 'Loading…'
@@ -784,7 +787,7 @@ export default function HubView({ onNavigate }) {
                 : `${itemCount.toLocaleString()} packages`}
           </span>
           {activeFilterCount > 0 && (
-            <span className="shrink-0 flex items-center gap-1.5 whitespace-nowrap text-[11px] text-text-tertiary">
+            <span className={`shrink-0 flex items-center gap-1.5 whitespace-nowrap ${META_DENSE}`}>
               <span aria-hidden="true">·</span>
               <span>
                 {activeFilterCount} {activeFilterCount === 1 ? 'filter' : 'filters'}
@@ -795,7 +798,7 @@ export default function HubView({ onNavigate }) {
                   type="button"
                   onClick={() => (wishlistMode ? resetWishlistFilters() : resetFilters())}
                   title="Reset all filters to their defaults"
-                  className="text-text-tertiary hover:text-text-secondary transition-colors cursor-pointer"
+                  className="text-text-aside hover:text-text-secondary transition-colors cursor-pointer"
                 >
                   Reset
                 </button>
@@ -811,7 +814,7 @@ export default function HubView({ onNavigate }) {
               onClick={() => fetchResources({ forceRefresh: true })}
               disabled={refreshBusy}
               title={lastFetchedAt ? `Refresh (${formatTimeAgo(lastFetchedAt)})` : 'Refresh'}
-              className="p-1 rounded text-text-tertiary hover:text-text-secondary disabled:opacity-30 cursor-pointer disabled:cursor-default"
+              className="p-1 rounded text-text-aside hover:text-text-secondary disabled:opacity-30 cursor-pointer disabled:cursor-default"
             >
               <RefreshCw size={13} className={refreshBusy ? 'animate-spin' : ''} />
             </button>
@@ -823,7 +826,7 @@ export default function HubView({ onNavigate }) {
               type="button"
               onClick={() => setCardMode('minimal')}
               title="Small cards"
-              className={`p-1.5 rounded cursor-pointer ${cardMode === 'minimal' ? 'bg-hover text-text-primary' : 'text-text-tertiary'}`}
+              className={`p-1.5 rounded cursor-pointer ${cardMode === 'minimal' ? 'bg-hover text-text-primary' : 'text-text-aside'}`}
             >
               <Grid3x3 size={14} />
             </button>
@@ -831,7 +834,7 @@ export default function HubView({ onNavigate }) {
               type="button"
               onClick={() => setCardMode('medium')}
               title="Large cards"
-              className={`p-1.5 rounded cursor-pointer ${cardMode === 'medium' ? 'bg-hover text-text-primary' : 'text-text-tertiary'}`}
+              className={`p-1.5 rounded cursor-pointer ${cardMode === 'medium' ? 'bg-hover text-text-primary' : 'text-text-aside'}`}
             >
               <Grid2x2 size={14} />
             </button>
@@ -896,9 +899,12 @@ export default function HubView({ onNavigate }) {
                   />
                   <HubBrowsedRail scrollEl={hubScrollEl} itemCount={itemCount} loadedPages={loadedPages} />
                   {!loading && sort && itemCount === 0 && (
-                    <div className="pointer-events-none absolute inset-0 flex items-start justify-center pt-16 text-text-tertiary text-sm">
+                    <EmptyState
+                      overlay
+                      className="pointer-events-none absolute inset-0 flex items-start justify-center"
+                    >
                       No packages found
-                    </div>
+                    </EmptyState>
                   )}
                 </>
               )}
@@ -932,21 +938,24 @@ export default function HubView({ onNavigate }) {
                 )}
               />
               {wishlistLoaded && wishlistItems.length === 0 && (
-                <div className="pointer-events-none absolute inset-0 flex items-start justify-center pt-16">
-                  <div className="max-w-sm text-center text-text-tertiary text-sm flex flex-col items-center gap-2">
-                    <Pin size={28} className="opacity-40" />
-                    <p>Your wishlist is empty.</p>
-                    <p className="text-[12px] text-text-tertiary/80">
+                <EmptyState
+                  overlay
+                  icon={<Pin size={28} className="text-text-tertiary" />}
+                  className="pointer-events-none absolute inset-0 flex flex-col items-center max-w-sm mx-auto"
+                  clarification={
+                    <>
                       Open a package and tap the <Pin size={12} className="inline align-[-1px]" /> button in its details
                       to add it here.
-                    </p>
-                  </div>
-                </div>
+                    </>
+                  }
+                >
+                  Your wishlist is empty.
+                </EmptyState>
               )}
               {wishlistItems.length > 0 && wishlistFiltered.length === 0 && (
-                <div className="pointer-events-none absolute inset-0 flex items-start justify-center pt-16 text-text-tertiary text-sm">
+                <EmptyState overlay className="pointer-events-none absolute inset-0 flex items-start justify-center">
                   No wishlisted packages match your filters
-                </div>
+                </EmptyState>
               )}
             </div>
           </Activity>

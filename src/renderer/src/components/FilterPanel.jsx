@@ -10,6 +10,11 @@ import { TagsAutocomplete } from './filter-panel/TagsAutocomplete'
 import { LabelsAutocomplete } from './filter-panel/LabelsAutocomplete'
 import { AuthorAutocomplete } from './filter-panel/AuthorAutocomplete'
 import { SmartSearchBar } from './filter-panel/SmartSearchBar'
+import { SectionLabel } from './SectionLabel'
+import { ASIDE_DENSE, META_DENSE } from '@/lib/typography'
+
+// Densest surface in the app (`space-y-px`, row `py-1.5`, SectionLabel `mb-1.5`).
+// Do not open these gaps up in the name of consistency with roomier panels.
 
 /** Structural equality for the value shapes a section can hold — primitives, a `Set`
  *  (type multi-select), or a polarity/id array. Only used to decide whether a section
@@ -127,7 +132,7 @@ export default function FilterPanel({
                     variant="ghost"
                     size="icon-xs"
                     onClick={() => onSearchChange('')}
-                    className="absolute right-1 top-1 text-text-tertiary hover:text-text-secondary"
+                    className="absolute right-1 top-1 text-text-aside hover:text-text-secondary"
                   >
                     <X size={12} />
                   </Button>
@@ -178,9 +183,7 @@ export default function FilterPanel({
                           </div>
                         ) : null}
                         <span className="truncate">{item.label}</span>
-                        {item.count != null && (
-                          <span className="text-text-tertiary ml-auto text-[11px] shrink-0">{item.count}</span>
-                        )}
+                        {item.count != null && <span className={`${META_DENSE} ml-auto shrink-0`}>{item.count}</span>}
                       </button>
                     )
                   })}
@@ -202,7 +205,7 @@ export default function FilterPanel({
                       variant="ghost"
                       size="icon-xs"
                       onClick={() => section.onChange('')}
-                      className="absolute right-1 top-0.5 text-text-tertiary hover:text-text-secondary"
+                      className="absolute right-1 top-0.5 text-text-aside hover:text-text-secondary"
                       aria-label={`Clear ${section.label}`}
                     >
                       <X size={12} />
@@ -270,7 +273,7 @@ export default function FilterPanel({
                       if (hasCount) {
                         return (
                           <SelectItem key={key} value={key} selectLabel={opt.label ?? key}>
-                            <span className="text-text-tertiary text-[11px] shrink-0 ml-auto">{opt.count}</span>
+                            <span className={`${META_DENSE} shrink-0 ml-auto`}>{opt.count}</span>
                           </SelectItem>
                         )
                       }
@@ -341,10 +344,11 @@ function SectionWrapper({ section, active, children }) {
       )}
       <div className="flex items-center gap-1 mb-1.5">
         {isCollapsible ? (
-          <button
+          <SectionLabel
+            as="button"
             type="button"
             onClick={toggleCollapsed}
-            className={`flex items-center gap-1 text-[10px] uppercase tracking-wider text-text-tertiary font-medium cursor-pointer hover:text-text-secondary transition-colors min-w-0 ${section.titleAction ? '' : 'flex-1'}`}
+            className={`flex items-center gap-1 cursor-pointer hover:text-text-secondary transition-colors min-w-0 ${section.titleAction ? '' : 'flex-1'}`}
           >
             {collapsed ? (
               <ChevronRight size={11} className="shrink-0" />
@@ -352,13 +356,11 @@ function SectionWrapper({ section, active, children }) {
               <ChevronDown size={11} className="shrink-0" />
             )}
             <span className="truncate">{section.label}</span>
-          </button>
+          </SectionLabel>
         ) : (
-          <div
-            className={`flex items-center gap-1 min-w-0 text-[10px] uppercase tracking-wider text-text-tertiary font-medium ${section.titleAction ? '' : 'flex-1'}`}
-          >
+          <SectionLabel as="div" className={`flex items-center gap-1 min-w-0 ${section.titleAction ? '' : 'flex-1'}`}>
             <span className="truncate">{section.label}</span>
-          </div>
+          </SectionLabel>
         )}
         {section.titleAction}
       </div>
@@ -399,9 +401,7 @@ function ListSection({ section }) {
             {item.color && <div className="w-2 h-2 rounded-full shrink-0" style={{ background: item.color }} />}
             {item.icon && <item.icon size={12} className={item.iconClass || ''} />}
             <span className="truncate">{item.label}</span>
-            {item.count != null && (
-              <span className="text-text-tertiary ml-auto text-[11px] shrink-0">{item.count}</span>
-            )}
+            {item.count != null && <span className={`${META_DENSE} ml-auto shrink-0`}>{item.count}</span>}
           </button>
         </Fragment>
       ))}
@@ -409,7 +409,7 @@ function ListSection({ section }) {
         <button
           type="button"
           onClick={() => setExpanded((e) => !e)}
-          className="w-full text-left px-2 py-1 rounded text-[11px] flex items-center gap-1.5 text-text-tertiary hover:text-text-secondary hover:bg-elevated transition-colors cursor-pointer"
+          className={`w-full text-left px-2 py-1 rounded flex items-center gap-1.5 ${ASIDE_DENSE} hover:text-text-secondary hover:bg-elevated transition-colors cursor-pointer`}
         >
           <ChevronDown size={11} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
           {expanded

@@ -3,6 +3,7 @@ import { User } from 'lucide-react'
 import { rankSuggestions } from './chip-utils'
 import { useCombobox } from './useCombobox'
 import { ComboboxField, ComboboxPopup, ComboboxRow } from './Combobox'
+import { META_DENSE } from '@/lib/typography'
 
 /** Single-line filter with Hub `users`-style suggestions: substring match, ordered by occurrence count. */
 export function TextAutocomplete({ value = '', onChange, suggestions = {}, placeholder = 'Search…' }) {
@@ -44,7 +45,7 @@ export function TextAutocomplete({ value = '', onChange, suggestions = {}, place
               onHover={() => combobox.setHlIndex(i)}
             >
               <span className="truncate flex-1">{name}</span>
-              <span className="text-text-tertiary text-[11px] shrink-0">{count}</span>
+              <span className={`${META_DENSE} shrink-0`}>{count}</span>
             </ComboboxRow>
           ))}
         </ComboboxPopup>

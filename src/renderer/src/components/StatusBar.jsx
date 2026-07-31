@@ -20,6 +20,7 @@ import { toast } from './Toast'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
+import { ASIDE_DENSE } from '@/lib/typography'
 
 function StatTooltip({ children, lines }) {
   return (
@@ -282,8 +283,9 @@ export default function StatusBar() {
     progressPct = totalBytes > 0 ? Math.round((loadedBytes / totalBytes) * 100) : 0
   }
 
+  // Ambient chrome: ASIDE_DENSE despite carrying counts — the user should be able to ignore it.
   return (
-    <div className="h-7 bg-surface border-t border-border flex items-center px-4 text-[11px] text-text-secondary/60 gap-4 shrink-0">
+    <div className={`h-7 bg-surface border-t border-border flex items-center px-4 ${ASIDE_DENSE} gap-4 shrink-0`}>
       <StatTooltip
         lines={`${stats.enabledCount} enabled\n${stats.directCount} installed\n${stats.depCount} dependencies\n${stats.totalCount} total installed`}
       >
@@ -319,27 +321,25 @@ export default function StatusBar() {
       </StatTooltip>
       <div className="flex-1" />
       {showScan && scan && (
-        <div className="flex items-center gap-2 text-text-secondary/80">
+        <div className="flex items-center gap-2">
           <RefreshCw size={11} className="animate-spin" />
           <Progress
             value={scan.total > 0 ? Math.round((scan.step / scan.total) * 100) : 0}
             className="w-24 h-1.5 bg-elevated"
-            indicatorClassName="bg-text-secondary/40"
+            indicatorClassName="bg-border-bright"
           />
-          <span className="text-[10px] w-[160px] overflow-hidden whitespace-nowrap">
-            {middleTruncate(scan.message, 28)}
-          </span>
+          <span className="w-[160px] overflow-hidden whitespace-nowrap">{middleTruncate(scan.message, 28)}</span>
         </div>
       )}
       {showHubScan && hubScan && (
-        <div className="flex items-center gap-2 text-text-secondary/80">
+        <div className="flex items-center gap-2">
           <Compass size={11} className="animate-spin" />
           <Progress
             value={hubScan.total > 0 ? Math.round((hubScan.current / hubScan.total) * 100) : 0}
             className="w-24 h-1.5 bg-elevated"
-            indicatorClassName="bg-text-secondary/40"
+            indicatorClassName="bg-border-bright"
           />
-          <span className="text-[10px] whitespace-nowrap">
+          <span className="whitespace-nowrap">
             {hubScan.phase === 'fetching' ? `Hub details ${hubScan.current}/${hubScan.total}` : 'Indexing Hub'}
           </span>
         </div>
@@ -348,7 +348,7 @@ export default function StatusBar() {
         <div className="flex items-center gap-2 text-accent-blue">
           <Download size={11} />
           <Progress value={progressPct} className="w-24 h-1.5 bg-elevated" indicatorClassName="progress-bar" />
-          <span className="text-[10px] font-mono">
+          <span className="font-mono">
             {sessionCompleted.length}/{sessionItems.length}
           </span>
         </div>
@@ -358,8 +358,8 @@ export default function StatusBar() {
         lines={isDev ? 'VaM Backstage\nAutomatic updates run in the release build.' : 'Click to check for updates.'}
       >
         <div
-          className={`text-[10px] ml-2 flex items-center gap-2 shrink-0 min-w-0 cursor-pointer ${
-            !isDev && updateState ? 'text-accent-blue' : 'text-text-secondary/75'
+          className={`ml-2 flex items-center gap-2 shrink-0 min-w-0 cursor-pointer ${
+            !isDev && updateState ? 'text-accent-blue' : ''
           }`}
         >
           {isDev || !updateState ? (

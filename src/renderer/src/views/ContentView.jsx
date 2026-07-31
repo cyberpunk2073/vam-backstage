@@ -52,6 +52,10 @@ import FilterPanel, { sectionActive } from '@/components/FilterPanel'
 import { SearchOnHubButton } from '@/components/SearchOnHubButton'
 import ResizeHandle from '@/components/ResizeHandle'
 import { VirtualGrid, VirtualList } from '@/components/VirtualGrid'
+import { EmptyState } from '@/components/EmptyState'
+import { SectionLabel } from '@/components/SectionLabel'
+import { GroupHeading } from '@/components/GroupHeading'
+import { SECTION_LABEL, MONO_DENSE, BODY, CLARIFY_DENSE, META_DENSE } from '@/lib/typography'
 import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
 import { useKeyboardNav } from '@/hooks/useKeyboardNav'
 import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
@@ -1022,7 +1026,7 @@ export default function ContentView({ onNavigate, navContext }) {
               ) : (
                 <EyeOff
                   size={16}
-                  className={cn('shrink-0', bulkVisibilityState.mixed ? 'text-text-tertiary' : 'text-text-secondary')}
+                  className={cn('shrink-0', bulkVisibilityState.mixed ? 'text-text-aside' : 'text-text-secondary')}
                 />
               )}
               {bulkVisibilityState.label}
@@ -1036,7 +1040,7 @@ export default function ContentView({ onNavigate, navContext }) {
                 size={16}
                 className={cn(
                   bulkFavoriteState.allFav && !bulkFavoriteState.mixed && 'text-text-secondary',
-                  bulkFavoriteState.mixed && 'text-text-tertiary',
+                  bulkFavoriteState.mixed && 'text-text-aside',
                   'shrink-0',
                   bulkFavoriteState.allUnfav && !bulkFavoriteState.mixed && 'text-warning',
                 )}
@@ -1062,7 +1066,7 @@ export default function ContentView({ onNavigate, navContext }) {
                 className={cn(
                   'shrink-0',
                   bulkPackageEnabledState.mixed
-                    ? 'text-text-tertiary'
+                    ? 'text-text-aside'
                     : bulkPackageEnabledState.allDisabled
                       ? 'text-error'
                       : 'text-text-secondary',
@@ -1085,9 +1089,9 @@ export default function ContentView({ onNavigate, navContext }) {
                 type="button"
                 className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap h-7 pl-2.5 pr-2 rounded-md cursor-pointer border border-border/90 bg-elevated/60 hover:bg-elevated hover:border-border text-[11px] font-medium text-text-primary shadow-sm transition-colors"
               >
-                <Tag size={12} className="text-text-tertiary shrink-0" />
+                <Tag size={12} className="text-text-aside shrink-0" />
                 Labels
-                <ChevronDown size={14} className="text-text-tertiary shrink-0 opacity-90" strokeWidth={2.25} />
+                <ChevronDown size={14} className="text-text-aside shrink-0" strokeWidth={2.25} />
               </button>
             </LabelApplyPopover>
             <span className="shrink-0 whitespace-nowrap text-[11px] text-text-primary font-medium tabular-nums">
@@ -1103,7 +1107,7 @@ export default function ContentView({ onNavigate, navContext }) {
               </button>
               <button
                 type="button"
-                className="shrink-0 whitespace-nowrap text-[10px] text-text-tertiary hover:text-text-secondary cursor-pointer transition-colors"
+                className="shrink-0 whitespace-nowrap text-[10px] text-text-aside hover:text-text-secondary cursor-pointer transition-colors"
                 onClick={() => clearBulkSelection()}
               >
                 Deselect
@@ -1115,7 +1119,7 @@ export default function ContentView({ onNavigate, navContext }) {
               title="Clear selection"
               aria-label="Clear selection"
               onClick={() => clearBulkSelection()}
-              className="p-1.5 rounded cursor-pointer text-text-tertiary hover:text-text-primary hover:bg-elevated shrink-0"
+              className="p-1.5 rounded cursor-pointer text-text-aside hover:text-text-primary hover:bg-elevated shrink-0"
             >
               <X size={16} />
             </button>
@@ -1125,9 +1129,9 @@ export default function ContentView({ onNavigate, navContext }) {
           </div>
         ) : (
           <div className="h-10 flex flex-nowrap items-center px-4 border-b border-border shrink-0 gap-2 min-w-0 overflow-x-auto [&::-webkit-scrollbar]:h-0 [&::-webkit-scrollbar]:bg-transparent">
-            <span className="shrink-0 whitespace-nowrap text-[11px] text-text-tertiary">{filtered.length} items</span>
+            <span className={cn('shrink-0 whitespace-nowrap', META_DENSE)}>{filtered.length} items</span>
             {activeFilterCount > 0 && (
-              <span className="shrink-0 flex items-center gap-1.5 whitespace-nowrap text-[11px] text-text-tertiary">
+              <span className={cn('shrink-0 flex items-center gap-1.5 whitespace-nowrap', META_DENSE)}>
                 <span aria-hidden="true">·</span>
                 <span>
                   {activeFilterCount} {activeFilterCount === 1 ? 'filter' : 'filters'}
@@ -1138,7 +1142,7 @@ export default function ContentView({ onNavigate, navContext }) {
                     type="button"
                     onClick={() => resetFilters()}
                     title="Reset all filters to their defaults"
-                    className="text-text-tertiary hover:text-text-secondary transition-colors cursor-pointer"
+                    className="text-text-aside hover:text-text-secondary transition-colors cursor-pointer"
                   >
                     Reset
                   </button>
@@ -1159,14 +1163,14 @@ export default function ContentView({ onNavigate, navContext }) {
                 <button
                   onClick={() => setViewMode('grid')}
                   title="Gallery"
-                  className={`p-1.5 rounded cursor-pointer ${viewMode === 'grid' ? 'bg-hover text-text-primary' : 'text-text-tertiary'}`}
+                  className={`p-1.5 rounded cursor-pointer ${viewMode === 'grid' ? 'bg-hover text-text-primary' : 'text-text-aside'}`}
                 >
                   <LayoutGrid size={14} />
                 </button>
                 <button
                   onClick={() => setViewMode('table')}
                   title="Table"
-                  className={`p-1.5 rounded cursor-pointer ${viewMode === 'table' ? 'bg-hover text-text-primary' : 'text-text-tertiary'}`}
+                  className={`p-1.5 rounded cursor-pointer ${viewMode === 'table' ? 'bg-hover text-text-primary' : 'text-text-aside'}`}
                 >
                   <List size={14} />
                 </button>
@@ -1210,7 +1214,7 @@ export default function ContentView({ onNavigate, navContext }) {
         ) : (
           <div className="flex-1 flex flex-col overflow-hidden p-4">
             <div className="border border-border rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
-              <div className="bg-elevated text-[10px] uppercase tracking-wider text-text-tertiary flex border-b border-border shrink-0">
+              <div className={`bg-elevated ${SECTION_LABEL} flex border-b border-border shrink-0`}>
                 {bulkActive && (
                   <div className="w-8 shrink-0 flex items-center justify-center border-r border-border/50 py-2">
                     <input
@@ -1263,9 +1267,7 @@ export default function ContentView({ onNavigate, navContext }) {
                 )}
               />
             </div>
-            {filtered.length === 0 && (
-              <div className="text-center py-16 text-text-tertiary text-sm">No content items found</div>
-            )}
+            {filtered.length === 0 && <EmptyState>No content items found</EmptyState>}
           </div>
         )}
       </div>
@@ -1423,7 +1425,7 @@ function ContentDetailPanel({
               <div className="text-xs font-medium text-text-primary truncate select-text cursor-text">
                 {item.displayName}
               </div>
-              <div className="text-[10px] text-text-tertiary">
+              <div className={META_DENSE}>
                 {item.category}
                 {item.tag && (
                   <span className="ml-1" style={{ color: item.tag.color + 'cc' }}>
@@ -1444,7 +1446,7 @@ function ContentDetailPanel({
                   type="button"
                   title="Add label"
                   aria-label="Add label"
-                  className="shrink-0 p-1 rounded cursor-pointer transition-colors text-text-tertiary hover:text-text-secondary data-[state=open]:text-text-secondary"
+                  className="shrink-0 p-1 rounded cursor-pointer transition-colors text-text-aside hover:text-text-secondary data-[state=open]:text-text-secondary"
                 >
                   <Tag size={14} />
                 </button>
@@ -1452,13 +1454,13 @@ function ContentDetailPanel({
             )}
             <button
               onClick={() => onToggleHidden?.(item)}
-              className={`shrink-0 p-1 rounded cursor-pointer transition-colors ${item.hidden ? 'text-error hover:text-error/70' : 'text-text-tertiary hover:text-text-secondary'}`}
+              className={`shrink-0 p-1 rounded cursor-pointer transition-colors ${item.hidden ? 'text-error hover:text-error' : 'text-text-aside hover:text-text-secondary'}`}
             >
               {item.hidden ? <EyeOff size={14} /> : <Eye size={14} />}
             </button>
             <button
               onClick={() => onToggleFavorite?.(item)}
-              className={`shrink-0 p-1 rounded cursor-pointer transition-colors ${item.favorite ? 'text-warning hover:text-warning/70' : 'text-text-tertiary hover:text-warning'}`}
+              className={`shrink-0 p-1 rounded cursor-pointer transition-colors ${item.favorite ? 'text-warning hover:text-warning' : 'text-text-aside hover:text-warning'}`}
             >
               <Star size={14} fill={item.favorite ? 'currentColor' : 'none'} />
             </button>
@@ -1471,9 +1473,9 @@ function ContentDetailPanel({
         </div>
 
         <div className="p-4 border-b border-border">
-          <div className="text-[9px] uppercase tracking-wider text-text-tertiary font-medium mb-2">
+          <SectionLabel as="div" className="mb-2">
             {isLocal ? 'Local File' : isExtracted ? 'Extracted from Package' : 'From Package'}
-          </div>
+          </SectionLabel>
           {isLocal ? (
             <>
               <div className="flex items-start gap-2.5">
@@ -1487,10 +1489,7 @@ function ContentDetailPanel({
                       .pop()
                       .replace(/\.[^.]+$/, '')}
                   </div>
-                  <div
-                    className="text-[10px] text-text-tertiary mt-0.5 truncate select-text cursor-text"
-                    title={item.internalPath}
-                  >
+                  <div className={`${META_DENSE} mt-0.5 truncate select-text cursor-text`} title={item.internalPath}>
                     {folderPath.split('/').map((seg, i, arr) => (
                       <span key={i}>
                         {seg}
@@ -1531,14 +1530,12 @@ function ContentDetailPanel({
                       {pkgTitle}
                     </span>
                     {pkgVersionStr && (
-                      <span className="text-[11px] text-text-tertiary shrink-0 select-text cursor-text font-mono">
-                        v{pkgVersionStr}
-                      </span>
+                      <span className={`${MONO_DENSE} shrink-0 select-text cursor-text`}>v{pkgVersionStr}</span>
                     )}
                   </div>
                   <div className="flex items-center gap-1.5 mt-0.5">
                     <AuthorAvatar author={pkg.creator} userId={pkg.hubUserId} size={14} />
-                    <span className="text-[10px] text-text-secondary">
+                    <span className={CLARIFY_DENSE}>
                       by <AuthorLink author={pkg.creator} onFilterAuthor={onFilterAuthor} />
                     </span>
                   </div>
@@ -1612,7 +1609,7 @@ function ContentDetailPanel({
               </div>
             </>
           ) : (
-            <div className="flex items-center gap-2 text-text-tertiary text-sm py-6">
+            <div className={cn('flex items-center gap-2 py-6', BODY)}>
               <Loader2 className="animate-spin shrink-0" size={16} /> Loading package…
             </div>
           )}
@@ -1620,9 +1617,9 @@ function ContentDetailPanel({
 
         {pkg && moreCount > 0 && (
           <div className="p-4 border-b border-border">
-            <div className="text-[11px] font-medium text-text-primary mb-2">
-              More from this package <span className="text-text-tertiary font-normal">({moreCount})</span>
-            </div>
+            <GroupHeading count={moreCount} className="mb-2">
+              More from this package
+            </GroupHeading>
             <MoreFromPackage
               grouped={moreGrouped}
               onSelectRelated={onSelectRelated}
@@ -1633,10 +1630,9 @@ function ContentDetailPanel({
 
         {isLocal && localSiblings.length > 0 && (
           <div className="p-4 border-b border-border">
-            <div className="text-[11px] font-medium text-text-primary mb-2">
-              Other content in this folder{' '}
-              <span className="text-text-tertiary font-normal">({localSiblings.length})</span>
-            </div>
+            <GroupHeading count={localSiblings.length} className="mb-2">
+              Other content in this folder
+            </GroupHeading>
             <MoreFromPackage
               grouped={localGrouped}
               onSelectRelated={onSelectRelated}
@@ -1664,7 +1660,7 @@ function PackageEnableButton({ pkg, pkgTitle }) {
   }
 
   const label = active ? 'Disable package' : 'Enable package'
-  const className = `shrink-0 p-1 rounded cursor-pointer transition-colors ${active ? 'text-text-tertiary hover:text-text-secondary' : 'text-error hover:text-error/70'}`
+  const className = `shrink-0 p-1 rounded cursor-pointer transition-colors ${active ? 'text-text-aside hover:text-text-secondary' : 'text-error hover:text-error'}`
   const icon = <Power size={14} />
 
   if (needsDialog) {
