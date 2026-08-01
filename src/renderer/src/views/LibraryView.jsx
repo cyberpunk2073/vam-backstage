@@ -149,6 +149,39 @@ function isBrokenPackage(p) {
   return p.missingDeps > 0 || p.isCorrupted || (p.inactiveDeps > 0 && isPackageActive(p.storageState))
 }
 
+/** Empty Archived shelf — same copy for grid and table so the shelf never looks like a filter miss. */
+function ArchivedEmptyState({ overlay = false }) {
+  return (
+    <div
+      className={
+        overlay
+          ? 'pointer-events-none absolute inset-0 flex flex-col items-center pt-16 px-6'
+          : 'text-center py-16 px-6 max-w-md mx-auto'
+      }
+    >
+      <EmptyState
+        className="py-0 max-w-md"
+        clarification={
+          <>
+            Drop <span className="font-mono">.var</span> files into an archive folder to stash them without installing,
+            or Archive an installed package from its menu. They stay browsable here but dormant: no missing-dep prompts,
+            and VaM never loads them.
+          </>
+        }
+      >
+        No archived packages yet
+      </EmptyState>
+      <button
+        type="button"
+        className="mt-2 block mx-auto text-xs text-accent-blue hover:underline cursor-pointer pointer-events-auto"
+        onClick={() => useViewStore.getState().setView('settings')}
+      >
+        Manage archive folders in Settings
+      </button>
+    </div>
+  )
+}
+
 function filterPackagesByStatus(items, statusFilter, updateCheckResults) {
   if (statusFilter === 'missing') return []
   // Archived packages are their own Status facet; every other facet excludes them.
@@ -1209,37 +1242,46 @@ export default function LibraryView({ onNavigate, navContext }) {
             }}
           />
         ) : viewMode !== 'table' ? (
-          <VirtualGrid
-            items={filtered}
-            itemWidth={cardWidth}
-            // Hard lock — card footer height; do not change without measuring cards.
-            itemHeight={compactCards ? cardWidth : cardWidth + 84}
-            fixedHeight={compactCards ? 0 : 84}
-            className="flex-1"
-            scrollResetKey={scrollResetKey}
-            selectedIndex={selectedIdx}
-            onLayout={setGridLayout}
-            onEmptyAreaPointerDown={bulkActive ? () => clearBulkSelection() : undefined}
-            renderItem={(pkg) => {
-              const updateInfo = updateCheckResults?.[pkg.filename]
-              const dimUpdateUnavailable = statusFilter === 'updates' && isUpdateUnavailable(updateInfo)
-              return (
-                <LibraryPackageContextMenu key={pkg.filename} pkg={pkg} updateInfo={updateInfo} onNavigate={onNavigate}>
-                  <LibraryCard
+          <div className="relative flex-1 min-h-0 flex flex-col">
+            <VirtualGrid
+              items={filtered}
+              itemWidth={cardWidth}
+              // Hard lock — card footer height; do not change without measuring cards.
+              itemHeight={compactCards ? cardWidth : cardWidth + 84}
+              fixedHeight={compactCards ? 0 : 84}
+              className="flex-1"
+              scrollResetKey={scrollResetKey}
+              selectedIndex={selectedIdx}
+              onLayout={setGridLayout}
+              hideEmptyMessage={statusFilter === 'archived'}
+              onEmptyAreaPointerDown={bulkActive ? () => clearBulkSelection() : undefined}
+              renderItem={(pkg) => {
+                const updateInfo = updateCheckResults?.[pkg.filename]
+                const dimUpdateUnavailable = statusFilter === 'updates' && isUpdateUnavailable(updateInfo)
+                return (
+                  <LibraryPackageContextMenu
+                    key={pkg.filename}
                     pkg={pkg}
-                    onClick={handleLibraryClick}
-                    selected={!bulkActive && selectedDetail?.filename === pkg.filename}
-                    bulkMode={bulkActive}
-                    bulkSelected={selectedBulkSet.has(pkg.filename)}
-                    onFilterAuthor={handleFilterAuthor}
-                    mode={compactCards ? 'minimal' : 'medium'}
-                    hideType={selectedTypes.length === 1}
-                    dimmed={dimUpdateUnavailable}
-                  />
-                </LibraryPackageContextMenu>
-              )
-            }}
-          />
+                    updateInfo={updateInfo}
+                    onNavigate={onNavigate}
+                  >
+                    <LibraryCard
+                      pkg={pkg}
+                      onClick={handleLibraryClick}
+                      selected={!bulkActive && selectedDetail?.filename === pkg.filename}
+                      bulkMode={bulkActive}
+                      bulkSelected={selectedBulkSet.has(pkg.filename)}
+                      onFilterAuthor={handleFilterAuthor}
+                      mode={compactCards ? 'minimal' : 'medium'}
+                      hideType={selectedTypes.length === 1}
+                      dimmed={dimUpdateUnavailable}
+                    />
+                  </LibraryPackageContextMenu>
+                )
+              }}
+            />
+            {filtered.length === 0 && statusFilter === 'archived' && <ArchivedEmptyState overlay />}
+          </div>
         ) : (
           <div className="flex-1 flex flex-col overflow-hidden p-4">
             <div className="border border-border rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
@@ -1301,31 +1343,7 @@ export default function LibraryView({ onNavigate, navContext }) {
               />
             </div>
             {filtered.length === 0 &&
-              (statusFilter === 'archived' ? (
-                <div className="text-center py-16 px-6 max-w-md mx-auto">
-                  <EmptyState
-                    className="py-0"
-                    clarification={
-                      <>
-                        Drop <span className="font-mono">.var</span> files into an archive folder to stash them without
-                        installing, or Archive an installed package from its menu. They stay browsable here but dormant:
-                        no missing-dep prompts, and VaM never loads them.
-                      </>
-                    }
-                  >
-                    No archived packages yet
-                  </EmptyState>
-                  <button
-                    type="button"
-                    className="mt-2 block mx-auto text-xs text-accent-blue hover:underline cursor-pointer"
-                    onClick={() => useViewStore.getState().setView('settings')}
-                  >
-                    Manage archive folders in Settings
-                  </button>
-                </div>
-              ) : (
-                <EmptyState>No packages found</EmptyState>
-              ))}
+              (statusFilter === 'archived' ? <ArchivedEmptyState /> : <EmptyState>No packages found</EmptyState>)}
           </div>
         )}
       </div>
