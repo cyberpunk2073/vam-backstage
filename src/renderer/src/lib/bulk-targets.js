@@ -5,18 +5,18 @@ import { useLibraryStore } from '@/stores/useLibraryStore'
 import { useContentStore } from '@/stores/useContentStore'
 import { isPackageActive, isPackageArchived } from '@shared/storage-state-predicates.js'
 
-/** Resolve the current library bulk selection to package objects (store order). */
+/** Resolve the current library selection to package objects (selection order). */
 export function resolveLibraryBulkPackages(state = useLibraryStore.getState()) {
-  const { bulkSelectedFilenames, packageByFilename } = state
-  return bulkSelectedFilenames.map((fn) => packageByFilename.get(fn)).filter(Boolean)
+  const { selection, packageByFilename } = state
+  return selection.map((fn) => packageByFilename.get(fn)).filter(Boolean)
 }
 
-/** Resolve the current content bulk selection to content items (store order). */
+/** Resolve the current content selection to content items (selection order). */
 export function resolveContentBulkItems(state = useContentStore.getState()) {
-  const { bulkSelectedIds, contents } = state
-  if (!bulkSelectedIds.length) return []
+  const { selection, contents } = state
+  if (!selection.length) return []
   const byId = new Map(contents.map((c) => [c.id, c]))
-  return bulkSelectedIds.map((id) => byId.get(id)).filter(Boolean)
+  return selection.map((id) => byId.get(id)).filter(Boolean)
 }
 
 /** Enable/disable UI state for a set of library packages. Empty selection => every flag false, `disabled`. */
@@ -70,7 +70,7 @@ export async function runLibraryBulkRemove(items = resolveLibraryBulkPackages())
       const d = dep.map((p) => p.filename)
       await window.api.packages.forceRemove(d.length === 1 ? d[0] : d)
     }
-    useLibraryStore.getState().clearBulkSelection()
+    useLibraryStore.getState().clearSelection()
     await useLibraryStore.getState().fetchPackages()
     if (relocated) toast(`${relocated} moved to archive (still needed by archived packages)`, 'success')
   } catch (err) {
@@ -83,7 +83,7 @@ export async function runLibraryBulkPromote(items = resolveLibraryBulkPackages()
   if (!fnames.length) return
   try {
     await window.api.packages.promote(fnames.length === 1 ? fnames[0] : fnames, null)
-    useLibraryStore.getState().clearBulkSelection()
+    useLibraryStore.getState().clearSelection()
     await useLibraryStore.getState().fetchPackages()
   } catch (err) {
     toast(`Failed: ${err.message}`)
@@ -96,7 +96,7 @@ export async function runLibraryBulkInstallFromArchive(items = resolveLibraryBul
   try {
     const res = await window.api.packages.installFromArchive(fnames)
     if (res?.queued > 0) toast(`Installing: ${res.queued} dependenc${res.queued === 1 ? 'y' : 'ies'} queued`, 'success')
-    useLibraryStore.getState().clearBulkSelection()
+    useLibraryStore.getState().clearSelection()
     await Promise.all([useLibraryStore.getState().fetchPackages(), useDownloadStore.getState().fetchItems()])
   } catch (err) {
     toast(`Install failed: ${err.message}`)
@@ -108,7 +108,7 @@ export async function runLibraryBulkRemoveFromArchive(items = resolveLibraryBulk
   if (!fnames.length) return
   try {
     await window.api.packages.forceRemove(fnames.length === 1 ? fnames[0] : fnames)
-    useLibraryStore.getState().clearBulkSelection()
+    useLibraryStore.getState().clearSelection()
     await useLibraryStore.getState().fetchPackages()
   } catch (err) {
     toast(`Remove failed: ${err.message}`)

@@ -31,6 +31,7 @@ import {
   runContentBulkToggleVisibility,
 } from '@/lib/bulk-targets'
 import { useContentStore } from '@/stores/useContentStore'
+import { isBulk } from '@/stores/selection'
 import { useLabelsStore } from '@/stores/useLabelsStore'
 import { LabelsApplyMenuItems } from '@/components/labels/LabelsApplyMenuItems'
 import { singleTargetStateMap, bulkStateMap, applyLabelToContentItems } from '@/components/labels/labelHelpers'
@@ -62,17 +63,19 @@ async function runExtractAndToast(actionLabel, payload) {
   }
 }
 
+/** `scope="item"` targets just `item` even inside a multi-selection — what the selection
+ *  gallery's tiles want, since every tile is by definition part of that selection. */
 export function ContentItemContextMenu({
   item,
   onNavigate,
   onToggleHidden,
   onToggleFavorite,
-  forceSingle = false,
+  scope = 'selection',
   children,
 }) {
   const selectedItem = useContentStore((s) => s.selectedItem)
   const selectedPackage = useContentStore((s) => s.selectedPackage)
-  const bulkSelectedIds = useContentStore((s) => s.bulkSelectedIds)
+  const selection = useContentStore((s) => s.selection)
   const contents = useContentStore((s) => s.contents)
   const labels = useLabelsStore((s) => s.labels)
   const [pkg, setPkg] = useState(null)
@@ -81,8 +84,7 @@ export function ContentItemContextMenu({
   // resolved lazily on open so the item itself can offer a "Re-extract".
   const [reSource, setReSource] = useState(null)
 
-  // Length > 1 is bulk; a lone pick in the selection array is a single selection.
-  const showBulk = !forceSingle && bulkSelectedIds.length > 1 && bulkSelectedIds.includes(item.id)
+  const showBulk = scope === 'selection' && isBulk(selection) && selection.includes(item.id)
   const isScene = SCENE_SOURCE_TYPES.has(item.type)
   const isLook = LOOK_SOURCE_TYPES.has(item.type)
   const isExtractable = isScene || isLook
@@ -91,8 +93,8 @@ export function ContentItemContextMenu({
   const isExtracted = !!item.extractedFrom
 
   const bulkItems = useMemo(
-    () => (showBulk ? resolveContentBulkItems({ bulkSelectedIds, contents }) : []),
-    [showBulk, bulkSelectedIds, contents],
+    () => (showBulk ? resolveContentBulkItems({ selection, contents }) : []),
+    [showBulk, selection, contents],
   )
 
   const bulkSceneItems = useMemo(() => bulkItems.filter((c) => SCENE_SOURCE_TYPES.has(c.type)), [bulkItems])
@@ -292,7 +294,7 @@ export function ContentItemContextMenu({
         {showBulk ? (
           <>
             <ContextMenuLabel>
-              {bulkSelectedIds.length} item{bulkSelectedIds.length === 1 ? '' : 's'} selected
+              {selection.length} item{selection.length === 1 ? '' : 's'} selected
             </ContextMenuLabel>
             <ContextMenuSeparator />
             <ContextMenuItem onSelect={() => void runContentBulkToggleVisibility(bulkItems)}>
@@ -379,7 +381,7 @@ export function ContentItemContextMenu({
           </>
         ) : (
           <>
-            {forceSingle && (
+            {scope === 'item' && isBulk(selection) && (
               <>
                 <ContextMenuItem
                   onSelect={() => {

@@ -70,7 +70,7 @@ function LibrarySelectionTile({ pkg, onRemove, onNavigate }) {
   const tip = [name, pkg.creator, pkg.sizeBytes != null ? formatBytes(pkg.sizeBytes) : null].filter(Boolean).join(' · ')
 
   return (
-    <LibraryPackageContextMenu pkg={pkg} forceSingle onNavigate={onNavigate}>
+    <LibraryPackageContextMenu pkg={pkg} scope="item" onNavigate={onNavigate}>
       <div data-grid-card className="w-full outline-none" title={tip}>
         <SelectionTileChrome
           name={name}
@@ -93,7 +93,7 @@ function ContentSelectionTile({ item, onRemove, onNavigate, onToggleHidden, onTo
   return (
     <ContentItemContextMenu
       item={item}
-      forceSingle
+      scope="item"
       onNavigate={onNavigate}
       onToggleHidden={onToggleHidden}
       onToggleFavorite={onToggleFavorite}

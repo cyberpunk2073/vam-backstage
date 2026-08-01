@@ -1211,20 +1211,22 @@ All renderer state is managed by **Zustand** stores (no Redux, no Context provid
 
 ### Store Overview
 
-| Store                 | Purpose                            | Key State                                                                                                         |
-| --------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `useLibraryStore`     | Local packages, filters, detail    | `packages[]`, filter state, `selectedDetail`, `viewMode`, `selectedLabelIds`, `missingDeps`, `updateCheckResults` |
-| `useLibraryDirsStore` | Aux dir registry (gating)          | `main` + `aux[]` from `library-dirs:list`; `selectArchiveDirs` gates Archived facet / Archive actions             |
-| `useContentStore`     | Content items, filters, detail     | `contents[]`, filter state, `selectedItem`, `selectedPackage`, `selectedLabelIds`, `viewMode`, `expandedByType`   |
-| `useHubStore`         | Hub search, filters, detail        | `resources[]`, filter state, `detailData`, `cardMode`, `galleryMode` (`hub` \| `wishlist`), `filterOptions`       |
-| `useDownloadStore`    | Download queue and live progress   | `items[]`, `liveProgress{}`, `paused`, lookup maps by resource ID and package ref                                 |
-| `useInstalledStore`   | Lightweight install status cache   | `byHubResourceId` map for Hub UI cross-referencing                                                                |
-| `useLabelsStore`      | Label definitions + counts         | `labels[]`, `byId`, `fetchLabels()` on `labels:updated`                                                           |
-| `useWishlistStore`    | Local Hub wishlist                 | `items[]`, `ids` Set, `load()` / `toggle()` backed by SQLite snapshots                                            |
-| `useViewStore`        | Active ribbon view (persisted)     | `view`: `'hub'` \| `'library'` \| `'content'` — Settings/Downloads never restored as the launch view              |
-| `useRemoteUiStore`    | Local-only UI state (persisted)    | `warningDismissed` (client-mode security banner); `blurThumbnails` (privacy blur) — both localStorage, not SQLite |
-| `useStatusStore`      | Status bar stats and scan progress | `stats{}`, `scan{}`                                                                                               |
-| `useToastStore`       | Notification toasts                | `toasts[]`, `add()`, `dismiss()`                                                                                  |
+| Store                 | Purpose                            | Key State                                                                                                                         |
+| --------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `useLibraryStore`     | Local packages, filters, detail    | `packages[]`, filter state, `selection[]` + `selectedDetail`, `viewMode`, `selectedLabelIds`, `missingDeps`, `updateCheckResults` |
+| `useLibraryDirsStore` | Aux dir registry (gating)          | `main` + `aux[]` from `library-dirs:list`; `selectArchiveDirs` gates Archived facet / Archive actions                             |
+| `useContentStore`     | Content items, filters, detail     | `contents[]`, filter state, `selection[]` + `selectedItem` / `selectedPackage`, `selectedLabelIds`, `viewMode`, `expandedByType`  |
+| `useHubStore`         | Hub search, filters, detail        | `resources[]`, filter state, `detailData`, `cardMode`, `galleryMode` (`hub` \| `wishlist`), `filterOptions`                       |
+| `useDownloadStore`    | Download queue and live progress   | `items[]`, `liveProgress{}`, `paused`, lookup maps by resource ID and package ref                                                 |
+| `useInstalledStore`   | Lightweight install status cache   | `byHubResourceId` map for Hub UI cross-referencing                                                                                |
+| `useLabelsStore`      | Label definitions + counts         | `labels[]`, `byId`, `fetchLabels()` on `labels:updated`                                                                           |
+| `useWishlistStore`    | Local Hub wishlist                 | `items[]`, `ids` Set, `load()` / `toggle()` backed by SQLite snapshots                                                            |
+| `useViewStore`        | Active ribbon view (persisted)     | `view`: `'hub'` \| `'library'` \| `'content'` — Settings/Downloads never restored as the launch view                              |
+| `useRemoteUiStore`    | Local-only UI state (persisted)    | `warningDismissed` (client-mode security banner); `blurThumbnails` (privacy blur) — both localStorage, not SQLite                 |
+| `useStatusStore`      | Status bar stats and scan progress | `stats{}`, `scan{}`                                                                                                               |
+| `useToastStore`       | Notification toasts                | `toasts[]`, `add()`, `dismiss()`                                                                                                  |
+
+**Selection model** (Library + Content): `selection` is one ordered array of keys — filenames or content ids — and its length decides the mode. One pick is a single selection (detail panel); more is bulk (gallery + bulk toolbar). `setSelection(keyOrArray, anchor)` is the only writer, so the promote-to-single rule and its detail fetch live in one place; `selectedDetail` / `selectedItem` / `selectedPackage` are caches it fills, not selection state. The array is never emptied by the mutators — ctrl-deselecting the last pick is a no-op, and the views' auto-select refills after a deliberate `clearSelection`. Read it through `isBulk()` / `soleSelected()` from `stores/selection.js`.
 
 ### Shared Patterns
 

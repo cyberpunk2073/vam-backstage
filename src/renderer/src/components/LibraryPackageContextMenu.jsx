@@ -64,6 +64,7 @@ import {
 } from '@/lib/bulk-targets'
 import { useDownloadStore } from '@/stores/useDownloadStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
+import { isBulk } from '@/stores/selection'
 import { useLabelsStore } from '@/stores/useLabelsStore'
 import { useLibraryDirsStore } from '@/stores/useLibraryDirsStore'
 
@@ -93,11 +94,11 @@ async function runExtractAndToast(actionLabel, payload) {
 }
 
 async function runLibraryBulkExtract({ kind, sources, sourceNoun, actionLabel }) {
-  const { bulkSelectedFilenames } = useLibraryStore.getState()
-  if (!bulkSelectedFilenames.length) return
+  const { selection } = useLibraryStore.getState()
+  if (!selection.length) return
   try {
     const r = await window.api.extract.runForPackages({
-      filenames: bulkSelectedFilenames,
+      filenames: selection,
       kind,
       sourceTypes: [...sources],
     })
@@ -105,7 +106,7 @@ async function runLibraryBulkExtract({ kind, sources, sourceNoun, actionLabel })
     const s = r.skipped?.length ?? 0
     if (w === 0 && s === 0 && !(r.errors?.length ?? 0)) {
       toast(
-        `No ${sourceNoun} to ${actionLabel.toLowerCase()} in selected package${bulkSelectedFilenames.length === 1 ? '' : 's'}`,
+        `No ${sourceNoun} to ${actionLabel.toLowerCase()} in selected package${selection.length === 1 ? '' : 's'}`,
         'info',
       )
       return
@@ -157,9 +158,11 @@ function TypeOverrideMenuItems({ filenames, typeOverride, autoBucketLabel, bulk 
   )
 }
 
-export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, forceSingle = false, children }) {
+/** `scope="item"` targets just `pkg` even inside a multi-selection — what the selection
+ *  gallery's tiles want, since every tile is by definition part of that selection. */
+export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, scope = 'selection', children }) {
   const selectedDetail = useLibraryStore((s) => s.selectedDetail)
-  const bulkSelectedFilenames = useLibraryStore((s) => s.bulkSelectedFilenames)
+  const selection = useLibraryStore((s) => s.selection)
   const packageByFilename = useLibraryStore((s) => s.packageByFilename)
   const labels = useLabelsStore((s) => s.labels)
   const [detail, setDetail] = useState(null)
@@ -283,7 +286,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, forceSi
       if (res?.pruned) parts.push(`${res.pruned} dropped`)
       if (res?.storedToArchive) parts.push(`${res.storedToArchive} stored`)
       toast(`Archived${parts.length ? `: ${parts.join(', ')}` : ''}`, 'success')
-      if (showBulk) useLibraryStore.getState().clearBulkSelection()
+      if (showBulk) useLibraryStore.getState().clearSelection()
     } catch (err) {
       toast(`Archive failed: ${err.message}`)
     }
@@ -300,17 +303,16 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, forceSi
   }
   const isArchived = isPackageArchived(p.storageState)
 
-  // Length > 1 is bulk; a lone pick in the selection array is a single selection.
-  const showBulk = !forceSingle && bulkSelectedFilenames.length > 1 && bulkSelectedFilenames.includes(pkg.filename)
+  const showBulk = scope === 'selection' && isBulk(selection) && selection.includes(pkg.filename)
   const bulkPackages = useMemo(
-    () => (showBulk ? resolveLibraryBulkPackages({ bulkSelectedFilenames, packageByFilename }) : []),
-    [showBulk, bulkSelectedFilenames, packageByFilename],
+    () => (showBulk ? resolveLibraryBulkPackages({ selection, packageByFilename }) : []),
+    [showBulk, selection, packageByFilename],
   )
   const bulkDepCount = bulkPackages.filter((x) => !x.isDirect).length
 
   const labelTargetFilenames = useMemo(
-    () => (showBulk ? bulkSelectedFilenames : [pkg.filename]),
-    [showBulk, bulkSelectedFilenames, pkg.filename],
+    () => (showBulk ? selection : [pkg.filename]),
+    [showBulk, selection, pkg.filename],
   )
   const labelStateMap = useMemo(() => {
     if (!showBulk) return singleTargetStateMap(pkg.labelIds || [])
@@ -480,7 +482,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, forceSi
           {showBulk ? (
             <>
               <ContextMenuLabel>
-                {bulkSelectedFilenames.length} package{bulkSelectedFilenames.length === 1 ? '' : 's'} selected
+                {selection.length} package{selection.length === 1 ? '' : 's'} selected
               </ContextMenuLabel>
               <ContextMenuSeparator />
               {bulkAllArchived ? (
@@ -504,7 +506,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, forceSi
                       Type
                     </ContextMenuSubTrigger>
                     <ContextMenuSubContent className="min-w-40">
-                      <TypeOverrideMenuItems filenames={bulkSelectedFilenames} bulk />
+                      <TypeOverrideMenuItems filenames={selection} bulk />
                     </ContextMenuSubContent>
                   </ContextMenuSub>
                   <ContextMenuSeparator />
@@ -533,7 +535,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, forceSi
                       Type
                     </ContextMenuSubTrigger>
                     <ContextMenuSubContent className="min-w-40">
-                      <TypeOverrideMenuItems filenames={bulkSelectedFilenames} bulk />
+                      <TypeOverrideMenuItems filenames={selection} bulk />
                     </ContextMenuSubContent>
                   </ContextMenuSub>
                   <ContextMenuItem
@@ -610,7 +612,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, forceSi
             </>
           ) : (
             <>
-              {forceSingle && (
+              {scope === 'item' && isBulk(selection) && (
                 <>
                   <ContextMenuItem onSelect={() => void useLibraryStore.getState().selectPackage(pkg.filename)}>
                     <MousePointerClick size={12} className="shrink-0" />

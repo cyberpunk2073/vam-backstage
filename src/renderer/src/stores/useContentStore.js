@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { toast } from '@/components/Toast'
 import { typeFilterSlice } from './typeFilterSlice'
+import { selectionWriter } from './selection'
 import { useLibraryStore } from './useLibraryStore'
 import { persistViewState, oneOf, asArray, asPolarityList, asString, asCardWidth, asObject } from './persistViewState'
 
@@ -11,36 +12,50 @@ import { persistViewState, oneOf, asArray, asPolarityList, asString, asCardWidth
  * them against `useLibraryStore.packageByFilename` here. Returns a *new* array
  * so React/Zustand subscribers re-render even when a single field on one
  * package changed.
- *
- * Skips reallocation when the linked package is already the same object
- * identity, which lets unaffected rows keep their identity if/when packages
- * are ever updated in place rather than full-replaced.
  */
 function linkContents(rows, pkgMap) {
   const out = new Array(rows.length)
-  for (let i = 0; i < rows.length; i++) {
-    const c = rows[i]
-    const pkg = pkgMap.get(c.packageFilename)
-    // Extracted presets are loose (`__local__`) files owned by a real package.
-    // `sourcePackage` is that owner, used for lifecycle status + styling; plain
-    // rows leave it undefined.
-    const sourcePkg = c.extractedFrom ? pkgMap.get(c.extractedFrom) : undefined
-    out[i] = c.package === pkg && c.sourcePackage === sourcePkg ? c : { ...c, package: pkg, sourcePackage: sourcePkg }
-  }
+  for (let i = 0; i < rows.length; i++) out[i] = linkItem(rows[i], pkgMap)
   return out
 }
 
-/** Apply a new selection array: length 1 promotes to detail, longer stays bulk. */
-function commitContentSelection(get, set, next, anchorId) {
-  if (next.length === 0) return
-  if (next.length === 1) {
-    const item = get().contents.find((c) => c.id === next[0])
-    if (item) {
-      void get().selectItem(item)
-      return
-    }
+/** Attach `package` / `sourcePackage` to one row, reusing its identity when nothing changed
+ *  (so unaffected rows survive a relink without re-rendering). Extracted presets are loose
+ *  (`__local__`) files owned by a real package: `sourcePackage` is that owner, used for
+ *  lifecycle status + styling; plain rows leave it undefined. */
+function linkItem(c, pkgMap = useLibraryStore.getState().packageByFilename) {
+  const pkg = pkgMap.get(c.packageFilename)
+  const sourcePkg = c.extractedFrom ? pkgMap.get(c.extractedFrom) : undefined
+  return c.package === pkg && c.sourcePackage === sourcePkg ? c : { ...c, package: pkg, sourcePackage: sourcePkg }
+}
+
+/** An empty selection and the detail-panel caches that hang off it, cleared together. */
+const CLEARED_SELECTION = { selectedItem: null, selectedPackage: null, selection: [], selectionAnchor: null }
+
+/**
+ * Resolve a single content selection: re-seed `selectedItem` from the live row (the id-only
+ * paths — arrow keys, collapse, range shrinking to one — have no item object to hand), then
+ * fetch its owning package for the detail panel.
+ *
+ * Both are caches, not selection state: the outgoing values stay in place for the length of
+ * the IPC so the panel doesn't blank, and the result is dropped if the selection moved on.
+ */
+async function _loadItemDetail(set, get, id) {
+  let item = get().selectedItem
+  if (item?.id !== id) {
+    item = get().contents.find((c) => c.id === id)
+    if (!item) return
+    set({ selectedItem: linkItem(item) })
   }
-  set({ bulkSelectedIds: next, bulkAnchorId: anchorId })
+  try {
+    // Extracted presets show their owning package (Extracted from …); plain items show their own.
+    const pkg = await window.api.packages.detail(item.extractedFrom || item.packageFilename)
+    const { selection } = get()
+    if (selection.length === 1 && selection[0] === id) set({ selectedPackage: pkg })
+  } catch (err) {
+    toast(`Failed to load package detail: ${err.message}`)
+    set({ selectedPackage: null })
+  }
 }
 
 export const FILTER_DEFAULTS = {
@@ -62,9 +77,9 @@ export const useContentStore = create(
       contents: [],
       selectedItem: null,
       selectedPackage: null, // package detail for the selected item's owning package
-      /** Multi-select: content item ids (same type as item.id) */
-      bulkSelectedIds: [],
-      bulkAnchorId: null,
+      /** Ordered selection of content item ids — see `stores/selection.js`. */
+      selection: [],
+      selectionAnchor: null,
 
       ...FILTER_DEFAULTS,
       ...typeFilterSlice(set, get),
@@ -75,27 +90,16 @@ export const useContentStore = create(
       /** Per-category-label collapse map. Explicit false = collapsed; missing key = expanded. */
       expandedByType: {},
 
-      resetFilters: (overrides) =>
-        set({
-          ...FILTER_DEFAULTS,
-          selectedItem: null,
-          selectedPackage: null,
-          bulkSelectedIds: [],
-          bulkAnchorId: null,
-          ...overrides,
-        }),
+      resetFilters: (overrides) => set({ ...FILTER_DEFAULTS, ...CLEARED_SELECTION, ...overrides }),
       /** Maximum-inclusion filters for viewing all content of a specific package. */
       showPackageContents: (search) =>
         set({
           ...FILTER_DEFAULTS,
+          ...CLEARED_SELECTION,
           visibilityFilter: 'all',
           packageFilter: 'all',
           packageStatusFilter: 'all',
           search,
-          selectedItem: null,
-          selectedPackage: null,
-          bulkSelectedIds: [],
-          bulkAnchorId: null,
         }),
 
       togglePackageType: (type) => {
@@ -173,107 +177,68 @@ export const useContentStore = create(
         const pkgMap = useLibraryStore.getState().packageByFilename
         const patch = {}
         if (contents.length) patch.contents = linkContents(contents, pkgMap)
-        if (selectedItem) {
-          const nextPkg = pkgMap.get(selectedItem.packageFilename)
-          const nextSourcePkg = selectedItem.extractedFrom ? pkgMap.get(selectedItem.extractedFrom) : undefined
-          patch.selectedItem =
-            selectedItem.package === nextPkg && selectedItem.sourcePackage === nextSourcePkg
-              ? selectedItem
-              : { ...selectedItem, package: nextPkg, sourcePackage: nextSourcePkg }
-        }
+        if (selectedItem) patch.selectedItem = linkItem(selectedItem, pkgMap)
         set(patch)
       },
 
-      /**
-       * Selection model: `bulkSelectedIds` is always the ordered selection.
-       * Length 1 → detail panel (`selectedItem` / `selectedPackage` are the cache).
-       * Length > 1 → bulk/gallery. Never empty while contents exist; auto-select refills.
-       */
-      selectItem: async (item) => {
-        if (!item) {
-          set({ selectedItem: null, selectedPackage: null, bulkSelectedIds: [], bulkAnchorId: null })
-          return
-        }
-        const pkgMap = useLibraryStore.getState().packageByFilename
-        const nextPkg = pkgMap.get(item.packageFilename)
-        const sourcePkg = item.extractedFrom ? pkgMap.get(item.extractedFrom) : undefined
-        const linkedItem =
-          item.package === nextPkg && item.sourcePackage === sourcePkg
-            ? item
-            : { ...item, package: nextPkg, sourcePackage: sourcePkg }
-        // `selectedPackage` is a cache, not selection state: leave the outgoing one in place so the
-        // panel's package row doesn't blank for the length of the IPC.
-        set({ selectedItem: linkedItem, bulkSelectedIds: [item.id], bulkAnchorId: item.id })
-        try {
-          // Extracted presets show their owning package (Extracted from …); plain
-          // items show their own package.
-          const pkg = await window.api.packages.detail(item.extractedFrom || item.packageFilename)
-          const { bulkSelectedIds: picks } = get()
-          if (picks.length === 1 && picks[0] === item.id) set({ selectedPackage: pkg })
-        } catch (err) {
-          toast(`Failed to load package detail: ${err.message}`)
-          set({ selectedPackage: null })
-        }
+      setSelection: selectionWriter(set, (id) => _loadItemDetail(set, get, id)),
+
+      /** Single-pick entry point. Seeds the cache from the row it was handed so the panel
+       *  switches on the same frame — and so items absent from `contents` can still be shown. */
+      selectItem: (item) => {
+        if (!item) return Promise.resolve()
+        set({ selectedItem: linkItem(item) })
+        return get().setSelection(item.id)
       },
 
-      clearSelection: () => set({ selectedItem: null, selectedPackage: null, bulkSelectedIds: [], bulkAnchorId: null }),
+      clearSelection: () => set({ ...CLEARED_SELECTION }),
 
-      /** Collapse multi-selection to the anchor (or first still-present pick). Used by Escape / Deselect. */
+      /** Collapse a multi-selection to the anchor (or first still-present pick). Escape / Deselect. */
       collapseSelection: () => {
-        const { bulkAnchorId, bulkSelectedIds, contents } = get()
-        const byId = new Map(contents.map((c) => [c.id, c]))
-        const target =
-          (bulkAnchorId != null ? byId.get(bulkAnchorId) : null) ||
-          bulkSelectedIds.map((id) => byId.get(id)).find(Boolean)
-        if (target) void get().selectItem(target)
+        const { selection, selectionAnchor, contents } = get()
+        const live = new Set(contents.map((c) => c.id))
+        const target = live.has(selectionAnchor) ? selectionAnchor : selection.find((id) => live.has(id))
+        return get().setSelection(target)
       },
 
-      toggleBulkSelect: (id) => {
-        const base = get().bulkSelectedIds
+      toggleSelected: (id) => {
+        const base = get().selection
         const had = base.includes(id)
         // Never empty: ctrl-deselecting the only pick is a no-op.
-        if (had && base.length <= 1) return
-        const next = had ? base.filter((x) => x !== id) : [...base, id]
-        commitContentSelection(get, set, next, id)
+        if (had && base.length <= 1) return Promise.resolve()
+        return get().setSelection(had ? base.filter((x) => x !== id) : [...base, id], id)
       },
 
       /**
        * Shift-range select. Plain shift replaces the selection with the range (Explorer);
        * additive (Ctrl/Cmd+Shift) unions. Anchor is unchanged so overshooting is correctable.
        */
-      rangeBulkSelect: (id, orderedIds, anchorId, { additive = false } = {}) => {
-        const s = get()
-        const base = s.bulkSelectedIds
-        const anchor = anchorId ?? s.bulkAnchorId ?? id
+      selectRange: (id, orderedIds, anchorId, { additive = false } = {}) => {
+        const { selection, selectionAnchor } = get()
+        const anchor = anchorId ?? selectionAnchor ?? id
         const i1 = orderedIds.indexOf(anchor)
         const i2 = orderedIds.indexOf(id)
         let next
         if (i1 < 0 || i2 < 0) {
-          next = base.includes(id) ? base.filter((x) => x !== id) : [...base, id]
+          next = selection.includes(id) ? selection.filter((x) => x !== id) : [...selection, id]
         } else {
           const lo = Math.min(i1, i2)
           const hi = Math.max(i1, i2)
           const range = orderedIds.slice(lo, hi + 1)
           if (additive) {
             const onList = new Set(orderedIds)
-            const offList = base.filter((x) => !onList.has(x))
-            const selected = new Set([...base, ...range])
+            const offList = selection.filter((x) => !onList.has(x))
+            const selected = new Set([...selection, ...range])
             next = [...offList, ...orderedIds.filter((x) => selected.has(x))]
           } else {
             next = range
           }
         }
         // Keep the existing anchor when set so repeated Shift-clicks can shrink the range.
-        commitContentSelection(get, set, next, s.bulkAnchorId ?? anchor)
+        return get().setSelection(next, selectionAnchor ?? anchor)
       },
 
-      selectAllBulk: (orderedIds) => {
-        if (!orderedIds.length) return
-        commitContentSelection(get, set, orderedIds, orderedIds[orderedIds.length - 1] ?? null)
-      },
-
-      clearBulkSelection: () =>
-        set({ bulkSelectedIds: [], bulkAnchorId: null, selectedItem: null, selectedPackage: null }),
+      selectAll: (orderedIds) => get().setSelection([...orderedIds], orderedIds[orderedIds.length - 1]),
 
       refreshSelection: async () => {
         const { selectedItem } = get()
@@ -281,16 +246,7 @@ export const useContentStore = create(
         try {
           const items = await window.api.contents.list({ packageFilename: selectedItem.packageFilename })
           const fresh = items.find((c) => c.id === selectedItem.id)
-          if (fresh) {
-            const pkgMap = useLibraryStore.getState().packageByFilename
-            set({
-              selectedItem: {
-                ...fresh,
-                package: pkgMap.get(fresh.packageFilename),
-                sourcePackage: fresh.extractedFrom ? pkgMap.get(fresh.extractedFrom) : undefined,
-              },
-            })
-          }
+          if (fresh) set({ selectedItem: linkItem(fresh) })
           const pkg = await window.api.packages.detail(
             (fresh ?? selectedItem).extractedFrom || selectedItem.packageFilename,
           )
