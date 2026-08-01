@@ -91,7 +91,6 @@ import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
 import { useKeyboardNav } from '@/hooks/useKeyboardNav'
 import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
 import { useLibraryUpdateState } from '@/hooks/useLibraryUpdateState'
-import { useSortSnapshot } from '@/hooks/useSortSnapshot'
 import { LICENSE_FILTER_OPTIONS } from '@/lib/licenses'
 import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
 import { matchesPolarityList, matchesAuthorFilter, matchesLicenseFilter, polarityScrollKey } from '@/lib/filter-match'
@@ -260,13 +259,11 @@ export default function LibraryView({ onNavigate, navContext }) {
     fetchMissingDeps,
     refreshUpdateCheck,
     selectPackage,
-    clearSelection,
     bulkSelectedFilenames,
     toggleBulkSelect,
     rangeBulkSelect,
     selectAllBulk,
     clearBulkSelection,
-    pruneBulkSelection,
   } = useLibraryStore()
   const labels = useLabelsStore((s) => s.labels)
   const labelNameById = useMemo(() => {
@@ -452,33 +449,12 @@ export default function LibraryView({ onNavigate, navContext }) {
     return { all: items.length, enabled, disabled, offloaded }
   }, [baseFiltered, statusFilter, selectedTypes, selectedTags, selectedLabelIds, updateCheckResults])
 
-  // User-initiated query inputs — also the flush trigger for selection prune / sticky pins.
-  const scrollResetKey = `${search}\0${authorSearch}\0${excludedAuthors.join(',')}\0${statusFilter}\0${enabledFilter}\0${selectedTypes.join(',')}\0${polarityScrollKey(selectedTags)}\0${polarityScrollKey(selectedLabelIds)}\0${primarySort}\0${secondarySort}\0${license}`
-
-  const sortSnapshot = useSortSnapshot()
-
-  // Visible rows = filter matches ∪ current selection (so actions don't yank rows out mid-task).
-  const { filtered, matchFilenames } = useMemo(() => {
-    let matches = filterPackagesByStatus(baseFiltered, statusFilter, updateCheckResults)
-    matches = filterPackagesByEnabledStorage(matches, effectiveEnabledFilter)
-    matches = filterPackagesBySelectedTypes(matches, selectedTypes)
-    matches = matches.filter((p) => packageMatchesSelectedTags(p, selectedTags))
-    matches = matches.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
-    const matchFilenames = matches.map((p) => p.filename)
-    const pinned = new Set(bulkSelectedFilenames)
-    if (selectedDetail) pinned.add(selectedDetail.filename)
-    let result = matches
-    // Missing is a separate empty path; don't pin into it.
-    if (statusFilter !== 'missing') {
-      const matched = new Set(matchFilenames)
-      const extras = []
-      for (const fn of pinned) {
-        if (matched.has(fn)) continue
-        const p = packageByFilename.get(fn)
-        if (p) extras.push(p)
-      }
-      if (extras.length) result = [...matches, ...extras]
-    }
+  const filtered = useMemo(() => {
+    let result = filterPackagesByStatus(baseFiltered, statusFilter, updateCheckResults)
+    result = filterPackagesByEnabledStorage(result, effectiveEnabledFilter)
+    result = filterPackagesBySelectedTypes(result, selectedTypes)
+    result = result.filter((p) => packageMatchesSelectedTags(p, selectedTags))
+    result = result.filter((p) => packageMatchesSelectedLabels(p, selectedLabelIds))
     const sortFns = {
       'Recently installed': (a, b) =>
         (b.firstSeenAt || 0) - (a.firstSeenAt || 0) || (b.fileMtime || 0) - (a.fileMtime || 0),
@@ -491,13 +467,8 @@ export default function LibraryView({ onNavigate, navContext }) {
     }
     const primary = sortFns[primarySort] || sortFns['Type']
     const secondary = sortFns[secondarySort] || sortFns['Recently installed']
-    const forSort = sortSnapshot({ frozenIds: pinned, key: scrollResetKey, getId: (p) => p.filename })
-    result.sort((a, b) => {
-      const x = forSort(a)
-      const y = forSort(b)
-      return primary(x, y) || secondary(x, y)
-    })
-    return { filtered: result, matchFilenames }
+    result.sort((a, b) => primary(a, b) || secondary(a, b))
+    return result
   }, [
     baseFiltered,
     statusFilter,
@@ -508,11 +479,6 @@ export default function LibraryView({ onNavigate, navContext }) {
     primarySort,
     secondarySort,
     updateCheckResults,
-    bulkSelectedFilenames,
-    selectedDetail,
-    packageByFilename,
-    scrollResetKey,
-    sortSnapshot,
   ])
 
   const sections = useMemo(
@@ -740,9 +706,10 @@ export default function LibraryView({ onNavigate, navContext }) {
   const bulkAllArchived =
     bulkSelectedPackages.length > 0 && bulkSelectedPackages.every((p) => isPackageArchived(p.storageState))
 
+  const scrollResetKey = `${search}\0${authorSearch}\0${excludedAuthors.join(',')}\0${statusFilter}\0${enabledFilter}\0${selectedTypes.join(',')}\0${polarityScrollKey(selectedTags)}\0${polarityScrollKey(selectedLabelIds)}\0${primarySort}\0${secondarySort}\0${license}`
+
   const lastSelectedIdxRef = useRef(0)
   const prevScrollResetKeyRef = useRef(scrollResetKey)
-  const prevPruneKeyRef = useRef(scrollResetKey)
   const selectedIdx = selectedDetail ? filtered.findIndex((p) => p.filename === selectedDetail.filename) : -1
   if (selectedIdx >= 0) lastSelectedIdxRef.current = selectedIdx
 
@@ -776,21 +743,6 @@ export default function LibraryView({ onNavigate, navContext }) {
     if (!target) return
     void runSelectPackage(target.filename)
   }, [bulkActive, filtered, selectedDetail, statusFilter, scrollResetKey, runSelectPackage])
-
-  // On filter/search/sort change: keep only matching bulk picks; drop detail if it no longer matches.
-  // Declared after the auto-select effect so that effect still sees a consistent selection this pass;
-  // invalidating its key then makes the follow-up pass treat the pruned list as fresh (select the top row).
-  useEffect(() => {
-    if (prevPruneKeyRef.current === scrollResetKey) return
-    prevPruneKeyRef.current = scrollResetKey
-    const { bulkSelectedFilenames: picks, selectedDetail: detail } = useLibraryStore.getState()
-    const matched = new Set(matchFilenames)
-    const staleDetail = detail && !matched.has(detail.filename)
-    if (!staleDetail && picks.every((fn) => matched.has(fn))) return
-    pruneBulkSelection(matchFilenames)
-    if (staleDetail) clearSelection()
-    prevScrollResetKeyRef.current = null
-  }, [scrollResetKey, matchFilenames, pruneBulkSelection, clearSelection])
 
   const handleLibraryClick = useCallback(
     (pkg, e) => {
@@ -943,12 +895,12 @@ export default function LibraryView({ onNavigate, navContext }) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return
       if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
         e.preventDefault()
-        selectAllBulk(matchFilenames)
+        selectAllBulk(orderedLibraryFilenames)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [matchFilenames, selectAllBulk])
+  }, [orderedLibraryFilenames, selectAllBulk])
 
   useEffect(() => {
     if (!bulkActive) return
@@ -968,8 +920,8 @@ export default function LibraryView({ onNavigate, navContext }) {
   useLayoutEffect(() => {
     const el = libraryTableSelectAllRef.current
     if (!el) return
-    el.indeterminate = bulkSelectedFilenames.length > 0 && bulkSelectedFilenames.length < matchFilenames.length
-  }, [bulkSelectedFilenames, matchFilenames.length])
+    el.indeterminate = bulkSelectedFilenames.length > 0 && bulkSelectedFilenames.length < filtered.length
+  }, [bulkSelectedFilenames, filtered.length])
 
   return (
     <div className="h-full flex">
@@ -1116,9 +1068,9 @@ export default function LibraryView({ onNavigate, navContext }) {
               <button
                 type="button"
                 className="shrink-0 whitespace-nowrap text-[10px] text-accent-blue hover:brightness-125 transition-[filter] cursor-pointer"
-                onClick={() => selectAllBulk(matchFilenames)}
+                onClick={() => selectAllBulk(orderedLibraryFilenames)}
               >
-                Select all {matchFilenames.length}
+                Select all {filtered.length}
               </button>
               <button
                 type="button"
@@ -1293,11 +1245,9 @@ export default function LibraryView({ onNavigate, navContext }) {
                       type="checkbox"
                       className="accent-accent-blue cursor-pointer"
                       aria-label="Select all"
-                      checked={
-                        bulkSelectedFilenames.length > 0 && bulkSelectedFilenames.length === matchFilenames.length
-                      }
+                      checked={bulkSelectedFilenames.length > 0 && bulkSelectedFilenames.length === filtered.length}
                       onChange={(e) => {
-                        if (e.target.checked) selectAllBulk(matchFilenames)
+                        if (e.target.checked) selectAllBulk(orderedLibraryFilenames)
                         else clearBulkSelection()
                       }}
                     />

@@ -462,21 +462,6 @@ export const useLibraryStore = create(
 
       clearBulkSelection: () => set({ bulkSelectedFilenames: [], bulkAnchorFilename: null }),
 
-      /** Drop bulk picks that are no longer in the current filter match set (e.g. after a facet change). */
-      pruneBulkSelection: (visibleFilenames) =>
-        set((s) => {
-          if (!s.bulkSelectedFilenames.length) return s
-          const keep = new Set(visibleFilenames)
-          const next = s.bulkSelectedFilenames.filter((fn) => keep.has(fn))
-          if (next.length === s.bulkSelectedFilenames.length) return s
-          return {
-            bulkSelectedFilenames: next,
-            bulkAnchorFilename: next.includes(s.bulkAnchorFilename)
-              ? s.bulkAnchorFilename
-              : (next[next.length - 1] ?? null),
-          }
-        }),
-
       refreshDetail: async () => {
         const { selectedDetail } = get()
         if (selectedDetail) {

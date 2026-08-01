@@ -253,19 +253,6 @@ export const useContentStore = create(
 
       clearBulkSelection: () => set({ bulkSelectedIds: [], bulkAnchorId: null }),
 
-      /** Drop bulk picks that are no longer in the current filter match set (e.g. after a facet change). */
-      pruneBulkSelection: (visibleIds) =>
-        set((s) => {
-          if (!s.bulkSelectedIds.length) return s
-          const keep = new Set(visibleIds)
-          const next = s.bulkSelectedIds.filter((id) => keep.has(id))
-          if (next.length === s.bulkSelectedIds.length) return s
-          return {
-            bulkSelectedIds: next,
-            bulkAnchorId: next.includes(s.bulkAnchorId) ? s.bulkAnchorId : (next[next.length - 1] ?? null),
-          }
-        }),
-
       refreshSelection: async () => {
         const { selectedItem } = get()
         if (!selectedItem) return
