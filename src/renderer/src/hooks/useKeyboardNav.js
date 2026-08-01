@@ -67,7 +67,8 @@ function navTargetIndex(key, items, idx, cols, isGrid) {
 /**
  * Keyboard navigation for lists and virtualised grids (Explorer-style).
  *
- * - Bare Arrow/Home/End → `onMoveSelect` (replace selection)
+ * - Bare Arrow/Home/End → `onMoveSelect` (caller decides; selection views move the lead
+ *   in bulk and single-select otherwise)
  * - Ctrl/Cmd+Arrow/Home/End → `onMoveLead` (focus only)
  * - Shift+Arrow/Home/End → `onExtend` (range from anchor)
  * - Space → `onToggleLead`

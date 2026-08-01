@@ -7,9 +7,11 @@ import { isBulk } from '@/stores/selection'
  * model lives in `stores/selection.js`; this is the view side of the same contract, shared
  * by Library and Content so the two can't drift.
  *
- * Bare Arrow/Home/End single-selects (`onSingleSelect`, which owns the detail fetch),
- * Ctrl/Cmd moves the lead only, Shift extends from the anchor, Space toggles the lead,
- * Ctrl/Cmd+A selects all, and Escape collapses a bulk selection.
+ * The lead always moves; the selection follows the lead only while single. Bare
+ * Arrow/Home/End therefore single-selects (`onSingleSelect`, which owns the detail fetch)
+ * when the selection is one item, and moves the lead only when bulk. Ctrl/Cmd moves the
+ * lead only, Shift extends from the anchor, Space toggles the lead, Ctrl/Cmd+A selects
+ * all, and Escape collapses a bulk selection.
  *
  * @param {object} store - the Zustand store hook (`useLibraryStore` / `useContentStore`)
  * @param {Array} items - the filtered/sorted rows currently on screen
@@ -22,6 +24,11 @@ export function useSelectionKeyboard({ store, items, orderedIds, getId, onSingle
   const lead = store((s) => s.selectionLead)
 
   const moveLead = useCallback((item) => store.getState().setLead(getId(item)), [store, getId])
+
+  const moveSelect = useCallback(
+    (item) => (isBulk(store.getState().selection) ? moveLead(item) : onSingleSelect(item)),
+    [store, moveLead, onSingleSelect],
+  )
 
   const extend = useCallback(
     (item) => store.getState().selectRange(getId(item), orderedIds),
@@ -45,7 +52,7 @@ export function useSelectionKeyboard({ store, items, orderedIds, getId, onSingle
     selectedId: lead,
     getId,
     columnCount,
-    onMoveSelect: onSingleSelect,
+    onMoveSelect: moveSelect,
     onMoveLead: moveLead,
     onExtend: extend,
     onToggleLead: toggleLead,

@@ -59,6 +59,7 @@ import { SectionLabel } from '@/components/SectionLabel'
 import { GroupHeading } from '@/components/GroupHeading'
 import { SECTION_LABEL, MONO_DENSE, BODY, CLARIFY_DENSE, META_DENSE } from '@/lib/typography'
 import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
+import { SelectionHint } from '@/components/SelectionHint'
 import { useSelectionKeyboard } from '@/hooks/useSelectionKeyboard'
 import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
 import { openLightbox } from '@/components/ThumbnailLightbox'
@@ -1027,6 +1028,7 @@ export default function ContentView({ onNavigate, navContext }) {
             >
               Deselect
             </button>
+            <SelectionHint bulkActive={bulkActive} />
             <div className="flex-1" />
             <button
               type="button"
@@ -1064,6 +1066,7 @@ export default function ContentView({ onNavigate, navContext }) {
                 </span>
               </span>
             )}
+            <SelectionHint bulkActive={bulkActive} />
             <div className="flex-1 min-w-0" />
             <div className="flex shrink-0 flex-nowrap items-center gap-2">
               {viewMode !== 'table' && (

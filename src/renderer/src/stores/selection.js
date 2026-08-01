@@ -10,8 +10,9 @@
  * - `selectionLead` — keyboard/mouse focus (scroll + focus ring); may sit on an unselected
  *   item after Ctrl-nav or after toggling the lead off
  *
- * Gesture summary (see also `useKeyboardNav`):
- * - Click / bare Arrow|Home|End → replace selection; both positions = that item
+ * Gesture summary (see also `useKeyboardNav` / `useSelectionKeyboard`):
+ * - Click → replace selection; both positions = that item
+ * - Bare Arrow|Home|End → move lead; selection follows only while single
  * - Ctrl/Cmd+Click / Space → toggle lead (or clicked item); both positions = that item
  * - Shift+Click / Shift+Arrow|Home|End → range anchor→lead; lead moves, anchor stays
  * - Ctrl/Cmd+Arrow|Home|End → move lead only

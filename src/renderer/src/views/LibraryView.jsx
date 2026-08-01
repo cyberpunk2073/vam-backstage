@@ -89,6 +89,7 @@ import { EmptyState } from '@/components/EmptyState'
 import { GroupHeading } from '@/components/GroupHeading'
 import { ASIDE_COMPACT, BODY, CLARIFY_DENSE, META_DENSE, MONO_DENSE, SECTION_LABEL } from '@/lib/typography'
 import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
+import { SelectionHint } from '@/components/SelectionHint'
 import { useSelectionKeyboard } from '@/hooks/useSelectionKeyboard'
 import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
 import { useLibraryUpdateState } from '@/hooks/useLibraryUpdateState'
@@ -1030,6 +1031,7 @@ export default function LibraryView({ onNavigate, navContext }) {
             >
               Deselect
             </button>
+            <SelectionHint bulkActive={bulkActive} />
             <div className="flex-1 min-w-0" />
             <button
               type="button"
@@ -1088,6 +1090,7 @@ export default function LibraryView({ onNavigate, navContext }) {
                 </span>
               </span>
             )}
+            <SelectionHint bulkActive={bulkActive} />
             <div className="flex-1 min-w-0" />
             {statusFilter !== 'missing' && (
               <div className="flex shrink-0 flex-nowrap items-center gap-2">
