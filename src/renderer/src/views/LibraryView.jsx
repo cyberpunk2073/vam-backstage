@@ -109,6 +109,7 @@ import {
 import { LicenseTag } from '@/components/LicenseTag'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { LibraryPackageContextMenu } from '@/components/LibraryPackageContextMenu'
+import { SelectionPanel } from '@/components/SelectionPanel'
 import {
   UninstallDialogContent,
   DisablePackageDialogContent,
@@ -263,7 +264,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     toggleBulkSelect,
     rangeBulkSelect,
     selectAllBulk,
-    clearBulkSelection,
+    collapseSelection,
   } = useLibraryStore()
   const labels = useLabelsStore((s) => s.labels)
   const labelNameById = useMemo(() => {
@@ -696,8 +697,10 @@ export default function LibraryView({ onNavigate, navContext }) {
   const activeFilterCount = sections.filter((s) => sectionActive(s) === true).length
 
   const orderedLibraryFilenames = useMemo(() => filtered.map((p) => p.filename), [filtered])
-  const bulkActive = bulkSelectedFilenames.length > 0
+  // Length > 1 is bulk; length 1 is a single selection (detail panel).
+  const bulkActive = bulkSelectedFilenames.length > 1
   const bulkToggleIntent = useLibraryStore((s) => s.bulkToggleIntent)
+  const bulkAnchorFilename = useLibraryStore((s) => s.bulkAnchorFilename)
   const selectedBulkSet = useMemo(() => new Set(bulkSelectedFilenames), [bulkSelectedFilenames])
   const bulkSelectedPackages = useMemo(
     () => resolveLibraryBulkPackages({ bulkSelectedFilenames, packageByFilename }),
@@ -710,7 +713,8 @@ export default function LibraryView({ onNavigate, navContext }) {
 
   const lastSelectedIdxRef = useRef(0)
   const prevScrollResetKeyRef = useRef(scrollResetKey)
-  const selectedIdx = selectedDetail ? filtered.findIndex((p) => p.filename === selectedDetail.filename) : -1
+  const focusFilename = bulkActive ? bulkAnchorFilename : (bulkSelectedFilenames[0] ?? null)
+  const selectedIdx = focusFilename ? filtered.findIndex((p) => p.filename === focusFilename) : -1
   if (selectedIdx >= 0) lastSelectedIdxRef.current = selectedIdx
 
   const runSelectPackage = useCallback(
@@ -730,56 +734,39 @@ export default function LibraryView({ onNavigate, navContext }) {
       return
     }
     if (selectingRef.current) return
-    if (selectedDetail && filtered.some((p) => p.filename === selectedDetail.filename)) {
+    // Selection array is source of truth; length 1 is a single pick (detail may still be loading).
+    const singleFn = bulkSelectedFilenames.length === 1 ? bulkSelectedFilenames[0] : null
+    if (singleFn && filtered.some((p) => p.filename === singleFn)) {
       prevScrollResetKeyRef.current = scrollResetKey
       return
     }
     const scrollReset = prevScrollResetKeyRef.current !== scrollResetKey
     prevScrollResetKeyRef.current = scrollResetKey
-    // Keep detail-targeted selections that are outside the current sidebar filters (deps / dependents).
-    if (selectedDetail && !scrollReset) return
+    // Keep detail-targeted selections that are outside the current sidebar filters (deps /
+    // dependents), but only while the package still exists in the store.
+    if (singleFn && !scrollReset && packageByFilename.has(singleFn)) return
     const idx = scrollReset ? 0 : Math.min(lastSelectedIdxRef.current, filtered.length - 1)
     const target = filtered[idx]
     if (!target) return
     void runSelectPackage(target.filename)
-  }, [bulkActive, filtered, selectedDetail, statusFilter, scrollResetKey, runSelectPackage])
+  }, [bulkActive, filtered, bulkSelectedFilenames, packageByFilename, statusFilter, scrollResetKey, runSelectPackage])
 
   const handleLibraryClick = useCallback(
     (pkg, e) => {
       const mod = e.metaKey || e.ctrlKey
       if (e.shiftKey) {
-        const anchor = bulkActive ? useLibraryStore.getState().bulkAnchorFilename : selectedDetail?.filename
-        rangeBulkSelect(pkg.filename, orderedLibraryFilenames, anchor)
+        rangeBulkSelect(pkg.filename, orderedLibraryFilenames, undefined, { additive: mod })
         return
       }
-      if (mod || bulkActive) {
+      if (mod) {
         toggleBulkSelect(pkg.filename)
         return
       }
+      // Plain click always single-selects (exits bulk). Re-clicking the lone pick is a no-op.
+      if (!bulkActive && bulkSelectedFilenames[0] === pkg.filename) return
       void runSelectPackage(pkg.filename)
     },
-    [
-      bulkActive,
-      orderedLibraryFilenames,
-      rangeBulkSelect,
-      selectedDetail?.filename,
-      toggleBulkSelect,
-      runSelectPackage,
-    ],
-  )
-
-  const handleLibraryTableRowClick = useCallback(
-    (pkg, e) => {
-      handleLibraryClick(pkg, e)
-    },
-    [handleLibraryClick],
-  )
-
-  const handleLibraryBulkToggle = useCallback(
-    (pkg) => {
-      toggleBulkSelect(pkg.filename)
-    },
-    [toggleBulkSelect],
+    [bulkActive, bulkSelectedFilenames, orderedLibraryFilenames, rangeBulkSelect, toggleBulkSelect, runSelectPackage],
   )
 
   const bulkEnabledState = useMemo(() => libraryBulkEnabledState(bulkSelectedPackages), [bulkSelectedPackages])
@@ -873,18 +860,17 @@ export default function LibraryView({ onNavigate, navContext }) {
 
   const handleKeyboardSelectLibrary = useCallback(
     (pkg) => {
-      if (bulkActive) return
       void runSelectPackage(pkg.filename)
     },
-    [bulkActive, runSelectPackage],
+    [runSelectPackage],
   )
 
   useKeyboardNav({
-    items: bulkActive ? [] : filtered,
-    selectedId: selectedDetail?.filename,
+    items: filtered,
+    selectedId: focusFilename,
     onSelect: handleKeyboardSelectLibrary,
     onClose: () => {
-      if (bulkActive) clearBulkSelection()
+      if (bulkActive) collapseSelection()
     },
     getId: (p) => p.filename,
     columnCount: viewMode !== 'table' ? gridLayout.cols : 1,
@@ -915,13 +901,6 @@ export default function LibraryView({ onNavigate, navContext }) {
     window.addEventListener('keydown', onSpace, true)
     return () => window.removeEventListener('keydown', onSpace, true)
   }, [bulkActive])
-
-  const libraryTableSelectAllRef = useRef(null)
-  useLayoutEffect(() => {
-    const el = libraryTableSelectAllRef.current
-    if (!el) return
-    el.indeterminate = bulkSelectedFilenames.length > 0 && bulkSelectedFilenames.length < filtered.length
-  }, [bulkSelectedFilenames, filtered.length])
 
   return (
     <div className="h-full flex">
@@ -1064,28 +1043,26 @@ export default function LibraryView({ onNavigate, navContext }) {
             <span className="shrink-0 whitespace-nowrap text-[11px] text-text-primary font-medium tabular-nums">
               {bulkSelectedFilenames.length} selected
             </span>
-            <div className="flex shrink-0 flex-nowrap items-center gap-2 whitespace-nowrap">
-              <button
-                type="button"
-                className="shrink-0 whitespace-nowrap text-[10px] text-accent-blue hover:brightness-125 transition-[filter] cursor-pointer"
-                onClick={() => selectAllBulk(orderedLibraryFilenames)}
-              >
-                Select all {filtered.length}
-              </button>
-              <button
-                type="button"
-                className="shrink-0 whitespace-nowrap text-[10px] text-text-aside hover:text-text-secondary cursor-pointer transition-colors"
-                onClick={() => clearBulkSelection()}
-              >
-                Deselect
-              </button>
-            </div>
+            <button
+              type="button"
+              className="shrink-0 whitespace-nowrap text-[10px] text-accent-blue hover:brightness-125 transition-[filter] cursor-pointer"
+              onClick={() => selectAllBulk(orderedLibraryFilenames)}
+            >
+              Select all {filtered.length}
+            </button>
+            <button
+              type="button"
+              className="shrink-0 whitespace-nowrap text-[10px] text-text-secondary hover:text-text-primary transition-colors cursor-pointer"
+              onClick={() => collapseSelection()}
+            >
+              Deselect
+            </button>
             <div className="flex-1 min-w-0" />
             <button
               type="button"
-              title="Clear selection"
-              aria-label="Clear selection"
-              onClick={() => clearBulkSelection()}
+              title="Deselect (Esc)"
+              aria-label="Deselect"
+              onClick={() => collapseSelection()}
               className="p-1.5 rounded cursor-pointer text-text-aside hover:text-text-primary hover:bg-elevated shrink-0"
             >
               <X size={16} />
@@ -1206,7 +1183,6 @@ export default function LibraryView({ onNavigate, navContext }) {
               selectedIndex={selectedIdx}
               onLayout={setGridLayout}
               hideEmptyMessage={statusFilter === 'archived'}
-              onEmptyAreaPointerDown={bulkActive ? () => clearBulkSelection() : undefined}
               renderItem={(pkg) => {
                 const updateInfo = updateCheckResults?.[pkg.filename]
                 const dimUpdateUnavailable = statusFilter === 'updates' && isUpdateUnavailable(updateInfo)
@@ -1220,9 +1196,8 @@ export default function LibraryView({ onNavigate, navContext }) {
                     <LibraryCard
                       pkg={pkg}
                       onClick={handleLibraryClick}
-                      selected={!bulkActive && selectedDetail?.filename === pkg.filename}
-                      bulkMode={bulkActive}
-                      bulkSelected={selectedBulkSet.has(pkg.filename)}
+                      selected={!bulkActive && selectedBulkSet.has(pkg.filename)}
+                      bulkSelected={bulkActive && selectedBulkSet.has(pkg.filename)}
                       onFilterAuthor={handleFilterAuthor}
                       mode={compactCards ? 'minimal' : 'medium'}
                       hideType={selectedTypes.length === 1}
@@ -1238,21 +1213,6 @@ export default function LibraryView({ onNavigate, navContext }) {
           <div className="flex-1 flex flex-col overflow-hidden p-4">
             <div className="border border-border rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
               <div className={`bg-elevated ${SECTION_LABEL} flex border-b border-border shrink-0`}>
-                {bulkActive && (
-                  <div className="w-8 shrink-0 flex items-center justify-center border-r border-border/50 py-2">
-                    <input
-                      ref={libraryTableSelectAllRef}
-                      type="checkbox"
-                      className="accent-accent-blue cursor-pointer"
-                      aria-label="Select all"
-                      checked={bulkSelectedFilenames.length > 0 && bulkSelectedFilenames.length === filtered.length}
-                      onChange={(e) => {
-                        if (e.target.checked) selectAllBulk(orderedLibraryFilenames)
-                        else clearBulkSelection()
-                      }}
-                    />
-                  </div>
-                )}
                 <div className="flex-3 py-2 px-3 font-medium">Package</div>
                 <div className="flex-2 py-2 px-3 font-medium">Author</div>
                 {selectedTypes.length !== 1 && <div className="flex-1 py-2 px-3 font-medium">Type</div>}
@@ -1278,11 +1238,9 @@ export default function LibraryView({ onNavigate, navContext }) {
                     >
                       <LibraryTableRow
                         pkg={pkg}
-                        onClick={handleLibraryTableRowClick}
-                        selected={!bulkActive && selectedDetail?.filename === pkg.filename}
-                        bulkMode={bulkActive}
-                        bulkSelected={selectedBulkSet.has(pkg.filename)}
-                        onBulkToggle={handleLibraryBulkToggle}
+                        onClick={handleLibraryClick}
+                        selected={!bulkActive && selectedBulkSet.has(pkg.filename)}
+                        bulkSelected={bulkActive && selectedBulkSet.has(pkg.filename)}
                         onFilterAuthor={handleFilterAuthor}
                         hideType={selectedTypes.length === 1}
                         dimmed={dimUpdateUnavailable}
@@ -1299,15 +1257,20 @@ export default function LibraryView({ onNavigate, navContext }) {
       </div>
 
       {statusFilter !== 'missing' &&
-        (selectedDetail && !bulkActive ? (
+        (bulkActive ? (
+          <SelectionPanel
+            kind="library"
+            items={bulkSelectedPackages}
+            onRemove={(pkg) => toggleBulkSelect(pkg.filename)}
+            onNavigate={onNavigate}
+          />
+        ) : selectedDetail ? (
           <LibraryDetailPanel
             pkg={selectedDetail}
             onNavigate={onNavigate}
             onFilterAuthor={handleFilterAuthor}
             updateInfo={updateCheckResults?.[selectedDetail.filename]}
           />
-        ) : bulkActive ? (
-          <LibraryBulkPanel bulkSelectedPackages={bulkSelectedPackages} />
         ) : (
           <div className="shrink-0 border-l border-border bg-surface" style={{ width: detailPanelWidth }} />
         ))}
@@ -1740,25 +1703,6 @@ function MissingDepRow({ item, hubDetailsLoading, onNavigateBroken }) {
       </div>
       <div className="w-24 py-2 px-3 flex justify-end">
         {missingDepStatusTag(hub, hubDetailsLoading, dlStatus, dlProgress, handleInstall)}
-      </div>
-    </div>
-  )
-}
-
-function LibraryBulkPanel({ bulkSelectedPackages }) {
-  const [panelWidth] = usePersistedPanelWidth('panel_width_detail', {
-    min: 260,
-    max: 500,
-    defaultWidth: 340,
-  })
-  const totalSize = bulkSelectedPackages.reduce((s, p) => s + (p.sizeBytes || 0), 0)
-  return (
-    <div className="shrink-0 border-l border-border bg-surface" style={{ width: panelWidth }}>
-      <div className="p-4">
-        <div className="text-sm font-semibold text-text-primary">
-          {bulkSelectedPackages.length} package{bulkSelectedPackages.length !== 1 ? 's' : ''} selected
-        </div>
-        <div className={cn(META_DENSE, 'mt-1')}>{formatBytes(totalSize)}</div>
       </div>
     </div>
   )

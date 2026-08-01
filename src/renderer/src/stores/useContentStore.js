@@ -30,6 +30,19 @@ function linkContents(rows, pkgMap) {
   return out
 }
 
+/** Apply a new selection array: length 1 promotes to detail, longer stays bulk. */
+function commitContentSelection(get, set, next, anchorId) {
+  if (next.length === 0) return
+  if (next.length === 1) {
+    const item = get().contents.find((c) => c.id === next[0])
+    if (item) {
+      void get().selectItem(item)
+      return
+    }
+  }
+  set({ bulkSelectedIds: next, bulkAnchorId: anchorId })
+}
+
 export const FILTER_DEFAULTS = {
   search: '',
   authorSearch: '',
@@ -171,6 +184,11 @@ export const useContentStore = create(
         set(patch)
       },
 
+      /**
+       * Selection model: `bulkSelectedIds` is always the ordered selection.
+       * Length 1 → detail panel (`selectedItem` / `selectedPackage` are the cache).
+       * Length > 1 → bulk/gallery. Never empty while contents exist; auto-select refills.
+       */
       selectItem: async (item) => {
         if (!item) {
           set({ selectedItem: null, selectedPackage: null, bulkSelectedIds: [], bulkAnchorId: null })
@@ -183,75 +201,79 @@ export const useContentStore = create(
           item.package === nextPkg && item.sourcePackage === sourcePkg
             ? item
             : { ...item, package: nextPkg, sourcePackage: sourcePkg }
-        set({ selectedItem: linkedItem, bulkSelectedIds: [], bulkAnchorId: null })
+        // `selectedPackage` is a cache, not selection state: leave the outgoing one in place so the
+        // panel's package row doesn't blank for the length of the IPC.
+        set({ selectedItem: linkedItem, bulkSelectedIds: [item.id], bulkAnchorId: item.id })
         try {
           // Extracted presets show their owning package (Extracted from …); plain
           // items show their own package.
           const pkg = await window.api.packages.detail(item.extractedFrom || item.packageFilename)
-          set({ selectedPackage: pkg })
+          const { bulkSelectedIds: picks } = get()
+          if (picks.length === 1 && picks[0] === item.id) set({ selectedPackage: pkg })
         } catch (err) {
           toast(`Failed to load package detail: ${err.message}`)
           set({ selectedPackage: null })
         }
       },
 
-      clearSelection: () => set({ selectedItem: null, selectedPackage: null }),
+      clearSelection: () => set({ selectedItem: null, selectedPackage: null, bulkSelectedIds: [], bulkAnchorId: null }),
 
-      toggleBulkSelect: (id) =>
-        set((s) => {
-          // Seed the bulk list from the current single selection so Ctrl+Click extends it
-          // instead of starting from scratch (Card A stays selected when Ctrl+Clicking Card B).
-          const base =
-            s.bulkSelectedIds.length === 0 && s.selectedItem && s.selectedItem.id !== id
-              ? [s.selectedItem.id]
-              : s.bulkSelectedIds
-          const had = base.includes(id)
-          const next = had ? base.filter((x) => x !== id) : [...base, id]
-          return {
-            bulkSelectedIds: next,
-            bulkAnchorId: id,
-            ...(next.length > 0 ? { selectedItem: null, selectedPackage: null } : {}),
-          }
-        }),
+      /** Collapse multi-selection to the anchor (or first still-present pick). Used by Escape / Deselect. */
+      collapseSelection: () => {
+        const { bulkAnchorId, bulkSelectedIds, contents } = get()
+        const byId = new Map(contents.map((c) => [c.id, c]))
+        const target =
+          (bulkAnchorId != null ? byId.get(bulkAnchorId) : null) ||
+          bulkSelectedIds.map((id) => byId.get(id)).find(Boolean)
+        if (target) void get().selectItem(target)
+      },
 
-      rangeBulkSelect: (id, orderedIds, anchorId) =>
-        set((s) => {
-          const anchor = anchorId ?? s.bulkAnchorId ?? id
-          const i1 = orderedIds.indexOf(anchor)
-          const i2 = orderedIds.indexOf(id)
-          if (i1 < 0 || i2 < 0) {
-            const next = s.bulkSelectedIds.includes(id)
-              ? s.bulkSelectedIds.filter((x) => x !== id)
-              : [...s.bulkSelectedIds, id]
-            return {
-              bulkSelectedIds: next,
-              bulkAnchorId: id,
-              ...(next.length > 0 ? { selectedItem: null, selectedPackage: null } : {}),
-            }
-          }
+      toggleBulkSelect: (id) => {
+        const base = get().bulkSelectedIds
+        const had = base.includes(id)
+        // Never empty: ctrl-deselecting the only pick is a no-op.
+        if (had && base.length <= 1) return
+        const next = had ? base.filter((x) => x !== id) : [...base, id]
+        commitContentSelection(get, set, next, id)
+      },
+
+      /**
+       * Shift-range select. Plain shift replaces the selection with the range (Explorer);
+       * additive (Ctrl/Cmd+Shift) unions. Anchor is unchanged so overshooting is correctable.
+       */
+      rangeBulkSelect: (id, orderedIds, anchorId, { additive = false } = {}) => {
+        const s = get()
+        const base = s.bulkSelectedIds
+        const anchor = anchorId ?? s.bulkAnchorId ?? id
+        const i1 = orderedIds.indexOf(anchor)
+        const i2 = orderedIds.indexOf(id)
+        let next
+        if (i1 < 0 || i2 < 0) {
+          next = base.includes(id) ? base.filter((x) => x !== id) : [...base, id]
+        } else {
           const lo = Math.min(i1, i2)
           const hi = Math.max(i1, i2)
-          const selected = new Set([...s.bulkSelectedIds, ...orderedIds.slice(lo, hi + 1)])
-          const onList = new Set(orderedIds)
-          // Selection follows visible order; picks that dropped out of the list keep their order up front.
-          const offList = s.bulkSelectedIds.filter((x) => !onList.has(x))
-          return {
-            bulkSelectedIds: [...offList, ...orderedIds.filter((x) => selected.has(x))],
-            bulkAnchorId: id,
-            selectedItem: null,
-            selectedPackage: null,
+          const range = orderedIds.slice(lo, hi + 1)
+          if (additive) {
+            const onList = new Set(orderedIds)
+            const offList = base.filter((x) => !onList.has(x))
+            const selected = new Set([...base, ...range])
+            next = [...offList, ...orderedIds.filter((x) => selected.has(x))]
+          } else {
+            next = range
           }
-        }),
+        }
+        // Keep the existing anchor when set so repeated Shift-clicks can shrink the range.
+        commitContentSelection(get, set, next, s.bulkAnchorId ?? anchor)
+      },
 
-      selectAllBulk: (orderedIds) =>
-        set({
-          bulkSelectedIds: [...orderedIds],
-          bulkAnchorId: orderedIds[orderedIds.length - 1] ?? null,
-          selectedItem: null,
-          selectedPackage: null,
-        }),
+      selectAllBulk: (orderedIds) => {
+        if (!orderedIds.length) return
+        commitContentSelection(get, set, orderedIds, orderedIds[orderedIds.length - 1] ?? null)
+      },
 
-      clearBulkSelection: () => set({ bulkSelectedIds: [], bulkAnchorId: null }),
+      clearBulkSelection: () =>
+        set({ bulkSelectedIds: [], bulkAnchorId: null, selectedItem: null, selectedPackage: null }),
 
       refreshSelection: async () => {
         const { selectedItem } = get()

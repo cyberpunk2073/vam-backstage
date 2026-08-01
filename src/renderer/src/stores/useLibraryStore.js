@@ -393,74 +393,102 @@ export const useLibraryStore = create(
       /** Toolbar re-check button: same flow, but bypasses the CDN index cache. */
       refreshUpdateCheck: () => get().checkForUpdates({ forceRefresh: true }),
 
+      /**
+       * Selection model: `bulkSelectedFilenames` is always the ordered selection.
+       * Length 1 → detail panel (`selectedDetail` is the fetched cache). Length > 1 →
+       * bulk/gallery. The selection is never empty while the library has packages;
+       * auto-select in the view refills after destructive clears.
+       */
       selectPackage: async (filename) => {
         if (!filename) {
           set({ selectedDetail: null, bulkSelectedFilenames: [], bulkAnchorFilename: null })
           return
         }
+        // `selectedDetail` is a cache, not selection state: leave the outgoing one in place so the
+        // panel doesn't blank for the length of the IPC. Only applied below if this pick still holds.
+        set({ bulkSelectedFilenames: [filename], bulkAnchorFilename: filename })
         try {
           const detail = await window.api.packages.detail(filename)
-          set({ selectedDetail: detail, bulkSelectedFilenames: [], bulkAnchorFilename: null })
+          const { bulkSelectedFilenames: picks } = get()
+          if (picks.length === 1 && picks[0] === filename) set({ selectedDetail: detail })
         } catch (err) {
           toast(`Failed to load package detail: ${err.message}`)
         }
       },
 
-      clearSelection: () => set({ selectedDetail: null }),
+      clearSelection: () => set({ selectedDetail: null, bulkSelectedFilenames: [], bulkAnchorFilename: null }),
 
-      toggleBulkSelect: (filename) =>
-        set((s) => {
-          // Seed the bulk list from the current single selection so Ctrl+Click extends it
-          // instead of starting from scratch (Card A stays selected when Ctrl+Clicking Card B).
-          const base =
-            s.bulkSelectedFilenames.length === 0 && s.selectedDetail && s.selectedDetail.filename !== filename
-              ? [s.selectedDetail.filename]
-              : s.bulkSelectedFilenames
-          const had = base.includes(filename)
-          const next = had ? base.filter((x) => x !== filename) : [...base, filename]
-          return {
-            bulkSelectedFilenames: next,
-            bulkAnchorFilename: filename,
-            ...(next.length > 0 ? { selectedDetail: null } : {}),
-          }
-        }),
+      /** Collapse multi-selection to the anchor (or first pick). Used by Escape / Deselect. */
+      collapseSelection: () => {
+        const { bulkAnchorFilename, bulkSelectedFilenames } = get()
+        const target = bulkAnchorFilename ?? bulkSelectedFilenames[0]
+        if (target) void get().selectPackage(target)
+      },
 
-      rangeBulkSelect: (filename, orderedFilenames, anchorFilename) =>
-        set((s) => {
-          const anchor = anchorFilename ?? s.bulkAnchorFilename ?? filename
-          const i1 = orderedFilenames.indexOf(anchor)
-          const i2 = orderedFilenames.indexOf(filename)
-          if (i1 < 0 || i2 < 0) {
-            const next = s.bulkSelectedFilenames.includes(filename)
-              ? s.bulkSelectedFilenames.filter((x) => x !== filename)
-              : [...s.bulkSelectedFilenames, filename]
-            return {
-              bulkSelectedFilenames: next,
-              bulkAnchorFilename: filename,
-              ...(next.length > 0 ? { selectedDetail: null } : {}),
-            }
-          }
+      toggleBulkSelect: (filename) => {
+        const base = get().bulkSelectedFilenames
+        const had = base.includes(filename)
+        // Never empty: ctrl-deselecting the only pick is a no-op.
+        if (had && base.length <= 1) return
+        const next = had ? base.filter((x) => x !== filename) : [...base, filename]
+        if (next.length === 1) {
+          void get().selectPackage(next[0])
+          return
+        }
+        set({ bulkSelectedFilenames: next, bulkAnchorFilename: filename })
+      },
+
+      /**
+       * Shift-range select. Plain shift replaces the selection with the range (Explorer);
+       * additive (Ctrl/Cmd+Shift) unions. Anchor is unchanged so overshooting is correctable.
+       */
+      rangeBulkSelect: (filename, orderedFilenames, anchorFilename, { additive = false } = {}) => {
+        const s = get()
+        const base = s.bulkSelectedFilenames
+        const anchor = anchorFilename ?? s.bulkAnchorFilename ?? filename
+        const i1 = orderedFilenames.indexOf(anchor)
+        const i2 = orderedFilenames.indexOf(filename)
+        let next
+        if (i1 < 0 || i2 < 0) {
+          next = base.includes(filename) ? base.filter((x) => x !== filename) : [...base, filename]
+        } else {
           const lo = Math.min(i1, i2)
           const hi = Math.max(i1, i2)
-          const selected = new Set([...s.bulkSelectedFilenames, ...orderedFilenames.slice(lo, hi + 1)])
-          const onList = new Set(orderedFilenames)
-          // Selection follows visible order; picks that dropped out of the list keep their order up front.
-          const offList = s.bulkSelectedFilenames.filter((x) => !onList.has(x))
-          return {
-            bulkSelectedFilenames: [...offList, ...orderedFilenames.filter((x) => selected.has(x))],
-            bulkAnchorFilename: filename,
-            selectedDetail: null,
+          const range = orderedFilenames.slice(lo, hi + 1)
+          if (additive) {
+            const onList = new Set(orderedFilenames)
+            const offList = base.filter((x) => !onList.has(x))
+            const selected = new Set([...base, ...range])
+            next = [...offList, ...orderedFilenames.filter((x) => selected.has(x))]
+          } else {
+            next = range
           }
-        }),
+        }
+        if (next.length === 0) return
+        if (next.length === 1) {
+          void get().selectPackage(next[0])
+          return
+        }
+        set({
+          bulkSelectedFilenames: next,
+          // Keep the existing anchor when set so repeated Shift-clicks can shrink the range.
+          bulkAnchorFilename: s.bulkAnchorFilename ?? anchor,
+        })
+      },
 
-      selectAllBulk: (orderedFilenames) =>
+      selectAllBulk: (orderedFilenames) => {
+        if (!orderedFilenames.length) return
+        if (orderedFilenames.length === 1) {
+          void get().selectPackage(orderedFilenames[0])
+          return
+        }
         set({
           bulkSelectedFilenames: [...orderedFilenames],
           bulkAnchorFilename: orderedFilenames[orderedFilenames.length - 1] ?? null,
-          selectedDetail: null,
-        }),
+        })
+      },
 
-      clearBulkSelection: () => set({ bulkSelectedFilenames: [], bulkAnchorFilename: null }),
+      clearBulkSelection: () => set({ bulkSelectedFilenames: [], bulkAnchorFilename: null, selectedDetail: null }),
 
       refreshDetail: async () => {
         const { selectedDetail } = get()

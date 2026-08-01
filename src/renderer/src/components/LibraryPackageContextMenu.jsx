@@ -10,6 +10,7 @@ import {
   Heart,
   LayoutGrid,
   Link2,
+  MousePointerClick,
   Plus,
   Shapes,
   Tag,
@@ -156,7 +157,7 @@ function TypeOverrideMenuItems({ filenames, typeOverride, autoBucketLabel, bulk 
   )
 }
 
-export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, children }) {
+export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, forceSingle = false, children }) {
   const selectedDetail = useLibraryStore((s) => s.selectedDetail)
   const bulkSelectedFilenames = useLibraryStore((s) => s.bulkSelectedFilenames)
   const packageByFilename = useLibraryStore((s) => s.packageByFilename)
@@ -299,7 +300,8 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
   }
   const isArchived = isPackageArchived(p.storageState)
 
-  const showBulk = bulkSelectedFilenames.length > 0 && bulkSelectedFilenames.includes(pkg.filename)
+  // Length > 1 is bulk; a lone pick in the selection array is a single selection.
+  const showBulk = !forceSingle && bulkSelectedFilenames.length > 1 && bulkSelectedFilenames.includes(pkg.filename)
   const bulkPackages = useMemo(
     () => (showBulk ? resolveLibraryBulkPackages({ bulkSelectedFilenames, packageByFilename }) : []),
     [showBulk, bulkSelectedFilenames, packageByFilename],
@@ -608,6 +610,15 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
             </>
           ) : (
             <>
+              {forceSingle && (
+                <>
+                  <ContextMenuItem onSelect={() => void useLibraryStore.getState().selectPackage(pkg.filename)}>
+                    <MousePointerClick size={12} className="shrink-0" />
+                    Select only this
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                </>
+              )}
               {isArchived ? (
                 <ContextMenuItem onSelect={() => openConfirm(setInstallArchiveOpen)} disabled={!detail}>
                   <Download size={12} className="shrink-0 text-accent-blue" />

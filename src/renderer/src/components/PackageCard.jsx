@@ -159,21 +159,6 @@ function retainThumb(url) {
   if (retainedThumbs.size > MAX_RETAINED_THUMBS) retainedThumbs.delete(retainedThumbs.keys().next().value)
 }
 
-/** Non-interactive bulk-selection marker; whole card handles clicks */
-function BulkSelectChip({ checked }) {
-  return (
-    <span
-      role="checkbox"
-      aria-checked={checked}
-      className={`shrink-0 inline-flex items-center justify-center size-[18px] rounded border pointer-events-none ${
-        checked ? 'bg-accent-blue border-accent-blue text-white' : 'border-white/35 bg-black/45 backdrop-blur-sm'
-      }`}
-    >
-      {checked ? <Check size={11} strokeWidth={3} /> : null}
-    </span>
-  )
-}
-
 export function AuthorAvatar({ author, userId, size = 18 }) {
   const avatarUrl = useAvatar(userId)
   const radius = Math.max(3, size * 0.18)
@@ -570,7 +555,6 @@ export function LibraryCard({
   onFilterAuthor,
   mode = 'medium',
   hideType,
-  bulkMode = false,
   bulkSelected = false,
   dimmed = false,
 }) {
@@ -582,7 +566,6 @@ export function LibraryCard({
   const name = displayName(pkg)
   const thumbUrl = useThumbnail(`pkg:${pkg.filename}`)
   const versionStr = pkg.version != null && pkg.version !== '' ? String(pkg.version) : null
-  const showBulk = bulkMode || bulkSelected
   const labelObjs = useLabelObjects(pkg.labelIds)
   const hubRid = pkg.hubResourceId != null ? String(pkg.hubResourceId) : ''
   const wishlisted = useWishlistStore((s) => !!hubRid && s.ids.has(hubRid))
@@ -605,14 +588,8 @@ export function LibraryCard({
         {thumbUrl && <img src={thumbUrl} className="thumb absolute inset-0 w-full h-full object-cover" alt="" />}
         <div className="absolute inset-0 bg-linear-to-t from-black/40 to-transparent" />
         {bulkSelected && <div className="absolute inset-0 bg-accent-blue/10 pointer-events-none" />}
-        {(showBulk ||
-          !hideType ||
-          !pkg.isDirect ||
-          pkg.isLocalOnly ||
-          pkg.noLookPresetTag ||
-          (minimal && !!depIssue)) && (
+        {(!hideType || !pkg.isDirect || pkg.isLocalOnly || pkg.noLookPresetTag || (minimal && !!depIssue)) && (
           <div className="absolute top-2 left-2 z-2 flex max-w-[calc(100%-2.75rem)] items-center gap-1 overflow-x-auto scrollbar-hide flex-nowrap">
-            {bulkMode && <BulkSelectChip checked={bulkSelected} />}
             {!hideType && (
               <div
                 className={`${THUMB_OVERLAY_CHIP} text-white`}
@@ -786,9 +763,7 @@ export function LibraryTableRow({
   selected,
   onFilterAuthor,
   hideType,
-  bulkMode = false,
   bulkSelected = false,
-  onBulkToggle,
   dimmed = false,
 }) {
   const typeColor = libraryTypeBadgeColor(pkg.type)
@@ -807,17 +782,6 @@ export function LibraryTableRow({
       onClick={(e) => onClick?.(pkg, e)}
       className={`flex items-center cursor-pointer transition-colors border-b border-border h-full ${selected || bulkSelected ? 'bg-elevated' : 'hover:bg-elevated/50'} ${dim ? 'opacity-60 hover:opacity-90' : ''}`}
     >
-      {bulkMode && (
-        <div
-          className="w-8 shrink-0 flex items-center justify-center self-stretch border-r border-border/50"
-          onClick={(e) => {
-            e.stopPropagation()
-            onBulkToggle?.(pkg)
-          }}
-        >
-          <BulkSelectChip checked={bulkSelected} />
-        </div>
-      )}
       <div className="flex-3 py-2 px-3 flex items-center gap-2.5 min-w-0">
         <div className="w-7 h-7 rounded shrink-0 overflow-hidden relative">
           <div className="absolute inset-0" style={{ background: getGradient(pkg.filename) }} />
@@ -935,9 +899,7 @@ export function ContentTableRow({
   onFilterAuthor,
   onToggleHidden,
   onToggleFavorite,
-  bulkMode = false,
   bulkSelected = false,
-  onBulkToggle,
   /** When true, user-hidden items render at full saturation/opacity (e.g. Hidden visibility filter). Inactive-package dimming follows Settings → dim inactive packages. */
   suppressHiddenDimming = false,
 }) {
@@ -959,17 +921,6 @@ export function ContentTableRow({
       onClick={(e) => onClick?.(item, e)}
       className={`flex items-center cursor-pointer transition-colors border-b border-border h-full ${selected || bulkSelected ? 'bg-elevated' : 'hover:bg-elevated/50'} ${dimHiddenChrome ? 'opacity-75 hover:opacity-100' : ''}`}
     >
-      {bulkMode && (
-        <div
-          className="w-8 shrink-0 flex items-center justify-center self-stretch border-r border-border/50"
-          onClick={(e) => {
-            e.stopPropagation()
-            onBulkToggle?.(item)
-          }}
-        >
-          <BulkSelectChip checked={bulkSelected} />
-        </div>
-      )}
       <div className="flex-3 py-2 px-3 flex items-center gap-2.5 min-w-0">
         <div
           className={`w-7 h-7 rounded shrink-0 overflow-hidden relative ${dimHiddenChrome ? 'saturate-25 brightness-90' : ''}`}
@@ -1050,40 +1001,28 @@ export function ContentTableRow({
         </div>
       </div>
       <div className="w-14 py-2 px-3 text-[11px]">
-        {bulkMode ? (
-          <span className={item.hidden ? 'text-error' : 'text-text-aside'}>
-            {item.hidden ? <EyeOff size={12} /> : <Eye size={12} />}
-          </span>
-        ) : (
-          <button
-            type="button"
-            className={`cursor-pointer ${item.hidden ? 'text-error' : 'text-text-aside hover:text-text-secondary'}`}
-            onClick={(e) => {
-              e.stopPropagation()
-              onToggleHidden?.(item)
-            }}
-          >
-            {item.hidden ? <EyeOff size={12} /> : <Eye size={12} />}
-          </button>
-        )}
+        <button
+          type="button"
+          className={`cursor-pointer ${item.hidden ? 'text-error' : 'text-text-aside hover:text-text-secondary'}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggleHidden?.(item)
+          }}
+        >
+          {item.hidden ? <EyeOff size={12} /> : <Eye size={12} />}
+        </button>
       </div>
       <div className="w-12 py-2 px-3 text-[11px]">
-        {bulkMode ? (
-          <span className={item.favorite ? 'text-warning' : 'text-text-aside'}>
-            <Star size={12} fill={item.favorite ? 'currentColor' : 'none'} />
-          </span>
-        ) : (
-          <button
-            type="button"
-            className={`cursor-pointer ${item.favorite ? 'text-warning' : 'text-text-aside hover:text-warning'}`}
-            onClick={(e) => {
-              e.stopPropagation()
-              onToggleFavorite?.(item)
-            }}
-          >
-            <Star size={12} fill={item.favorite ? 'currentColor' : 'none'} />
-          </button>
-        )}
+        <button
+          type="button"
+          className={`cursor-pointer ${item.favorite ? 'text-warning' : 'text-text-aside hover:text-warning'}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggleFavorite?.(item)
+          }}
+        >
+          <Star size={12} fill={item.favorite ? 'currentColor' : 'none'} />
+        </button>
       </div>
     </div>
   )
@@ -1096,7 +1035,6 @@ export function ContentCard({
   onToggleHidden,
   onToggleFavorite,
   hideType,
-  bulkMode = false,
   bulkSelected = false,
   suppressHiddenDimming = false,
 }) {
@@ -1110,7 +1048,6 @@ export function ContentCard({
   const pkgLabel = contentPackageLabel(item)
   const thumbKey = item.thumbnailPath ? `ct:${item.packageFilename}\0${item.thumbnailPath}` : null
   const thumbUrl = useThumbnail(thumbKey)
-  const showBulk = bulkMode || bulkSelected
   const isLocalContent = isLocalPackage(item.packageFilename)
   // Dots show *own* labels only — inherited (package) labels live visibly on the
   // package card. The hover tooltip still lists inherited labels for context so
@@ -1141,9 +1078,8 @@ export function ContentCard({
           )}
         </div>
         {bulkSelected && <div className="absolute inset-0 bg-accent-blue/10 pointer-events-none z-1" />}
-        {(showBulk || !hideType || item.tag || isLocalContent) && (
+        {(!hideType || item.tag || isLocalContent) && (
           <div className="absolute top-2 left-2 z-2 flex max-w-[calc(100%-2.75rem)] items-center gap-1 overflow-x-auto scrollbar-hide flex-nowrap">
-            {bulkMode && <BulkSelectChip checked={bulkSelected} />}
             {!hideType && (
               <span className={`${THUMB_OVERLAY_CHIP} text-white`} style={{ background: typeColor + 'cc' }}>
                 {item.category}
@@ -1186,7 +1122,6 @@ export function ContentCard({
             )}
           </div>
         )}
-        {/* Corner slot: disabled indicator; visibility/favorite are interactive except in bulk (static badges, like disabled) */}
         <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 z-2">
           {isDisabledPkg && (
             <div
@@ -1198,30 +1133,28 @@ export function ContentCard({
           )}
           <button
             type="button"
-            disabled={bulkMode}
             onClick={(e) => {
               e.stopPropagation()
               onToggleHidden?.(item)
             }}
-            className={`size-7 shrink-0 inline-flex items-center justify-center rounded transition ${bulkMode ? 'pointer-events-none' : 'cursor-pointer'} ${
+            className={`size-7 shrink-0 inline-flex items-center justify-center rounded transition cursor-pointer ${
               isHidden
-                ? `opacity-100 text-error bg-transparent ${THUMB_OUTLINE_ICON_SHADOW} ${bulkMode ? '' : 'group-hover:text-error group-hover:bg-black/50 group-hover:backdrop-blur-sm'}`
-                : `opacity-0 text-white/70 bg-black/50 backdrop-blur-sm ${bulkMode ? '' : 'group-hover:opacity-100'}`
+                ? `opacity-100 text-error bg-transparent ${THUMB_OUTLINE_ICON_SHADOW} group-hover:text-error group-hover:bg-black/50 group-hover:backdrop-blur-sm`
+                : 'opacity-0 text-white/70 bg-black/50 backdrop-blur-sm group-hover:opacity-100'
             }`}
           >
             {isHidden ? <EyeOff size={13} /> : <Eye size={13} />}
           </button>
           <button
             type="button"
-            disabled={bulkMode}
             onClick={(e) => {
               e.stopPropagation()
               onToggleFavorite?.(item)
             }}
-            className={`size-7 shrink-0 inline-flex items-center justify-center rounded transition ${bulkMode ? 'pointer-events-none' : 'cursor-pointer'} ${
+            className={`size-7 shrink-0 inline-flex items-center justify-center rounded transition cursor-pointer ${
               item.favorite
-                ? `text-warning opacity-100 bg-transparent ${THUMB_FILLED_ICON_SHADOW} ${bulkMode ? '' : 'group-hover:bg-black/50 group-hover:backdrop-blur-sm'}`
-                : `text-white/50 bg-black/50 backdrop-blur-sm opacity-0 ${bulkMode ? '' : 'group-hover:opacity-100'}`
+                ? `text-warning opacity-100 bg-transparent ${THUMB_FILLED_ICON_SHADOW} group-hover:bg-black/50 group-hover:backdrop-blur-sm`
+                : 'text-white/50 bg-black/50 backdrop-blur-sm opacity-0 group-hover:opacity-100'
             }`}
           >
             <Star size={13} fill={item.favorite ? 'currentColor' : 'none'} />

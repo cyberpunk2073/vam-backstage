@@ -1,5 +1,15 @@
 import { useState, useCallback, useMemo } from 'react'
-import { Compass, Download, Eye, EyeOff, Library as LibraryIcon, RefreshCw, Star, Tag } from 'lucide-react'
+import {
+  Compass,
+  Download,
+  Eye,
+  EyeOff,
+  Library as LibraryIcon,
+  MousePointerClick,
+  RefreshCw,
+  Star,
+  Tag,
+} from 'lucide-react'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -52,7 +62,14 @@ async function runExtractAndToast(actionLabel, payload) {
   }
 }
 
-export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onToggleFavorite, children }) {
+export function ContentItemContextMenu({
+  item,
+  onNavigate,
+  onToggleHidden,
+  onToggleFavorite,
+  forceSingle = false,
+  children,
+}) {
   const selectedItem = useContentStore((s) => s.selectedItem)
   const selectedPackage = useContentStore((s) => s.selectedPackage)
   const bulkSelectedIds = useContentStore((s) => s.bulkSelectedIds)
@@ -64,7 +81,8 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
   // resolved lazily on open so the item itself can offer a "Re-extract".
   const [reSource, setReSource] = useState(null)
 
-  const showBulk = bulkSelectedIds.length > 0 && bulkSelectedIds.includes(item.id)
+  // Length > 1 is bulk; a lone pick in the selection array is a single selection.
+  const showBulk = !forceSingle && bulkSelectedIds.length > 1 && bulkSelectedIds.includes(item.id)
   const isScene = SCENE_SOURCE_TYPES.has(item.type)
   const isLook = LOOK_SOURCE_TYPES.has(item.type)
   const isExtractable = isScene || isLook
@@ -361,6 +379,20 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
           </>
         ) : (
           <>
+            {forceSingle && (
+              <>
+                <ContextMenuItem
+                  onSelect={() => {
+                    const full = contents.find((c) => c.id === item.id) ?? item
+                    void useContentStore.getState().selectItem(full)
+                  }}
+                >
+                  <MousePointerClick size={12} className="shrink-0" />
+                  Select only this
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+              </>
+            )}
             <ContextMenuItem onSelect={() => onToggleHidden?.(item)}>
               {item.hidden ? (
                 <>

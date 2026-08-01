@@ -38,8 +38,6 @@ export function VirtualGrid({
   padding = 16,
   scrollResetKey,
   onLayout,
-  /** When bulk selection is on, clear it on pointer down outside any `[data-grid-card]` (gaps, padding, empty scroll area). */
-  onEmptyAreaPointerDown,
   /** Flat index of the selected item; keeps keyboard selection visible in the viewport. */
   selectedIndex,
   /** Sparse/windowed mode: fired with inclusive item-index range of the virtual window (incl. overscan). */
@@ -218,27 +216,9 @@ export function VirtualGrid({
     }
   }, [scrollResetKey])
 
-  const onScrollMouseDown = useCallback(
-    (e) => {
-      if (!onEmptyAreaPointerDown) return
-      if (e.metaKey || e.ctrlKey) return
-      // React synthetic events bubble through portals along the React tree, so a
-      // pointerdown inside a portaled overlay (e.g. a card's context menu) reaches
-      // this handler even though the overlay is not a DOM child of the scroll
-      // container. Only treat clicks that truly landed inside the scroll element
-      // as empty-area clicks; otherwise a right-click menu interaction would clear
-      // the bulk selection mid-flight.
-      const el = e.target
-      if (!(el instanceof Element) || !e.currentTarget.contains(el)) return
-      if (el.closest('[data-grid-card]')) return
-      onEmptyAreaPointerDown()
-    },
-    [onEmptyAreaPointerDown],
-  )
-
   return (
     <div className={`relative ${className}`}>
-      <div ref={scrollRef} className="absolute inset-0 overflow-y-auto" onMouseDown={onScrollMouseDown}>
+      <div ref={scrollRef} className="absolute inset-0 overflow-y-auto">
         <div style={{ height: virtualizer.getTotalSize() + padding * 2, position: 'relative' }}>
           {virtualizer.getVirtualItems().map((vRow) => {
             const startIdx = vRow.index * cols

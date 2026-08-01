@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import {
   LayoutGrid,
   List,
@@ -41,6 +41,7 @@ import { useLabelsStore } from '@/stores/useLabelsStore'
 import { useLibraryDirsStore } from '@/stores/useLibraryDirsStore'
 import { AuthorAvatar, AuthorLink, ContentCard, ContentTableRow, depIssues } from '@/components/PackageCard'
 import { ContentItemContextMenu } from '@/components/ContentItemContextMenu'
+import { SelectionPanel } from '@/components/SelectionPanel'
 import { LabelsRow } from '@/components/labels/LabelsRow'
 import { LabelChip } from '@/components/labels/LabelChip'
 import { LabelApplyPopover } from '@/components/labels/LabelApplyPopover'
@@ -232,7 +233,7 @@ export default function ContentView({ onNavigate, navContext }) {
     toggleBulkSelect,
     rangeBulkSelect,
     selectAllBulk,
-    clearBulkSelection,
+    collapseSelection,
   } = useContentStore()
   // Same package-level dictionary as Library (not per-content — a large Looks
   // pack shouldn't dominate ranking over a single-scene author).
@@ -730,7 +731,9 @@ export default function ContentView({ onNavigate, navContext }) {
 
   const orderedContentIds = useMemo(() => filtered.map((c) => c.id), [filtered])
 
-  const bulkActive = bulkSelectedIds.length > 0
+  // Length > 1 is bulk; length 1 is a single selection (detail panel).
+  const bulkActive = bulkSelectedIds.length > 1
+  const bulkAnchorId = useContentStore((s) => s.bulkAnchorId)
   const bulkSelectedItems = useMemo(
     () => resolveContentBulkItems({ bulkSelectedIds, contents }),
     [bulkSelectedIds, contents],
@@ -740,7 +743,8 @@ export default function ContentView({ onNavigate, navContext }) {
 
   const lastSelectedIdxRef = useRef(0)
   const prevScrollResetKeyRef = useRef(scrollResetKey)
-  const selectedIdx = selectedItem ? filtered.findIndex((c) => c.id === selectedItem.id) : -1
+  const focusId = bulkActive ? bulkAnchorId : (bulkSelectedIds[0] ?? null)
+  const selectedIdx = focusId != null ? filtered.findIndex((c) => c.id === focusId) : -1
   if (selectedIdx >= 0) lastSelectedIdxRef.current = selectedIdx
 
   const runSelectItem = useCallback(
@@ -760,47 +764,40 @@ export default function ContentView({ onNavigate, navContext }) {
       return
     }
     if (selectingRef.current) return
-    if (selectedItem && filtered.some((c) => c.id === selectedItem.id)) {
+    // Selection array is source of truth; length 1 is a single pick (detail may still be loading).
+    const singleId = bulkSelectedIds.length === 1 ? bulkSelectedIds[0] : null
+    if (singleId != null && filtered.some((c) => c.id === singleId)) {
       prevScrollResetKeyRef.current = scrollResetKey
       return
     }
     const scrollReset = prevScrollResetKeyRef.current !== scrollResetKey
     prevScrollResetKeyRef.current = scrollResetKey
+    // Keep a pick an action pushed out of the current filters — the card leaving the grid is the
+    // receipt, the detail panel holds the item. `bulkSelectedItems` resolves against the store, so
+    // a length of 1 also proves the item still exists.
+    if (singleId != null && !scrollReset && bulkSelectedItems.length === 1) return
     const idx = scrollReset ? 0 : Math.min(lastSelectedIdxRef.current, filtered.length - 1)
     const target = filtered[idx]
     if (!target) return
     void runSelectItem(target)
-  }, [bulkActive, filtered, selectedItem, scrollResetKey, runSelectItem])
+  }, [bulkActive, filtered, bulkSelectedIds, bulkSelectedItems, scrollResetKey, runSelectItem])
 
   const handleContentClick = useCallback(
     (item, e) => {
       const mod = e.metaKey || e.ctrlKey
       if (e.shiftKey) {
-        const anchor = bulkActive ? useContentStore.getState().bulkAnchorId : selectedItem?.id
-        rangeBulkSelect(item.id, orderedContentIds, anchor)
+        rangeBulkSelect(item.id, orderedContentIds, undefined, { additive: mod })
         return
       }
-      if (mod || bulkActive) {
+      if (mod) {
         toggleBulkSelect(item.id)
         return
       }
+      // Plain click always single-selects (exits bulk). Re-clicking the lone pick is a no-op.
+      if (!bulkActive && bulkSelectedIds[0] === item.id) return
       void runSelectItem(item)
     },
-    [bulkActive, orderedContentIds, rangeBulkSelect, selectedItem?.id, toggleBulkSelect, runSelectItem],
-  )
-
-  const handleContentTableRowClick = useCallback(
-    (item, e) => {
-      handleContentClick(item, e)
-    },
-    [handleContentClick],
-  )
-
-  const handleContentBulkToggle = useCallback(
-    (item) => {
-      toggleBulkSelect(item.id)
-    },
-    [toggleBulkSelect],
+    [bulkActive, bulkSelectedIds, orderedContentIds, rangeBulkSelect, toggleBulkSelect, runSelectItem],
   )
 
   const handleFilterAuthor = useCallback(
@@ -812,18 +809,17 @@ export default function ContentView({ onNavigate, navContext }) {
 
   const handleKeyboardSelect = useCallback(
     (item) => {
-      if (bulkActive) return
       void runSelectItem(item)
     },
-    [bulkActive, runSelectItem],
+    [runSelectItem],
   )
 
   useKeyboardNav({
-    items: bulkActive ? [] : filtered,
-    selectedId: selectedItem?.id,
+    items: filtered,
+    selectedId: focusId,
     onSelect: handleKeyboardSelect,
     onClose: () => {
-      if (bulkActive) clearBulkSelection()
+      if (bulkActive) collapseSelection()
     },
     getId: (c) => c.id,
     columnCount: viewMode === 'grid' ? gridLayout.cols : 1,
@@ -943,13 +939,6 @@ export default function ContentView({ onNavigate, navContext }) {
 
   const selectionAnnounced = bulkActive ? `${bulkSelectedIds.length} selected` : ''
 
-  const contentTableSelectAllRef = useRef(null)
-  useLayoutEffect(() => {
-    const el = contentTableSelectAllRef.current
-    if (!el) return
-    el.indeterminate = bulkSelectedIds.length > 0 && bulkSelectedIds.length < filtered.length
-  }, [bulkSelectedIds, filtered.length])
-
   return (
     <div className="h-full flex">
       <FilterPanel
@@ -1052,28 +1041,26 @@ export default function ContentView({ onNavigate, navContext }) {
             <span className="shrink-0 whitespace-nowrap text-[11px] text-text-primary font-medium tabular-nums">
               {bulkSelectedIds.length} selected
             </span>
-            <div className="flex shrink-0 flex-nowrap items-center gap-2 whitespace-nowrap">
-              <button
-                type="button"
-                className="shrink-0 whitespace-nowrap text-[10px] text-accent-blue hover:brightness-125 transition-[filter] cursor-pointer"
-                onClick={() => selectAllBulk(orderedContentIds)}
-              >
-                Select all {filtered.length}
-              </button>
-              <button
-                type="button"
-                className="shrink-0 whitespace-nowrap text-[10px] text-text-aside hover:text-text-secondary cursor-pointer transition-colors"
-                onClick={() => clearBulkSelection()}
-              >
-                Deselect
-              </button>
-            </div>
+            <button
+              type="button"
+              className="shrink-0 whitespace-nowrap text-[10px] text-accent-blue hover:brightness-125 transition-[filter] cursor-pointer"
+              onClick={() => selectAllBulk(orderedContentIds)}
+            >
+              Select all {filtered.length}
+            </button>
+            <button
+              type="button"
+              className="shrink-0 whitespace-nowrap text-[10px] text-text-secondary hover:text-text-primary transition-colors cursor-pointer"
+              onClick={() => collapseSelection()}
+            >
+              Deselect
+            </button>
             <div className="flex-1" />
             <button
               type="button"
-              title="Clear selection"
-              aria-label="Clear selection"
-              onClick={() => clearBulkSelection()}
+              title="Deselect (Esc)"
+              aria-label="Deselect"
+              onClick={() => collapseSelection()}
               className="p-1.5 rounded cursor-pointer text-text-aside hover:text-text-primary hover:bg-elevated shrink-0"
             >
               <X size={16} />
@@ -1143,7 +1130,6 @@ export default function ContentView({ onNavigate, navContext }) {
             scrollResetKey={scrollResetKey}
             selectedIndex={selectedIdx}
             onLayout={setGridLayout}
-            onEmptyAreaPointerDown={bulkActive ? () => clearBulkSelection() : undefined}
             renderItem={(item) => (
               <ContentItemContextMenu
                 key={item.id}
@@ -1155,9 +1141,8 @@ export default function ContentView({ onNavigate, navContext }) {
                 <ContentCard
                   item={item}
                   onClick={handleContentClick}
-                  selected={!bulkActive && selectedItem?.id === item.id}
-                  bulkMode={bulkActive}
-                  bulkSelected={selectedBulkSet.has(item.id)}
+                  selected={!bulkActive && selectedBulkSet.has(item.id)}
+                  bulkSelected={bulkActive && selectedBulkSet.has(item.id)}
                   onToggleHidden={handleToggleHidden}
                   onToggleFavorite={handleToggleFavorite}
                   hideType={selectedTypes.length === 1}
@@ -1170,21 +1155,6 @@ export default function ContentView({ onNavigate, navContext }) {
           <div className="flex-1 flex flex-col overflow-hidden p-4">
             <div className="border border-border rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
               <div className={`bg-elevated ${SECTION_LABEL} flex border-b border-border shrink-0`}>
-                {bulkActive && (
-                  <div className="w-8 shrink-0 flex items-center justify-center border-r border-border/50 py-2">
-                    <input
-                      ref={contentTableSelectAllRef}
-                      type="checkbox"
-                      className="accent-accent-blue cursor-pointer"
-                      aria-label="Select all"
-                      checked={bulkSelectedIds.length > 0 && bulkSelectedIds.length === filtered.length}
-                      onChange={(e) => {
-                        if (e.target.checked) selectAllBulk(orderedContentIds)
-                        else clearBulkSelection()
-                      }}
-                    />
-                  </div>
-                )}
                 <div className="flex-3 py-2 px-3 font-medium">Content</div>
                 <div className="flex-2 py-2 px-3 font-medium">Author</div>
                 {selectedTypes.length !== 1 && <div className="flex-1 min-w-0 py-2 px-3 font-medium">Type</div>}
@@ -1207,12 +1177,10 @@ export default function ContentView({ onNavigate, navContext }) {
                   >
                     <ContentTableRow
                       item={item}
-                      selected={!bulkActive && selectedItem?.id === item.id}
-                      bulkMode={bulkActive}
-                      bulkSelected={selectedBulkSet.has(item.id)}
-                      onBulkToggle={handleContentBulkToggle}
+                      selected={!bulkActive && selectedBulkSet.has(item.id)}
+                      bulkSelected={bulkActive && selectedBulkSet.has(item.id)}
                       hideType={selectedTypes.length === 1}
-                      onClick={handleContentTableRowClick}
+                      onClick={handleContentClick}
                       onFilterAuthor={handleFilterAuthor}
                       onToggleHidden={handleToggleHidden}
                       onToggleFavorite={handleToggleFavorite}
@@ -1227,7 +1195,16 @@ export default function ContentView({ onNavigate, navContext }) {
         )}
       </div>
 
-      {selectedItem && !bulkActive ? (
+      {bulkActive ? (
+        <SelectionPanel
+          kind="content"
+          items={bulkSelectedItems}
+          onRemove={(item) => toggleBulkSelect(item.id)}
+          onNavigate={onNavigate}
+          onToggleHidden={handleToggleHidden}
+          onToggleFavorite={handleToggleFavorite}
+        />
+      ) : selectedItem ? (
         <ContentDetailPanel
           item={selectedItem}
           pkg={selectedPackage}
@@ -1241,29 +1218,9 @@ export default function ContentView({ onNavigate, navContext }) {
             if (full) void runSelectItem(full)
           }}
         />
-      ) : bulkActive ? (
-        <ContentBulkPanel bulkSelectedIds={bulkSelectedIds} />
       ) : (
         <div className="shrink-0 border-l border-border bg-surface" style={{ width: detailPanelWidth }} />
       )}
-    </div>
-  )
-}
-
-function ContentBulkPanel({ bulkSelectedIds }) {
-  const [panelWidth] = usePersistedPanelWidth('panel_width_detail', {
-    min: 260,
-    max: 500,
-    defaultWidth: 340,
-  })
-  const n = bulkSelectedIds.length
-  return (
-    <div className="shrink-0 border-l border-border bg-surface" style={{ width: panelWidth }}>
-      <div className="p-4">
-        <div className="text-sm font-semibold text-text-primary">
-          {n} item{n !== 1 ? 's' : ''} selected
-        </div>
-      </div>
     </div>
   )
 }
