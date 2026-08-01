@@ -1203,7 +1203,7 @@ export default function SettingsView() {
             <SettingRow
               as="label"
               label="Blur thumbnails"
-              description="Apply a blur to all package and content thumbnail images to keep it SFW."
+              description="Apply a blur to all package and content thumbnails and author avatars to keep it SFW."
             >
               <Switch checked={blurThumbnails} onCheckedChange={setBlurThumbnails} />
             </SettingRow>

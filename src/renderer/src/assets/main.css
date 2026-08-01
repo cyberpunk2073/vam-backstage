@@ -316,6 +316,11 @@ html[data-blur-thumbs] .thumb {
     filter: blur(20px);
     clip-path: inset(0);
 }
+html[data-blur-thumbs] .author-avatar {
+    /* Scale past the soft transparent edge that blur() creates at the bitmap boundary */
+    filter: blur(3px);
+    transform: scale(1.1);
+}
 
 /* Thumbnail size slider */
 .thumbnail-size-slider {

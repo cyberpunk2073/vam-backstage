@@ -194,8 +194,8 @@ export function AuthorAvatar({ author, userId, size = 18 }) {
     )
   }
   return (
-    <Avatar className="after:hidden" style={{ width: size, height: size, borderRadius: radius }}>
-      <AvatarImage src={avatarUrl} alt={author} style={{ borderRadius: radius }} />
+    <Avatar className="after:hidden overflow-hidden" style={{ width: size, height: size, borderRadius: radius }}>
+      <AvatarImage className="author-avatar" src={avatarUrl} alt={author} style={{ borderRadius: radius }} />
       <AvatarFallback
         className="text-white font-semibold"
         style={{ background: getAuthorColor(author), fontSize: size * 0.42, borderRadius: radius }}
