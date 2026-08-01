@@ -43,8 +43,10 @@
  * Never put body/clarification on tertiary or aside — those tiers are chrome and footnotes.
  *
  * Do not invent text-[Npx] for prose outside these recipes. Retired for prose: 9 / 13 / 15 /
- * 17 / 22px. text-[10px] is chrome/chips only (and META_COMPACT / ASIDE_COMPACT). text-base is
- * headings/dialog titles only.
+ * 17 / 22px. text-[10px] is chrome/chips only (and META_COMPACT / ASIDE_COMPACT). 16px headings
+ * spell the size as text-[16px] — never text-base: the palette defines --color-base, and
+ * Tailwind resolves text-* against the color namespace first, so text-base compiles to
+ * `color: #0a0b10` with no font size, blanking the text against any dark surface.
  *
  * Never override DialogDescription / AlertDialogDescription size or color — extend the
  * primitive with a variant if a denser dialog is needed.
@@ -92,10 +94,10 @@
 export const TITLE_PAGE = 'text-lg font-semibold text-text-primary'
 
 /** Section or card heading. 16px / 600 / primary */
-export const TITLE_SECTION = 'text-base font-semibold tracking-tight text-text-primary'
+export const TITLE_SECTION = 'text-[16px] font-semibold tracking-tight text-text-primary'
 
 /** Dialog title — matches the shadcn primitive default. 16px / 500 / primary */
-export const TITLE_DIALOG = 'text-base font-medium text-text-primary'
+export const TITLE_DIALOG = 'text-[16px] font-medium text-text-primary'
 
 /**
  * Heading for a group of content inside a detail side-panel — "Used by", "Content",

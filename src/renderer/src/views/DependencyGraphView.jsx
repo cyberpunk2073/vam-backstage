@@ -913,7 +913,7 @@ export default function DependencyGraphView() {
       >
         <div className="mb-1.5 font-medium text-text-primary">Dependency graph</div>
         {!warningDismissed && (
-          <div className="pointer-events-auto mb-2 flex items-start gap-2 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1.5 text-text-secondary leading-snug">
+          <div className="pointer-events-auto mb-2 flex items-start gap-2 rounded-md border border-white/10 bg-white/4 px-2 py-1.5 text-text-secondary leading-snug">
             <AlertTriangle size={12} className="mt-0.5 shrink-0 text-warning" />
             <span className="min-w-0 flex-1">
               Experimental — have fun and mess around with your library. May be removed in future versions. If you think
@@ -987,7 +987,7 @@ export default function DependencyGraphView() {
           format={(v) => v.toFixed(2)}
         />
         {!frictionHintDismissed && (
-          <div className="flex items-start gap-2 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1.5 text-text-secondary leading-snug">
+          <div className="flex items-start gap-2 rounded-md border border-white/10 bg-white/4 px-2 py-1.5 text-text-secondary leading-snug">
             <Lightbulb size={12} className="mt-0.5 shrink-0 text-accent-blue" />
             <span className="min-w-0 flex-1">
               Tip: drag <span className={EMPHASIS}>Friction</span> to 0 to let the layout settle, then pull it back up
@@ -1031,7 +1031,7 @@ export default function DependencyGraphView() {
         />
       </div>
 
-      <div className="pointer-events-none absolute bottom-3 right-4 z-10 select-none text-2xl font-bold tracking-tight text-white/[0.10]">
+      <div className="pointer-events-none absolute bottom-3 right-4 z-10 select-none text-2xl font-bold tracking-tight text-white/10">
         VaM Backstage
       </div>
 

@@ -27,7 +27,13 @@ function registerMiscHandlers() {
   ipcMain.handle('thumbnails:getGraph', async (_, keys) => getGraphThumbnails(keys || []))
 
   ipcMain.handle('settings:getDatabasePath', () => getDatabasePath())
-  ipcMain.handle('settings:get', (_, key) => getSetting(key))
+  ipcMain.handle('settings:get', (_, key) => {
+    // Debug: VAM_FORCE_WHATS_NEW=1 fakes an older last-seen so What's New shows again.
+    if (key === 'whats_new_last_seen_version' && process.env.VAM_FORCE_WHATS_NEW) {
+      return '0.0.0'
+    }
+    return getSetting(key)
+  })
   ipcMain.handle('settings:set', (_, key, value) => {
     setSetting(key, value)
     return { ok: true }

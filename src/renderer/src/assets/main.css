@@ -9,6 +9,9 @@
     --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
 
     /* App palette — dark only, single source of truth */
+    /* Naming this `base` shadows Tailwind's text-base font size: text-* resolves against the
+       color namespace first, so text-base emits `color: #0a0b10` and no size. Spell 16px as
+       text-[16px] (see lib/typography.js) — renaming the token would rename bg-base everywhere. */
     --color-base: #0a0b10;
     --color-surface: #111218;
     --color-elevated: #191a22;
