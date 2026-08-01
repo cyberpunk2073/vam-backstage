@@ -1172,8 +1172,8 @@ export default function LibraryView({ onNavigate, navContext }) {
                     <LibraryCard
                       pkg={pkg}
                       onClick={handleLibraryClick}
-                      selected={!bulkActive && selectedSet.has(pkg.filename)}
-                      bulkSelected={bulkActive && selectedSet.has(pkg.filename)}
+                      selected={selectedSet.has(pkg.filename)}
+                      bulkActive={bulkActive}
                       focused={focusFilename === pkg.filename}
                       onFilterAuthor={handleFilterAuthor}
                       mode={compactCards ? 'minimal' : 'medium'}
@@ -1216,8 +1216,8 @@ export default function LibraryView({ onNavigate, navContext }) {
                       <LibraryTableRow
                         pkg={pkg}
                         onClick={handleLibraryClick}
-                        selected={!bulkActive && selectedSet.has(pkg.filename)}
-                        bulkSelected={bulkActive && selectedSet.has(pkg.filename)}
+                        selected={selectedSet.has(pkg.filename)}
+                        bulkActive={bulkActive}
                         focused={focusFilename === pkg.filename}
                         onFilterAuthor={handleFilterAuthor}
                         hideType={selectedTypes.length === 1}

@@ -1116,8 +1116,8 @@ export default function ContentView({ onNavigate, navContext }) {
                 <ContentCard
                   item={item}
                   onClick={handleContentClick}
-                  selected={!bulkActive && selectedSet.has(item.id)}
-                  bulkSelected={bulkActive && selectedSet.has(item.id)}
+                  selected={selectedSet.has(item.id)}
+                  bulkActive={bulkActive}
                   focused={focusId === item.id}
                   onToggleHidden={handleToggleHidden}
                   onToggleFavorite={handleToggleFavorite}
@@ -1153,8 +1153,8 @@ export default function ContentView({ onNavigate, navContext }) {
                   >
                     <ContentTableRow
                       item={item}
-                      selected={!bulkActive && selectedSet.has(item.id)}
-                      bulkSelected={bulkActive && selectedSet.has(item.id)}
+                      selected={selectedSet.has(item.id)}
+                      bulkActive={bulkActive}
                       focused={focusId === item.id}
                       hideType={selectedTypes.length === 1}
                       onClick={handleContentClick}

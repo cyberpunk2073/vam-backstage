@@ -131,8 +131,62 @@ const THUMB_ACTION_BTN_SHADOW = 'shadow-[0_1px_2px_rgba(0,0,0,0.55),0_2px_6px_rg
 /** Lift + inset white edge for borderless (gradient) action buttons that would otherwise blend into bright thumbnails. */
 const THUMB_ACTION_BTN_POP = `${THUMB_ACTION_BTN_SHADOW} ring-1 ring-inset ring-white/15`
 
-/** Keyboard lead (focus) marker — see `.card-lead` in main.css. */
-const LEAD_RING = 'card-lead'
+/**
+ * Selection paint lists its properties rather than using `transition-all` / `transition-colors`:
+ * both animate `outline-color` (and `all` also `outline-offset`), which fades and grows the
+ * keyboard-lead ring in over 150ms and makes arrowing feel laggy. The ring must land instantly.
+ */
+const SELECT_TRANSITION = 'transition-[background-color,border-color,box-shadow] duration-150'
+
+/**
+ * Selection chrome for a grid card. Single-selected and bulk-checked share the accent edge — they
+ * never coexist, and bulk layers `CheckedChrome` on top to tell them apart. The keyboard lead ring
+ * is bulk-only: in single-select the edge already marks it, since lead and selection move together
+ * there. See `.card-picked` / `.card-lead` in main.css.
+ */
+function cardChrome({ selected, focused, bulkActive }) {
+  const edge = selected ? 'card-picked border-accent-blue bg-elevated' : 'border-border hover:bg-elevated'
+  return focused && bulkActive ? `${edge} card-lead` : edge
+}
+
+/** Row equivalent — a tint instead of an edge, brightened rather than washed out on hover. */
+function rowChrome({ selected, focused, bulkActive }) {
+  const fill = selected ? 'bg-accent-blue/12 hover:bg-accent-blue/18' : 'hover:bg-elevated/50'
+  return focused && bulkActive ? `${fill} row-lead` : fill
+}
+
+const CHECK_BADGE =
+  'inline-flex items-center justify-center rounded-[4px] bg-accent-blue text-white shadow-[0_1px_2px_rgba(0,0,0,0.45)]'
+
+/**
+ * Bulk-checked marker: blue wash over the thumbnail plus a check in its top-right corner. Rendered
+ * last and outside whatever the card dims, so membership reads at full strength on an inactive or
+ * hidden card — the complaint that started this: checked all but vanished once a card was dimmed.
+ * Cards make room for the badge by shifting their corner icons (`right-8`).
+ */
+function CheckedChrome() {
+  return (
+    <>
+      <div className="absolute inset-x-0 top-0 aspect-square bg-accent-blue/18 pointer-events-none z-3" />
+      <span className={`absolute top-2 right-2 z-3 size-4.5 ${CHECK_BADGE}`} title="Selected" aria-hidden>
+        <Check size={12} strokeWidth={3} />
+      </span>
+    </>
+  )
+}
+
+/** Row equivalent, pinned to the row's thumbnail. `opacity-100!` opts out of the row's dimming. */
+function RowCheckedBadge() {
+  return (
+    <span
+      className={`absolute left-[2.15rem] top-1.5 z-1 size-3.5 opacity-100! ${CHECK_BADGE}`}
+      title="Selected"
+      aria-hidden
+    >
+      <Check size={9} strokeWidth={3} />
+    </span>
+  )
+}
 
 /**
  * Hub thumbnails that have painted at least once this session, each held by a detached
@@ -554,14 +608,16 @@ export function HubCard({
 export function LibraryCard({
   pkg,
   onClick,
+  /** In the current selection — single pick or one of a bulk set (`bulkActive` tells them apart). */
   selected,
   onFilterAuthor,
   mode = 'medium',
   hideType,
-  bulkSelected = false,
+  bulkActive = false,
   focused = false,
   dimmed = false,
 }) {
+  const checked = selected && bulkActive
   const minimal = mode === 'minimal'
   const inactiveStyle = useInactiveStyle(pkg)
   const { isOffloaded, inactive } = inactiveStyle
@@ -580,19 +636,18 @@ export function LibraryCard({
       data-grid-card
       tabIndex={-1}
       onClick={(e) => onClick?.(pkg, e)}
-      className={`@container w-full bg-surface border rounded-lg overflow-hidden text-left transition-all duration-150 card-glow cursor-pointer shrink-0 group outline-none
-        ${selected || bulkSelected ? 'border-accent-blue/40 bg-elevated' : 'border-border hover:bg-elevated'}
-        ${focused ? LEAD_RING : ''}
-        ${dim ? 'opacity-60 hover:opacity-90' : ''}`}
+      className={`relative @container w-full bg-surface border rounded-lg overflow-hidden text-left ${SELECT_TRANSITION} card-glow cursor-pointer shrink-0 group outline-none
+        ${cardChrome({ selected, focused, bulkActive })}`}
     >
+      {/* Dimming rides on the content, never on the card itself — the border and lead ring must
+          keep full strength (see CheckedChrome). */}
       <div
-        className={`relative aspect-square ${dim ? 'saturate-25 brightness-80 group-hover:saturate-100 group-hover:brightness-100 transition-[filter] duration-200' : ''}`}
+        className={`relative aspect-square ${dim ? 'opacity-60 saturate-25 brightness-80 group-hover:opacity-90 group-hover:saturate-100 group-hover:brightness-100 transition-[filter,opacity] duration-200' : ''}`}
       >
         <div className="absolute inset-0" style={{ background: getGradient(pkg.filename) }} />
         {thumbUrl && <div className="absolute inset-0 bg-elevated" />}
         {thumbUrl && <img src={thumbUrl} className="thumb absolute inset-0 w-full h-full object-cover" alt="" />}
         <div className="absolute inset-0 bg-linear-to-t from-black/40 to-transparent" />
-        {bulkSelected && <div className="absolute inset-0 bg-accent-blue/10 pointer-events-none" />}
         {(!hideType || !pkg.isDirect || pkg.isLocalOnly || pkg.noLookPresetTag || (minimal && !!depIssue)) && (
           <div className="absolute top-2 left-2 z-2 flex max-w-[calc(100%-2.75rem)] items-center gap-1 overflow-x-auto scrollbar-hide flex-nowrap">
             {!hideType && (
@@ -645,7 +700,7 @@ export function LibraryCard({
               ))}
           </div>
         )}
-        <div className="absolute top-2 right-2 flex items-center gap-1 z-1">
+        <div className={`absolute top-2 flex items-center gap-1 z-1 ${checked ? 'right-8' : 'right-2'}`}>
           {inactive && (
             <span
               className={`${LIB_CARD_CORNER_ICON} text-error ${THUMB_OUTLINE_ICON_SHADOW}`}
@@ -702,7 +757,9 @@ export function LibraryCard({
         <LabelDots labels={labelObjs} />
       </div>
       {!minimal && (
-        <div className="p-3 min-w-0">
+        <div
+          className={`p-3 min-w-0 ${dim ? 'opacity-60 group-hover:opacity-90 transition-opacity duration-200' : ''}`}
+        >
           <div className="flex items-center gap-2">
             <AuthorAvatar author={pkg.creator} userId={pkg.hubUserId} size={30} />
             <div className="min-w-0 flex-1">
@@ -758,6 +815,7 @@ export function LibraryCard({
           </div>
         </div>
       )}
+      {checked && <CheckedChrome />}
     </button>
   )
 }
@@ -768,10 +826,11 @@ export function LibraryTableRow({
   selected,
   onFilterAuthor,
   hideType,
-  bulkSelected = false,
+  bulkActive = false,
   focused = false,
   dimmed = false,
 }) {
+  const checked = selected && bulkActive
   const typeColor = libraryTypeBadgeColor(pkg.type)
   const inactiveStyle = useInactiveStyle(pkg)
   const { isOffloaded, inactive } = inactiveStyle
@@ -786,8 +845,9 @@ export function LibraryTableRow({
   return (
     <div
       onClick={(e) => onClick?.(pkg, e)}
-      className={`flex items-center cursor-pointer transition-colors border-b border-border h-full ${selected || bulkSelected ? 'bg-elevated' : 'hover:bg-elevated/50'} ${focused ? LEAD_RING : ''} ${dim ? 'opacity-60 hover:opacity-90' : ''}`}
+      className={`relative flex items-center cursor-pointer ${SELECT_TRANSITION} border-b border-border h-full outline-none ${rowChrome({ selected, focused, bulkActive })} ${dim ? '*:opacity-60 hover:*:opacity-90' : ''}`}
     >
+      {checked && <RowCheckedBadge />}
       <div className="flex-3 py-2 px-3 flex items-center gap-2.5 min-w-0">
         <div className="w-7 h-7 rounded shrink-0 overflow-hidden relative">
           <div className="absolute inset-0" style={{ background: getGradient(pkg.filename) }} />
@@ -905,11 +965,12 @@ export function ContentTableRow({
   onFilterAuthor,
   onToggleHidden,
   onToggleFavorite,
-  bulkSelected = false,
+  bulkActive = false,
   focused = false,
   /** When true, user-hidden items render at full saturation/opacity (e.g. Hidden visibility filter). Inactive-package dimming follows Settings → dim inactive packages. */
   suppressHiddenDimming = false,
 }) {
+  const checked = selected && bulkActive
   const typeColor = TYPE_COLORS[item.category] || '#6366f1'
   const isHidden = item.hidden
   const isExtracted = !!item.extractedFrom
@@ -926,8 +987,9 @@ export function ContentTableRow({
   return (
     <div
       onClick={(e) => onClick?.(item, e)}
-      className={`flex items-center cursor-pointer transition-colors border-b border-border h-full ${selected || bulkSelected ? 'bg-elevated' : 'hover:bg-elevated/50'} ${focused ? LEAD_RING : ''} ${dimHiddenChrome ? 'opacity-75 hover:opacity-100' : ''}`}
+      className={`relative flex items-center cursor-pointer ${SELECT_TRANSITION} border-b border-border h-full outline-none ${rowChrome({ selected, focused, bulkActive })} ${dimHiddenChrome ? '*:opacity-75 hover:*:opacity-100' : ''}`}
     >
+      {checked && <RowCheckedBadge />}
       <div className="flex-3 py-2 px-3 flex items-center gap-2.5 min-w-0">
         <div
           className={`w-7 h-7 rounded shrink-0 overflow-hidden relative ${dimHiddenChrome ? 'saturate-25 brightness-90' : ''}`}
@@ -1038,14 +1100,16 @@ export function ContentTableRow({
 export function ContentCard({
   item,
   onClick,
+  /** In the current selection — single pick or one of a bulk set (`bulkActive` tells them apart). */
   selected,
   onToggleHidden,
   onToggleFavorite,
   hideType,
-  bulkSelected = false,
+  bulkActive = false,
   focused = false,
   suppressHiddenDimming = false,
 }) {
+  const checked = selected && bulkActive
   const typeColor = TYPE_COLORS[item.category] || '#6366f1'
   const isHidden = item.hidden
   const isExtracted = !!item.extractedFrom
@@ -1067,12 +1131,14 @@ export function ContentCard({
     <div
       data-grid-card
       onClick={(e) => onClick?.(item, e)}
-      className={`w-full bg-surface border rounded-lg overflow-hidden transition-all duration-150 card-glow cursor-pointer shrink-0 group outline-none
-        ${selected || bulkSelected ? 'border-accent-blue/40 bg-elevated' : 'border-border hover:bg-elevated'}
-        ${focused ? LEAD_RING : ''}
-        ${dimHiddenChrome ? 'opacity-75 hover:opacity-100' : ''}`}
+      className={`relative w-full bg-surface border rounded-lg overflow-hidden ${SELECT_TRANSITION} card-glow cursor-pointer shrink-0 group outline-none
+        ${cardChrome({ selected, focused, bulkActive })}`}
     >
-      <div className="relative aspect-square">
+      {/* Dimming rides on the content, never on the card itself — the border and lead ring must
+          keep full strength (see CheckedChrome). */}
+      <div
+        className={`relative aspect-square ${dimHiddenChrome ? 'opacity-75 group-hover:opacity-100 transition-opacity duration-200' : ''}`}
+      >
         <div
           className={`absolute inset-0 transition-[filter] duration-200 ${dimHiddenChrome ? 'saturate-25 brightness-90 group-hover:saturate-100 group-hover:brightness-100' : ''}`}
         >
@@ -1086,7 +1152,6 @@ export function ContentCard({
             <div className="absolute inset-0 bg-base/15 transition-opacity duration-200 group-hover:opacity-0" />
           )}
         </div>
-        {bulkSelected && <div className="absolute inset-0 bg-accent-blue/10 pointer-events-none z-1" />}
         {(!hideType || item.tag || isLocalContent) && (
           <div className="absolute top-2 left-2 z-2 flex max-w-[calc(100%-2.75rem)] items-center gap-1 overflow-x-auto scrollbar-hide flex-nowrap">
             {!hideType && (
@@ -1131,7 +1196,7 @@ export function ContentCard({
             )}
           </div>
         )}
-        <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 z-2">
+        <div className={`absolute top-1.5 flex items-center gap-0.5 z-2 ${checked ? 'right-8' : 'right-1.5'}`}>
           {isDisabledPkg && (
             <div
               title="Package disabled"
@@ -1175,6 +1240,7 @@ export function ContentCard({
         </div>
         <LabelDots labels={labelObjs} inheritedLabels={inheritedLabelObjs} />
       </div>
+      {checked && <CheckedChrome />}
     </div>
   )
 }

@@ -40,6 +40,11 @@
        along with them. */
     --color-text-placeholder: #4e5064;
     --color-accent-blue: #4a91f1;
+    /* Keyboard-lead ring: accent lifted toward white so it separates from the accent border it
+       often sits outside of, without introducing a second hue. Deliberately faint — the lead is a
+       cursor, not a state: enough to follow while arrowing, not enough to be mistaken for checked
+       when Ctrl-uncheck leaves it behind on a card it just cleared. */
+    --color-lead-ring: rgba(169, 203, 248, 0.45);
     --color-accent-pink: #ef5bed;
     --color-accent-purple: #8b5cf6;
     --color-accent-green: #34d399;
@@ -232,14 +237,26 @@ html[data-nav-dismiss]
     animation: card-new-flash 3s linear;
 }
 
-/* Keyboard lead (focus) marker. Must not reach further in than the 1px border: `overflow-hidden`
-   clips children to the padding box, and the full-bleed thumbnail paints over anything inside it —
-   so an outline (or inset ring) that dips deeper is half-swallowed on the three edges the thumbnail
-   touches while the background-less footer shows it whole, reading as a bottom-heavy frame. At
-   -1px the 2px band straddles the border edge, 1px either side, out of the children's reach. */
+/* Keyboard lead, bulk mode only (single-select needs none — lead and selection move together).
+   One language whether or not the card is checked: a pale dashed ring held off the card edge.
+   Dashed says "cursor, not membership"; the gap is what keeps it legible over a checked card's
+   solid accent border, so the two never collapse into a single edge. */
 .card-lead {
-    outline: 2px solid rgba(74, 145, 241, 0.7);
+    outline: 1px dashed var(--color-lead-ring);
+    outline-offset: 2px;
+}
+
+/* Table rows sit flush against each other, so the same ring hugs the row instead of floating. */
+.row-lead {
+    outline: 1px dashed var(--color-lead-ring);
     outline-offset: -1px;
+}
+
+/* Selected (single) or checked (bulk): solid accent edge. `.card-glow:hover` drops border-color to
+   blue/25, which reads as *less* selected than resting — pin it through hover. */
+.card-picked,
+.card-glow.card-picked:hover {
+    border-color: var(--color-accent-blue);
 }
 
 /* Animations */

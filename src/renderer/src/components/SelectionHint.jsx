@@ -93,30 +93,27 @@ export function SelectionHint({ bulkActive }) {
   if (tipDone) return null
 
   return (
-    <span
-      className={cn(
-        'group/hint flex min-w-0 items-center gap-1.5 rounded px-1.5 py-0.5 transition-colors hover:bg-elevated',
-        META_DENSE,
-      )}
-    >
+    <span className={cn('flex min-w-0 items-center gap-2', META_DENSE)}>
       <span aria-hidden="true" className="shrink-0">
         ·
       </span>
-      <span className="min-w-0 truncate">
-        <span className="text-text-secondary">{MOD}+click</span>
-        {' or '}
-        <span className="text-text-secondary">Shift+click</span>
-        {' to select multiple - like File Explorer'}
+      <span className="group/hint flex min-w-0 items-center gap-1 rounded py-0.5 -mx-1.5 px-1.5 transition-colors hover:bg-elevated">
+        <span className="min-w-0 truncate">
+          <span className="text-text-secondary">{MOD}+click</span>
+          {' or '}
+          <span className="text-text-secondary">Shift+click</span>
+          {' to select multiple - like File Explorer'}
+        </span>
+        <button
+          type="button"
+          title="Don't show this tip again"
+          aria-label="Don't show this tip again"
+          onClick={dismiss}
+          className="shrink-0 rounded p-0.5 text-text-aside transition-colors hover:text-text-primary group-hover/hint:text-text-secondary cursor-pointer"
+        >
+          <X size={12} />
+        </button>
       </span>
-      <button
-        type="button"
-        title="Don't show this tip again"
-        aria-label="Don't show this tip again"
-        onClick={dismiss}
-        className="shrink-0 rounded p-0.5 text-text-aside transition-colors hover:text-text-primary group-hover/hint:text-text-secondary cursor-pointer"
-      >
-        <X size={12} />
-      </button>
     </span>
   )
 }
