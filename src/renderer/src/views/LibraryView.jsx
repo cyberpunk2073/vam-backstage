@@ -89,7 +89,7 @@ import { EmptyState } from '@/components/EmptyState'
 import { GroupHeading } from '@/components/GroupHeading'
 import { ASIDE_COMPACT, BODY, CLARIFY_DENSE, META_DENSE, MONO_DENSE, SECTION_LABEL } from '@/lib/typography'
 import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
-import { useKeyboardNav } from '@/hooks/useKeyboardNav'
+import { useSelectionKeyboard } from '@/hooks/useSelectionKeyboard'
 import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
 import { useLibraryUpdateState } from '@/hooks/useLibraryUpdateState'
 import { LICENSE_FILTER_OPTIONS } from '@/lib/licenses'
@@ -130,6 +130,8 @@ import {
 import { useViewStore } from '@/stores/useViewStore'
 
 const SORT_OPTIONS = ['Recently installed', 'Type', 'Name', 'Size', 'Content', 'Deps', 'Morphs']
+
+const getPackageId = (p) => p.filename
 
 function packageHubTags(p) {
   return parseCommaTags(p.hubTags)
@@ -262,7 +264,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     refreshUpdateCheck,
     selectPackage,
     selection,
-    selectionAnchor,
+    selectionLead,
     toggleSelected,
     selectRange,
     selectAll,
@@ -713,8 +715,8 @@ export default function LibraryView({ onNavigate, navContext }) {
 
   const lastSelectedIdxRef = useRef(0)
   const prevScrollResetKeyRef = useRef(scrollResetKey)
-  // A lone pick is its own anchor, so this is the focused row in either mode.
-  const focusFilename = selectionAnchor
+  // Lead is keyboard/mouse focus (may sit on an unselected item after Ctrl-nav).
+  const focusFilename = selectionLead
   const selectedIdx = focusFilename ? filtered.findIndex((p) => p.filename === focusFilename) : -1
   if (selectedIdx >= 0) lastSelectedIdxRef.current = selectedIdx
 
@@ -756,7 +758,7 @@ export default function LibraryView({ onNavigate, navContext }) {
     (pkg, e) => {
       const mod = e.metaKey || e.ctrlKey
       if (e.shiftKey) {
-        selectRange(pkg.filename, orderedLibraryFilenames, undefined, { additive: mod })
+        selectRange(pkg.filename, orderedLibraryFilenames, { additive: mod })
         return
       }
       if (mod) {
@@ -866,42 +868,14 @@ export default function LibraryView({ onNavigate, navContext }) {
     [runSelectPackage],
   )
 
-  useKeyboardNav({
+  useSelectionKeyboard({
+    store: useLibraryStore,
     items: filtered,
-    selectedId: focusFilename,
-    onSelect: handleKeyboardSelectLibrary,
-    onClose: () => {
-      if (bulkActive) collapseSelection()
-    },
-    getId: (p) => p.filename,
+    orderedIds: orderedLibraryFilenames,
+    getId: getPackageId,
+    onSingleSelect: handleKeyboardSelectLibrary,
     columnCount: viewMode !== 'table' ? gridLayout.cols : 1,
   })
-
-  useEffect(() => {
-    function onKeyDown(e) {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return
-      if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
-        e.preventDefault()
-        selectAll(orderedLibraryFilenames)
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [orderedLibraryFilenames, selectAll])
-
-  useEffect(() => {
-    if (!bulkActive) return
-    function onSpace(e) {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return
-      if (e.key !== ' ' && e.code !== 'Space') return
-      e.preventDefault()
-      const fn = useLibraryStore.getState().selectionAnchor
-      if (fn == null) return
-      useLibraryStore.getState().toggleSelected(fn)
-    }
-    window.addEventListener('keydown', onSpace, true)
-    return () => window.removeEventListener('keydown', onSpace, true)
-  }, [bulkActive])
 
   return (
     <div className="h-full flex">
@@ -1197,6 +1171,7 @@ export default function LibraryView({ onNavigate, navContext }) {
                       onClick={handleLibraryClick}
                       selected={!bulkActive && selectedSet.has(pkg.filename)}
                       bulkSelected={bulkActive && selectedSet.has(pkg.filename)}
+                      focused={focusFilename === pkg.filename}
                       onFilterAuthor={handleFilterAuthor}
                       mode={compactCards ? 'minimal' : 'medium'}
                       hideType={selectedTypes.length === 1}
@@ -1240,6 +1215,7 @@ export default function LibraryView({ onNavigate, navContext }) {
                         onClick={handleLibraryClick}
                         selected={!bulkActive && selectedSet.has(pkg.filename)}
                         bulkSelected={bulkActive && selectedSet.has(pkg.filename)}
+                        focused={focusFilename === pkg.filename}
                         onFilterAuthor={handleFilterAuthor}
                         hideType={selectedTypes.length === 1}
                         dimmed={dimUpdateUnavailable}

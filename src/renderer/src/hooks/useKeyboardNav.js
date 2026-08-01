@@ -11,6 +11,14 @@ function blurGridCardFocus() {
   if (active instanceof Element && active.closest('[data-grid-card]')) active.blur()
 }
 
+/** Space activates whatever control has focus, so it stays hands-off unless focus is on the
+ *  grid itself. Cards are buttons too, hence the `data-grid-card` exemption. */
+function spaceWouldActivate(el) {
+  if (!(el instanceof Element)) return false
+  if (el.closest('[data-grid-card]')) return false
+  return !!el.closest('button, a, summary, [role="button"], [role="menuitem"], [role="checkbox"]')
+}
+
 /** @returns {number} next flat index, or -1 when unchanged */
 export function gridNavIndex(items, idx, cols, direction) {
   if (!items.length) return -1
@@ -36,17 +44,59 @@ export function gridNavIndex(items, idx, cols, direction) {
   return next
 }
 
+/** Flat index a navigation key targets, or -1 when the key isn't one (or can't move). */
+function navTargetIndex(key, items, idx, cols, isGrid) {
+  switch (key) {
+    case 'ArrowDown':
+      return isGrid ? gridNavIndex(items, idx, cols, 'down') : Math.min(items.length - 1, idx + 1)
+    case 'ArrowUp':
+      return isGrid ? gridNavIndex(items, idx, cols, 'up') : Math.max(0, idx < 0 ? items.length - 1 : idx - 1)
+    case 'ArrowRight':
+      return isGrid ? gridNavIndex(items, idx, cols, 'right') : Math.min(items.length - 1, idx + 1)
+    case 'ArrowLeft':
+      return isGrid ? gridNavIndex(items, idx, cols, 'left') : Math.max(0, idx < 0 ? items.length - 1 : idx - 1)
+    case 'Home':
+      return 0
+    case 'End':
+      return items.length - 1
+    default:
+      return -1
+  }
+}
+
 /**
- * Keyboard navigation for lists and virtualised grids.
+ * Keyboard navigation for lists and virtualised grids (Explorer-style).
+ *
+ * - Bare Arrow/Home/End → `onMoveSelect` (replace selection)
+ * - Ctrl/Cmd+Arrow/Home/End → `onMoveLead` (focus only)
+ * - Shift+Arrow/Home/End → `onExtend` (range from anchor)
+ * - Space → `onToggleLead`
+ * - Ctrl/Cmd+A → `onSelectAll`
+ * - Escape → `onClose`
  *
  * @param {Array} items - the filtered/sorted list
- * @param {*} selectedId - currently selected item's id (or null)
- * @param {function} onSelect - (item) => void
- * @param {function} onClose - () => void  (Escape handler, optional)
- * @param {function} getId - (item) => id  (defaults to item.filename or item.id)
+ * @param {*} selectedId - current lead id (or null)
+ * @param {function} [onMoveSelect] - (item) => void
+ * @param {function} [onMoveLead] - (item) => void
+ * @param {function} [onExtend] - (item) => void
+ * @param {function} [onToggleLead] - () => void
+ * @param {function} [onSelectAll] - () => void
+ * @param {function} [onClose] - () => void
+ * @param {function} [getId] - (item) => id
  * @param {number} [columnCount=1] - grid columns; 1 keeps linear list navigation
  */
-export function useKeyboardNav({ items, selectedId, onSelect, onClose, getId, columnCount = 1 }) {
+export function useKeyboardNav({
+  items,
+  selectedId,
+  onMoveSelect,
+  onMoveLead,
+  onExtend,
+  onToggleLead,
+  onSelectAll,
+  onClose,
+  getId,
+  columnCount = 1,
+}) {
   const getKey = useCallback(
     (item) => {
       if (getId) return getId(item)
@@ -70,40 +120,34 @@ export function useKeyboardNav({ items, selectedId, onSelect, onClose, getId, co
 
       if (!items.length) return
 
-      const idx = selectedId != null ? items.findIndex((i) => getKey(i) === selectedId) : -1
-
-      if (e.key === 'ArrowDown' || e.key === 'j') {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'a' && onSelectAll) {
         e.preventDefault()
-        blurGridCardFocus()
-        const next = isGrid ? gridNavIndex(items, idx, cols, 'down') : Math.min(items.length - 1, idx + 1)
-        if (next >= 0) onSelect(items[next])
-      } else if (e.key === 'ArrowUp' || e.key === 'k') {
-        e.preventDefault()
-        blurGridCardFocus()
-        const next = isGrid ? gridNavIndex(items, idx, cols, 'up') : Math.max(0, idx < 0 ? items.length - 1 : idx - 1)
-        if (next >= 0) onSelect(items[next])
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault()
-        blurGridCardFocus()
-        const next = isGrid ? gridNavIndex(items, idx, cols, 'right') : Math.min(items.length - 1, idx + 1)
-        if (next >= 0) onSelect(items[next])
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault()
-        blurGridCardFocus()
-        const next = isGrid ? gridNavIndex(items, idx, cols, 'left') : Math.max(0, idx < 0 ? items.length - 1 : idx - 1)
-        if (next >= 0) onSelect(items[next])
-      } else if (e.key === 'Home') {
-        e.preventDefault()
-        blurGridCardFocus()
-        onSelect(items[0])
-      } else if (e.key === 'End') {
-        e.preventDefault()
-        blurGridCardFocus()
-        onSelect(items[items.length - 1])
+        onSelectAll()
+        return
       }
+
+      const bare = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
+      if (e.key === ' ' && onToggleLead && bare && !spaceWouldActivate(e.target)) {
+        e.preventDefault()
+        blurGridCardFocus()
+        onToggleLead()
+        return
+      }
+
+      const idx = selectedId != null ? items.findIndex((i) => getKey(i) === selectedId) : -1
+      const next = navTargetIndex(e.key, items, idx, cols, isGrid)
+      const item = next >= 0 ? items[next] : null
+      if (!item) return
+
+      e.preventDefault()
+      blurGridCardFocus()
+
+      if (e.shiftKey && onExtend) onExtend(item)
+      else if ((e.metaKey || e.ctrlKey) && onMoveLead) onMoveLead(item)
+      else if (onMoveSelect) onMoveSelect(item)
     }
 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [items, selectedId, onSelect, onClose, getKey, cols, isGrid])
+  }, [items, selectedId, onMoveSelect, onMoveLead, onExtend, onToggleLead, onSelectAll, onClose, getKey, cols, isGrid])
 }

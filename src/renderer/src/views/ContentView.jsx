@@ -59,7 +59,7 @@ import { SectionLabel } from '@/components/SectionLabel'
 import { GroupHeading } from '@/components/GroupHeading'
 import { SECTION_LABEL, MONO_DENSE, BODY, CLARIFY_DENSE, META_DENSE } from '@/lib/typography'
 import { ThumbnailSizeSlider } from '@/components/ThumbnailSizeSlider'
-import { useKeyboardNav } from '@/hooks/useKeyboardNav'
+import { useSelectionKeyboard } from '@/hooks/useSelectionKeyboard'
 import { usePersistedPanelWidth } from '@/hooks/usePersistedPanelWidth'
 import { openLightbox } from '@/components/ThumbnailLightbox'
 import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
@@ -79,6 +79,8 @@ import { packageNeedsDisableConfirmation } from '@/lib/package-disable-confirm'
 import { StorageStateChip } from '@/components/StorageStateChip'
 
 const SORT_OPTIONS = ['Recently installed', 'Name A-Z', 'Package', 'Type']
+
+const getContentId = (c) => c.id
 
 /** The package whose install / type / storage state governs a content row.
  *  Extracted presets are loose (`__local__`) files owned by a real `.var`, so they
@@ -231,7 +233,7 @@ export default function ContentView({ onNavigate, navContext }) {
     setCardWidth,
     selectItem,
     selection,
-    selectionAnchor,
+    selectionLead,
     toggleSelected,
     selectRange,
     selectAll,
@@ -740,8 +742,8 @@ export default function ContentView({ onNavigate, navContext }) {
 
   const lastSelectedIdxRef = useRef(0)
   const prevScrollResetKeyRef = useRef(scrollResetKey)
-  // A lone pick is its own anchor, so this is the focused row in either mode.
-  const focusId = selectionAnchor
+  // Lead is keyboard/mouse focus (may sit on an unselected item after Ctrl-nav).
+  const focusId = selectionLead
   const selectedIdx = focusId != null ? filtered.findIndex((c) => c.id === focusId) : -1
   if (selectedIdx >= 0) lastSelectedIdxRef.current = selectedIdx
 
@@ -784,7 +786,7 @@ export default function ContentView({ onNavigate, navContext }) {
     (item, e) => {
       const mod = e.metaKey || e.ctrlKey
       if (e.shiftKey) {
-        selectRange(item.id, orderedContentIds, undefined, { additive: mod })
+        selectRange(item.id, orderedContentIds, { additive: mod })
         return
       }
       if (mod) {
@@ -812,42 +814,14 @@ export default function ContentView({ onNavigate, navContext }) {
     [runSelectItem],
   )
 
-  useKeyboardNav({
+  useSelectionKeyboard({
+    store: useContentStore,
     items: filtered,
-    selectedId: focusId,
-    onSelect: handleKeyboardSelect,
-    onClose: () => {
-      if (bulkActive) collapseSelection()
-    },
-    getId: (c) => c.id,
+    orderedIds: orderedContentIds,
+    getId: getContentId,
+    onSingleSelect: handleKeyboardSelect,
     columnCount: viewMode === 'grid' ? gridLayout.cols : 1,
   })
-
-  useEffect(() => {
-    function onKeyDown(e) {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return
-      if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
-        e.preventDefault()
-        selectAll(orderedContentIds)
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [orderedContentIds, selectAll])
-
-  useEffect(() => {
-    if (!bulkActive) return
-    function onSpace(e) {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return
-      if (e.key !== ' ' && e.code !== 'Space') return
-      e.preventDefault()
-      const id = useContentStore.getState().selectionAnchor
-      if (id == null) return
-      useContentStore.getState().toggleSelected(id)
-    }
-    window.addEventListener('keydown', onSpace, true)
-    return () => window.removeEventListener('keydown', onSpace, true)
-  }, [bulkActive])
 
   const selectedSet = useMemo(() => new Set(selection), [selection])
 
@@ -1141,6 +1115,7 @@ export default function ContentView({ onNavigate, navContext }) {
                   onClick={handleContentClick}
                   selected={!bulkActive && selectedSet.has(item.id)}
                   bulkSelected={bulkActive && selectedSet.has(item.id)}
+                  focused={focusId === item.id}
                   onToggleHidden={handleToggleHidden}
                   onToggleFavorite={handleToggleFavorite}
                   hideType={selectedTypes.length === 1}
@@ -1177,6 +1152,7 @@ export default function ContentView({ onNavigate, navContext }) {
                       item={item}
                       selected={!bulkActive && selectedSet.has(item.id)}
                       bulkSelected={bulkActive && selectedSet.has(item.id)}
+                      focused={focusId === item.id}
                       hideType={selectedTypes.length === 1}
                       onClick={handleContentClick}
                       onFilterAuthor={handleFilterAuthor}

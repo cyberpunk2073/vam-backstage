@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { toast } from '@/components/Toast'
 import { typeFilterSlice } from './typeFilterSlice'
-import { selectionWriter } from './selection'
+import { selectionMutators } from './selection'
 import { useLibraryStore } from './useLibraryStore'
 import { persistViewState, oneOf, asArray, asPolarityList, asString, asCardWidth, asObject } from './persistViewState'
 
@@ -30,7 +30,13 @@ function linkItem(c, pkgMap = useLibraryStore.getState().packageByFilename) {
 }
 
 /** An empty selection and the detail-panel caches that hang off it, cleared together. */
-const CLEARED_SELECTION = { selectedItem: null, selectedPackage: null, selection: [], selectionAnchor: null }
+const CLEARED_SELECTION = {
+  selectedItem: null,
+  selectedPackage: null,
+  selection: [],
+  selectionAnchor: null,
+  selectionLead: null,
+}
 
 /**
  * Resolve a single content selection: re-seed `selectedItem` from the live row (the id-only
@@ -80,6 +86,7 @@ export const useContentStore = create(
       /** Ordered selection of content item ids — see `stores/selection.js`. */
       selection: [],
       selectionAnchor: null,
+      selectionLead: null,
 
       ...FILTER_DEFAULTS,
       ...typeFilterSlice(set, get),
@@ -181,7 +188,12 @@ export const useContentStore = create(
         set(patch)
       },
 
-      setSelection: selectionWriter(set, (id) => _loadItemDetail(set, get, id)),
+      ...selectionMutators(set, get, (id) => _loadItemDetail(set, get, id), {
+        isLive: ({ contents }) => {
+          const live = new Set(contents.map((c) => c.id))
+          return (id) => live.has(id)
+        },
+      }),
 
       /** Single-pick entry point. Seeds the cache from the row it was handed so the panel
        *  switches on the same frame — and so items absent from `contents` can still be shown. */
@@ -192,53 +204,6 @@ export const useContentStore = create(
       },
 
       clearSelection: () => set({ ...CLEARED_SELECTION }),
-
-      /** Collapse a multi-selection to the anchor (or first still-present pick). Escape / Deselect. */
-      collapseSelection: () => {
-        const { selection, selectionAnchor, contents } = get()
-        const live = new Set(contents.map((c) => c.id))
-        const target = live.has(selectionAnchor) ? selectionAnchor : selection.find((id) => live.has(id))
-        return get().setSelection(target)
-      },
-
-      toggleSelected: (id) => {
-        const base = get().selection
-        const had = base.includes(id)
-        // Never empty: ctrl-deselecting the only pick is a no-op.
-        if (had && base.length <= 1) return Promise.resolve()
-        return get().setSelection(had ? base.filter((x) => x !== id) : [...base, id], id)
-      },
-
-      /**
-       * Shift-range select. Plain shift replaces the selection with the range (Explorer);
-       * additive (Ctrl/Cmd+Shift) unions. Anchor is unchanged so overshooting is correctable.
-       */
-      selectRange: (id, orderedIds, anchorId, { additive = false } = {}) => {
-        const { selection, selectionAnchor } = get()
-        const anchor = anchorId ?? selectionAnchor ?? id
-        const i1 = orderedIds.indexOf(anchor)
-        const i2 = orderedIds.indexOf(id)
-        let next
-        if (i1 < 0 || i2 < 0) {
-          next = selection.includes(id) ? selection.filter((x) => x !== id) : [...selection, id]
-        } else {
-          const lo = Math.min(i1, i2)
-          const hi = Math.max(i1, i2)
-          const range = orderedIds.slice(lo, hi + 1)
-          if (additive) {
-            const onList = new Set(orderedIds)
-            const offList = selection.filter((x) => !onList.has(x))
-            const selected = new Set([...selection, ...range])
-            next = [...offList, ...orderedIds.filter((x) => selected.has(x))]
-          } else {
-            next = range
-          }
-        }
-        // Keep the existing anchor when set so repeated Shift-clicks can shrink the range.
-        return get().setSelection(next, selectionAnchor ?? anchor)
-      },
-
-      selectAll: (orderedIds) => get().setSelection([...orderedIds], orderedIds[orderedIds.length - 1]),
 
       refreshSelection: async () => {
         const { selectedItem } = get()

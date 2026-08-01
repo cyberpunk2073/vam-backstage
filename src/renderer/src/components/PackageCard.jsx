@@ -131,6 +131,9 @@ const THUMB_ACTION_BTN_SHADOW = 'shadow-[0_1px_2px_rgba(0,0,0,0.55),0_2px_6px_rg
 /** Lift + inset white edge for borderless (gradient) action buttons that would otherwise blend into bright thumbnails. */
 const THUMB_ACTION_BTN_POP = `${THUMB_ACTION_BTN_SHADOW} ring-1 ring-inset ring-white/15`
 
+/** Keyboard lead (focus) marker — see `.card-lead` in main.css. */
+const LEAD_RING = 'card-lead'
+
 /**
  * Hub thumbnails that have painted at least once this session, each held by a detached
  * `Image` so the renderer keeps the decoded bitmap rather than re-reading the CDN cache.
@@ -556,6 +559,7 @@ export function LibraryCard({
   mode = 'medium',
   hideType,
   bulkSelected = false,
+  focused = false,
   dimmed = false,
 }) {
   const minimal = mode === 'minimal'
@@ -578,6 +582,7 @@ export function LibraryCard({
       onClick={(e) => onClick?.(pkg, e)}
       className={`@container w-full bg-surface border rounded-lg overflow-hidden text-left transition-all duration-150 card-glow cursor-pointer shrink-0 group outline-none
         ${selected || bulkSelected ? 'border-accent-blue/40 bg-elevated' : 'border-border hover:bg-elevated'}
+        ${focused ? LEAD_RING : ''}
         ${dim ? 'opacity-60 hover:opacity-90' : ''}`}
     >
       <div
@@ -764,6 +769,7 @@ export function LibraryTableRow({
   onFilterAuthor,
   hideType,
   bulkSelected = false,
+  focused = false,
   dimmed = false,
 }) {
   const typeColor = libraryTypeBadgeColor(pkg.type)
@@ -780,7 +786,7 @@ export function LibraryTableRow({
   return (
     <div
       onClick={(e) => onClick?.(pkg, e)}
-      className={`flex items-center cursor-pointer transition-colors border-b border-border h-full ${selected || bulkSelected ? 'bg-elevated' : 'hover:bg-elevated/50'} ${dim ? 'opacity-60 hover:opacity-90' : ''}`}
+      className={`flex items-center cursor-pointer transition-colors border-b border-border h-full ${selected || bulkSelected ? 'bg-elevated' : 'hover:bg-elevated/50'} ${focused ? LEAD_RING : ''} ${dim ? 'opacity-60 hover:opacity-90' : ''}`}
     >
       <div className="flex-3 py-2 px-3 flex items-center gap-2.5 min-w-0">
         <div className="w-7 h-7 rounded shrink-0 overflow-hidden relative">
@@ -900,6 +906,7 @@ export function ContentTableRow({
   onToggleHidden,
   onToggleFavorite,
   bulkSelected = false,
+  focused = false,
   /** When true, user-hidden items render at full saturation/opacity (e.g. Hidden visibility filter). Inactive-package dimming follows Settings → dim inactive packages. */
   suppressHiddenDimming = false,
 }) {
@@ -919,7 +926,7 @@ export function ContentTableRow({
   return (
     <div
       onClick={(e) => onClick?.(item, e)}
-      className={`flex items-center cursor-pointer transition-colors border-b border-border h-full ${selected || bulkSelected ? 'bg-elevated' : 'hover:bg-elevated/50'} ${dimHiddenChrome ? 'opacity-75 hover:opacity-100' : ''}`}
+      className={`flex items-center cursor-pointer transition-colors border-b border-border h-full ${selected || bulkSelected ? 'bg-elevated' : 'hover:bg-elevated/50'} ${focused ? LEAD_RING : ''} ${dimHiddenChrome ? 'opacity-75 hover:opacity-100' : ''}`}
     >
       <div className="flex-3 py-2 px-3 flex items-center gap-2.5 min-w-0">
         <div
@@ -1036,6 +1043,7 @@ export function ContentCard({
   onToggleFavorite,
   hideType,
   bulkSelected = false,
+  focused = false,
   suppressHiddenDimming = false,
 }) {
   const typeColor = TYPE_COLORS[item.category] || '#6366f1'
@@ -1061,6 +1069,7 @@ export function ContentCard({
       onClick={(e) => onClick?.(item, e)}
       className={`w-full bg-surface border rounded-lg overflow-hidden transition-all duration-150 card-glow cursor-pointer shrink-0 group outline-none
         ${selected || bulkSelected ? 'border-accent-blue/40 bg-elevated' : 'border-border hover:bg-elevated'}
+        ${focused ? LEAD_RING : ''}
         ${dimHiddenChrome ? 'opacity-75 hover:opacity-100' : ''}`}
     >
       <div className="relative aspect-square">

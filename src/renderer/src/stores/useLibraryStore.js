@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { toast } from '@/components/Toast'
 import { typeFilterSlice } from './typeFilterSlice'
-import { selectionWriter } from './selection'
+import { selectionMutators } from './selection'
 import { useContentStore } from './useContentStore'
 import { persistViewState, oneOf, asArray, asPolarityList, asString, asBool, asCardWidth } from './persistViewState'
 import { applyUpdateEnrichment, applyDepEnrichment } from '@/lib/hub-availability'
@@ -177,6 +177,7 @@ export const useLibraryStore = create(
       /** Ordered selection of package filenames — see `stores/selection.js`. */
       selection: [],
       selectionAnchor: null,
+      selectionLead: null,
 
       ...FILTER_DEFAULTS,
       ...typeFilterSlice(set, get),
@@ -411,58 +412,17 @@ export const useLibraryStore = create(
       /** Toolbar re-check button: same flow, but bypasses the CDN index cache. */
       refreshUpdateCheck: () => get().checkForUpdates({ forceRefresh: true }),
 
-      setSelection: selectionWriter(set, (filename) => _loadDetail(set, get, filename)),
+      ...selectionMutators(set, get, (filename) => _loadDetail(set, get, filename), {
+        isLive:
+          ({ packageByFilename }) =>
+          (filename) =>
+            packageByFilename.has(filename),
+      }),
 
       /** Single-pick entry point, mirroring `useContentStore.selectItem`. */
       selectPackage: (filename) => get().setSelection(filename),
 
-      clearSelection: () => set({ selectedDetail: null, selection: [], selectionAnchor: null }),
-
-      /** Collapse a multi-selection to the anchor (or first pick). Used by Escape / Deselect. */
-      collapseSelection: () => {
-        const { selection, selectionAnchor } = get()
-        return get().setSelection(selectionAnchor ?? selection[0])
-      },
-
-      toggleSelected: (filename) => {
-        const base = get().selection
-        const had = base.includes(filename)
-        // Never empty: ctrl-deselecting the only pick is a no-op.
-        if (had && base.length <= 1) return Promise.resolve()
-        return get().setSelection(had ? base.filter((x) => x !== filename) : [...base, filename], filename)
-      },
-
-      /**
-       * Shift-range select. Plain shift replaces the selection with the range (Explorer);
-       * additive (Ctrl/Cmd+Shift) unions. Anchor is unchanged so overshooting is correctable.
-       */
-      selectRange: (filename, orderedFilenames, anchorFilename, { additive = false } = {}) => {
-        const { selection, selectionAnchor } = get()
-        const anchor = anchorFilename ?? selectionAnchor ?? filename
-        const i1 = orderedFilenames.indexOf(anchor)
-        const i2 = orderedFilenames.indexOf(filename)
-        let next
-        if (i1 < 0 || i2 < 0) {
-          next = selection.includes(filename) ? selection.filter((x) => x !== filename) : [...selection, filename]
-        } else {
-          const lo = Math.min(i1, i2)
-          const hi = Math.max(i1, i2)
-          const range = orderedFilenames.slice(lo, hi + 1)
-          if (additive) {
-            const onList = new Set(orderedFilenames)
-            const offList = selection.filter((x) => !onList.has(x))
-            const selected = new Set([...selection, ...range])
-            next = [...offList, ...orderedFilenames.filter((x) => selected.has(x))]
-          } else {
-            next = range
-          }
-        }
-        // Keep the existing anchor when set so repeated Shift-clicks can shrink the range.
-        return get().setSelection(next, selectionAnchor ?? anchor)
-      },
-
-      selectAll: (orderedFilenames) =>
-        get().setSelection([...orderedFilenames], orderedFilenames[orderedFilenames.length - 1]),
+      clearSelection: () => set({ selectedDetail: null, selection: [], selectionAnchor: null, selectionLead: null }),
 
       refreshDetail: async () => {
         const { selectedDetail } = get()

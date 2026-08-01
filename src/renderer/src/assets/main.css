@@ -232,6 +232,16 @@ html[data-nav-dismiss]
     animation: card-new-flash 3s linear;
 }
 
+/* Keyboard lead (focus) marker. Must not reach further in than the 1px border: `overflow-hidden`
+   clips children to the padding box, and the full-bleed thumbnail paints over anything inside it —
+   so an outline (or inset ring) that dips deeper is half-swallowed on the three edges the thumbnail
+   touches while the background-less footer shows it whole, reading as a bottom-heavy frame. At
+   -1px the 2px band straddles the border edge, 1px either side, out of the children's reach. */
+.card-lead {
+    outline: 2px solid rgba(74, 145, 241, 0.7);
+    outline-offset: -1px;
+}
+
 /* Animations */
 @keyframes slideInRight {
     from {
