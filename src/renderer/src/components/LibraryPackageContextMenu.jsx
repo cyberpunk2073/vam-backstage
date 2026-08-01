@@ -129,7 +129,7 @@ async function runSetTypeOverride(filenames, typeOverride) {
 function TypeOverrideMenuItems({ filenames, typeOverride, autoBucketLabel, bulk }) {
   return (
     <>
-      <ContextMenuLabel>{bulk ? `Type (${filenames.length})` : 'Set type'}</ContextMenuLabel>
+      <ContextMenuLabel>Set type</ContextMenuLabel>
       {bulk && (
         <>
           <ContextMenuSeparator />
@@ -476,116 +476,136 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, childre
         <ContextMenuTrigger className="contents">{children}</ContextMenuTrigger>
         <ContextMenuContent className="min-w-52" onCloseAutoFocus={(e) => e.preventDefault()}>
           {showBulk ? (
-            bulkAllArchived ? (
-              <>
-                <ContextMenuItem onSelect={() => void runLibraryBulkInstallFromArchive(bulkPackages)}>
-                  <Download size={12} className="shrink-0 text-accent-blue" />
-                  Install from archive ({bulkSelectedFilenames.length})
-                </ContextMenuItem>
-                <ContextMenuSub>
-                  <ContextMenuSubTrigger>
-                    <Tag size={12} className="shrink-0" />
-                    Labels ({bulkSelectedFilenames.length})
-                  </ContextMenuSubTrigger>
-                  <ContextMenuSubContent>
-                    <LabelsApplyMenuItems labels={labels} stateById={labelStateMap} onToggle={handleLabelToggle} />
-                  </ContextMenuSubContent>
-                </ContextMenuSub>
-                <ContextMenuSeparator />
-                <ContextMenuItem
-                  variant="destructive"
-                  onSelect={() => void runLibraryBulkRemoveFromArchive(bulkPackages)}
-                >
-                  <Trash2 size={12} className="shrink-0" />
-                  Remove from archive ({bulkSelectedFilenames.length})
-                </ContextMenuItem>
-              </>
-            ) : (
-              <>
-                <ContextMenuSub>
-                  <ContextMenuSubTrigger>
-                    <Tag size={12} className="shrink-0" />
-                    Labels ({bulkSelectedFilenames.length})
-                  </ContextMenuSubTrigger>
-                  <ContextMenuSubContent>
-                    <LabelsApplyMenuItems labels={labels} stateById={labelStateMap} onToggle={handleLabelToggle} />
-                  </ContextMenuSubContent>
-                </ContextMenuSub>
-                <ContextMenuSeparator />
-                <ContextMenuItem onSelect={() => void runLibraryBulkToggleEnabled(bulkPackages)}>
-                  <Power
-                    size={12}
-                    className={
-                      bulkEnableUi.mixed
-                        ? 'shrink-0 text-text-aside'
-                        : bulkEnableUi.allDisabled
-                          ? 'shrink-0 text-error'
-                          : 'shrink-0 text-text-secondary'
-                    }
-                  />
-                  {bulkEnableUi.label} ({bulkSelectedFilenames.length})
-                </ContextMenuItem>
-                <ContextMenuItem variant="destructive" onSelect={() => void runLibraryBulkRemove(bulkPackages)}>
-                  <Trash2 size={12} className="shrink-0" />
-                  Remove ({bulkSelectedFilenames.length})
-                </ContextMenuItem>
-                {bulkDepCount > 0 && (
-                  <ContextMenuItem onSelect={() => void runLibraryBulkPromote(bulkPackages)}>
-                    <Plus size={12} className="shrink-0 text-accent-blue" />
-                    Promote ({bulkDepCount})
+            <>
+              <ContextMenuLabel>
+                {bulkSelectedFilenames.length} package{bulkSelectedFilenames.length === 1 ? '' : 's'} selected
+              </ContextMenuLabel>
+              <ContextMenuSeparator />
+              {bulkAllArchived ? (
+                <>
+                  <ContextMenuItem onSelect={() => void runLibraryBulkInstallFromArchive(bulkPackages)}>
+                    <Download size={12} className="shrink-0 text-accent-blue" />
+                    Install from archive
                   </ContextMenuItem>
-                )}
-                <ContextMenuSeparator />
-                <ContextMenuItem
-                  onSelect={() =>
-                    void runLibraryBulkExtract({
-                      kind: 'appearance',
-                      sources: SCENE_SOURCE_TYPES,
-                      sourceNoun: 'scenes',
-                      actionLabel: 'Extract appearance',
-                    })
-                  }
-                >
-                  <Download size={12} className="shrink-0 text-accent-blue" />
-                  Extract appearance presets from scenes ({bulkSelectedFilenames.length})
-                </ContextMenuItem>
-                <ContextMenuItem
-                  onSelect={() =>
-                    void runLibraryBulkExtract({
-                      kind: 'outfit',
-                      sources: SCENE_SOURCE_TYPES,
-                      sourceNoun: 'scenes',
-                      actionLabel: 'Extract outfit',
-                    })
-                  }
-                >
-                  <Download size={12} className="shrink-0 text-accent-blue" />
-                  Extract outfit presets from scenes ({bulkSelectedFilenames.length})
-                </ContextMenuItem>
-                <ContextMenuItem
-                  onSelect={() =>
-                    void runLibraryBulkExtract({
-                      kind: 'appearance',
-                      sources: LOOK_SOURCE_TYPES,
-                      sourceNoun: 'legacy looks',
-                      actionLabel: 'Convert to appearance',
-                    })
-                  }
-                >
-                  <Download size={12} className="shrink-0 text-accent-blue" />
-                  Convert legacy looks to appearance presets ({bulkSelectedFilenames.length})
-                </ContextMenuItem>
-                {hasArchiveDirs && bulkNonArchivedFilenames.length > 0 && (
-                  <>
-                    <ContextMenuSeparator />
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger>
+                      <Tag size={12} className="shrink-0" />
+                      Labels
+                    </ContextMenuSubTrigger>
+                    <ContextMenuSubContent>
+                      <LabelsApplyMenuItems labels={labels} stateById={labelStateMap} onToggle={handleLabelToggle} />
+                    </ContextMenuSubContent>
+                  </ContextMenuSub>
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger>
+                      <Shapes size={12} className="shrink-0" />
+                      Type
+                    </ContextMenuSubTrigger>
+                    <ContextMenuSubContent className="min-w-40">
+                      <TypeOverrideMenuItems filenames={bulkSelectedFilenames} bulk />
+                    </ContextMenuSubContent>
+                  </ContextMenuSub>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    variant="destructive"
+                    onSelect={() => void runLibraryBulkRemoveFromArchive(bulkPackages)}
+                  >
+                    <Trash2 size={12} className="shrink-0" />
+                    Remove from archive
+                  </ContextMenuItem>
+                </>
+              ) : (
+                <>
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger>
+                      <Tag size={12} className="shrink-0" />
+                      Labels
+                    </ContextMenuSubTrigger>
+                    <ContextMenuSubContent>
+                      <LabelsApplyMenuItems labels={labels} stateById={labelStateMap} onToggle={handleLabelToggle} />
+                    </ContextMenuSubContent>
+                  </ContextMenuSub>
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger>
+                      <Shapes size={12} className="shrink-0" />
+                      Type
+                    </ContextMenuSubTrigger>
+                    <ContextMenuSubContent className="min-w-40">
+                      <TypeOverrideMenuItems filenames={bulkSelectedFilenames} bulk />
+                    </ContextMenuSubContent>
+                  </ContextMenuSub>
+                  <ContextMenuItem
+                    onSelect={() =>
+                      void runLibraryBulkExtract({
+                        kind: 'appearance',
+                        sources: SCENE_SOURCE_TYPES,
+                        sourceNoun: 'scenes',
+                        actionLabel: 'Extract appearance',
+                      })
+                    }
+                  >
+                    <Download size={12} className="shrink-0 text-accent-blue" />
+                    Extract appearance presets from scenes
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    onSelect={() =>
+                      void runLibraryBulkExtract({
+                        kind: 'outfit',
+                        sources: SCENE_SOURCE_TYPES,
+                        sourceNoun: 'scenes',
+                        actionLabel: 'Extract outfit',
+                      })
+                    }
+                  >
+                    <Download size={12} className="shrink-0 text-accent-blue" />
+                    Extract outfit presets from scenes
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    onSelect={() =>
+                      void runLibraryBulkExtract({
+                        kind: 'appearance',
+                        sources: LOOK_SOURCE_TYPES,
+                        sourceNoun: 'legacy looks',
+                        actionLabel: 'Convert to appearance',
+                      })
+                    }
+                  >
+                    <Download size={12} className="shrink-0 text-accent-blue" />
+                    Convert legacy looks to appearance presets
+                  </ContextMenuItem>
+                  {bulkDepCount > 0 && (
+                    <ContextMenuItem onSelect={() => void runLibraryBulkPromote(bulkPackages)}>
+                      <Plus size={12} className="shrink-0 text-accent-blue" />
+                      Promote
+                    </ContextMenuItem>
+                  )}
+                  <ContextMenuSeparator />
+                  <ContextMenuItem onSelect={() => void runLibraryBulkToggleEnabled(bulkPackages)}>
+                    <Power
+                      size={12}
+                      className={
+                        bulkEnableUi.mixed
+                          ? 'shrink-0 text-text-aside'
+                          : bulkEnableUi.allDisabled
+                            ? 'shrink-0 text-error'
+                            : 'shrink-0 text-text-secondary'
+                      }
+                    />
+                    {bulkEnableUi.label}
+                  </ContextMenuItem>
+                  {hasArchiveDirs && bulkNonArchivedFilenames.length > 0 && (
                     <ContextMenuItem onSelect={() => setArchiveOpen(true)}>
                       <Boxes size={12} className="shrink-0" />
-                      Archive… ({bulkNonArchivedFilenames.length})
+                      Archive…
                     </ContextMenuItem>
-                  </>
-                )}
-              </>
-            )
+                  )}
+                  <ContextMenuItem variant="destructive" onSelect={() => void runLibraryBulkRemove(bulkPackages)}>
+                    <Trash2 size={12} className="shrink-0" />
+                    Remove
+                  </ContextMenuItem>
+                </>
+              )}
+            </>
           ) : (
             <>
               {isArchived ? (

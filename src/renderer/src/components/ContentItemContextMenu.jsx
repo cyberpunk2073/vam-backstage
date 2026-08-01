@@ -4,6 +4,7 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuLabel,
   ContextMenuSeparator,
   ContextMenuSub,
   ContextMenuSubContent,
@@ -272,15 +273,9 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
       <ContextMenuContent className="min-w-52" onCloseAutoFocus={(e) => e.preventDefault()}>
         {showBulk ? (
           <>
-            <ContextMenuSub>
-              <ContextMenuSubTrigger>
-                <Tag size={12} className="shrink-0" />
-                Labels ({bulkSelectedIds.length})
-              </ContextMenuSubTrigger>
-              <ContextMenuSubContent>
-                <LabelsApplyMenuItems labels={labels} stateById={labelStateMap} onToggle={handleLabelToggle} />
-              </ContextMenuSubContent>
-            </ContextMenuSub>
+            <ContextMenuLabel>
+              {bulkSelectedIds.length} item{bulkSelectedIds.length === 1 ? '' : 's'} selected
+            </ContextMenuLabel>
             <ContextMenuSeparator />
             <ContextMenuItem onSelect={() => void runContentBulkToggleVisibility(bulkItems)}>
               {bulkVisibilityUi.allHidden ? (
@@ -291,24 +286,28 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
                   className={bulkVisibilityUi.mixed ? 'shrink-0 text-text-aside' : 'shrink-0 text-text-secondary'}
                 />
               )}
-              {bulkVisibilityUi.label} ({bulkSelectedIds.length})
+              {bulkVisibilityUi.label}
             </ContextMenuItem>
             <ContextMenuItem onSelect={() => void runContentBulkToggleFavorite(bulkItems)}>
               <Star
                 size={12}
-                className={cn(
-                  'shrink-0',
-                  bulkFavoriteUi.allFav && !bulkFavoriteUi.mixed && 'text-text-secondary',
-                  bulkFavoriteUi.mixed && 'text-text-aside',
-                  bulkFavoriteUi.allUnfav && !bulkFavoriteUi.mixed && 'text-warning',
-                )}
-                fill={bulkFavoriteUi.allFav && !bulkFavoriteUi.mixed ? 'none' : 'currentColor'}
+                className={cn('shrink-0', bulkFavoriteUi.mixed && 'text-text-aside')}
+                fill={bulkFavoriteUi.allFav ? 'currentColor' : 'none'}
               />
-              {bulkFavoriteUi.label} ({bulkSelectedIds.length})
+              {bulkFavoriteUi.label}
             </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuSub>
+              <ContextMenuSubTrigger>
+                <Tag size={12} className="shrink-0" />
+                Labels
+              </ContextMenuSubTrigger>
+              <ContextMenuSubContent>
+                <LabelsApplyMenuItems labels={labels} stateById={labelStateMap} onToggle={handleLabelToggle} />
+              </ContextMenuSubContent>
+            </ContextMenuSub>
             {(bulkSceneItems.length > 0 || bulkLookItems.length > 0) && (
               <>
-                <ContextMenuSeparator />
                 {bulkSceneItems.length > 0 && (
                   <>
                     <ContextMenuItem
@@ -323,7 +322,7 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
                       }
                     >
                       <Download size={12} className="shrink-0 text-accent-blue" />
-                      Extract appearance presets ({bulkSceneItems.length})
+                      Extract appearance presets
                     </ContextMenuItem>
                     <ContextMenuItem
                       onSelect={() =>
@@ -337,7 +336,7 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
                       }
                     >
                       <Download size={12} className="shrink-0 text-accent-blue" />
-                      Extract outfit presets ({bulkSceneItems.length})
+                      Extract outfit presets
                     </ContextMenuItem>
                   </>
                 )}
@@ -354,7 +353,7 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
                     }
                   >
                     <Download size={12} className="shrink-0 text-accent-blue" />
-                    Convert legacy looks to appearance presets ({bulkLookItems.length})
+                    Convert legacy looks to appearance presets
                   </ContextMenuItem>
                 )}
               </>
@@ -393,6 +392,8 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
                 <LabelsApplyMenuItems labels={labels} stateById={labelStateMap} onToggle={handleLabelToggle} />
               </ContextMenuSubContent>
             </ContextMenuSub>
+            {renderExtractEntries()}
+            {renderReExtractEntry()}
             <ContextMenuItem
               onSelect={() => {
                 onNavigate?.('library', { selectPackage: item.extractedFrom || item.packageFilename })
@@ -418,8 +419,6 @@ export function ContentItemContextMenu({ item, onNavigate, onToggleHidden, onTog
                 View package on Hub
               </ContextMenuItem>
             ) : null}
-            {renderExtractEntries()}
-            {renderReExtractEntry()}
           </>
         )}
       </ContextMenuContent>
