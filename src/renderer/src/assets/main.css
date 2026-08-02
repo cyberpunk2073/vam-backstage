@@ -221,8 +221,28 @@ html[data-nav-dismiss]
     filter: none;
 }
 
+/* Card edge, deliberately not a `border`. `overflow-hidden` clips the full-bleed thumbnail at the
+   border's inner contour, so at the corners two antialiased arcs sit on the same pixels and neither
+   fills them — the card's own dark background leaks through what's left, a dark seam hugging the
+   inside of the curve that reads as the edge thinning. Straights are pixel-aligned and show none of
+   it, hence the mismatch. Drawn instead as a 2px ring hung 1px outside the card: content runs under
+   the edge so there's nothing dark left to leak, and the card's own clip cuts the outer half away,
+   so the corner gets one coverage blend instead of two multiplied together. The radius has to stay
+   concentric with the card's or the ring pinches to nothing at the corners — hence the calc.
+   `outline` stays free for `.card-lead` / `.card-new`; the z-index clears in-card chrome. */
+.card-edge::after {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: calc(var(--radius-lg) + 1px);
+    box-shadow: inset 0 0 0 2px var(--card-edge-color, var(--color-border));
+    transition: box-shadow 150ms;
+    pointer-events: none;
+    z-index: 30;
+}
+
 .card-glow:hover {
-    border-color: rgba(74, 145, 241, 0.25);
+    --card-edge-color: rgba(74, 145, 241, 0.25);
     box-shadow:
         0 0 24px -4px rgba(74, 145, 241, 0.12),
         0 4px 16px -4px rgba(0, 0, 0, 0.4);
@@ -230,7 +250,7 @@ html[data-nav-dismiss]
 
 /* Post-refresh "new since your last look" hint. Animating `outline` rather than the border or
    box-shadow keeps `.card-glow:hover` alive — a running animation outranks author-normal
-   declarations. The inset offset lays the ring over the 1px border, so nothing shifts. */
+   declarations. The inset offset lays the ring over the 1px edge, so nothing shifts. */
 .card-new {
     outline: 1px solid transparent;
     outline-offset: -1px;
@@ -252,11 +272,11 @@ html[data-nav-dismiss]
     outline-offset: -1px;
 }
 
-/* Selected (single) or checked (bulk): solid accent edge. `.card-glow:hover` drops border-color to
+/* Selected (single) or checked (bulk): solid accent edge. `.card-glow:hover` drops the edge to
    blue/25, which reads as *less* selected than resting — pin it through hover. */
 .card-picked,
 .card-glow.card-picked:hover {
-    border-color: var(--color-accent-blue);
+    --card-edge-color: var(--color-accent-blue);
 }
 
 /* Animations */

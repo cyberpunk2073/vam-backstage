@@ -545,7 +545,7 @@ function SkippedVarFilesCallout({ filenames }) {
         <p className="m-0 text-[13px] font-medium text-warning/90 mb-1">{n.toLocaleString()} files could not be read</p>
         <p className="m-0 text-[11px] text-white/45 leading-snug mb-2.5">
           These .var files were skipped. They may be corrupted, incomplete, or not valid packages. The rest of your
-          library was indexed. Fix or remove them in AddonPackages, then rescan from Settings.
+          library was indexed.
         </p>
         {showScrollHint && (
           <p className="m-0 text-[10px] text-white/35 mb-1.5">
@@ -589,8 +589,7 @@ function UnhandledVarFilesStep({ stats, scanSkippedFiles, onContinue }) {
         </p>
       ) : (
         <p className="text-xs text-white/40 mb-5">
-          No packages could be indexed. Review the skipped files below, fix or remove them in AddonPackages, then rescan
-          from Settings.
+          No packages could be indexed. You can review the skipped files below.
         </p>
       )}
       <SkippedVarFilesCallout filenames={scanSkippedFiles} />

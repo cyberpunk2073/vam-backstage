@@ -28,7 +28,7 @@ function RadioRow({ checked, onSelect, title, children }) {
       type="button"
       onClick={onSelect}
       className={`w-full text-left rounded border p-2 flex gap-2 items-start transition-colors cursor-pointer ${
-        checked ? 'border-accent-blue bg-accent-blue/10' : 'border-border hover:bg-elevated'
+        checked ? 'border-accent-blue bg-active' : 'border-border hover:bg-hover'
       }`}
     >
       <span
@@ -38,7 +38,8 @@ function RadioRow({ checked, onSelect, title, children }) {
         aria-hidden="true"
       />
       <span className="min-w-0">
-        <span className={cn('block text-sm', EMPHASIS)}>{title}</span>
+        {/* Primary, not EMPHASIS: this names a control rather than emphasizing a run of prose. */}
+        <span className="block text-sm font-medium text-text-primary">{title}</span>
         <span className={cn('block', CLARIFY)}>{children}</span>
       </span>
     </button>

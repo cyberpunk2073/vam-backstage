@@ -136,7 +136,7 @@ const THUMB_ACTION_BTN_POP = `${THUMB_ACTION_BTN_SHADOW} ring-1 ring-inset ring-
  * both animate `outline-color` (and `all` also `outline-offset`), which fades and grows the
  * keyboard-lead ring in over 150ms and makes arrowing feel laggy. The ring must land instantly.
  */
-const SELECT_TRANSITION = 'transition-[background-color,border-color,box-shadow] duration-150'
+const SELECT_TRANSITION = 'transition-[background-color,box-shadow] duration-150'
 
 /**
  * Selection chrome for a grid card. Single-selected and bulk-checked share the accent edge — they
@@ -145,7 +145,7 @@ const SELECT_TRANSITION = 'transition-[background-color,border-color,box-shadow]
  * there. See `.card-picked` / `.card-lead` in main.css.
  */
 function cardChrome({ selected, focused, bulkActive }) {
-  const edge = selected ? 'card-picked border-accent-blue bg-elevated' : 'border-border hover:bg-elevated'
+  const edge = selected ? 'card-picked bg-elevated' : 'hover:bg-elevated'
   return focused && bulkActive ? `${edge} card-lead` : edge
 }
 
@@ -467,7 +467,7 @@ export function HubCard({
 
   return (
     <div
-      className={`@container group w-full min-w-0 bg-surface border rounded-lg overflow-hidden text-left transition-all duration-150 flex flex-col border-border ${
+      className={`relative @container group w-full min-w-0 bg-surface card-edge rounded-lg overflow-hidden text-left transition-all duration-150 flex flex-col ${
         linkAction ? '' : 'card-glow cursor-pointer hover:bg-elevated'
       } ${flash ? 'card-new' : ''}`}
     >
@@ -636,7 +636,7 @@ export function LibraryCard({
       data-grid-card
       tabIndex={-1}
       onClick={(e) => onClick?.(pkg, e)}
-      className={`relative @container w-full bg-surface border rounded-lg overflow-hidden text-left ${SELECT_TRANSITION} card-glow cursor-pointer shrink-0 group outline-none
+      className={`relative @container w-full bg-surface card-edge rounded-lg overflow-hidden text-left ${SELECT_TRANSITION} card-glow cursor-pointer shrink-0 group outline-none
         ${cardChrome({ selected, focused, bulkActive })}`}
     >
       {/* Dimming rides on the content, never on the card itself — the border and lead ring must
@@ -1131,7 +1131,7 @@ export function ContentCard({
     <div
       data-grid-card
       onClick={(e) => onClick?.(item, e)}
-      className={`relative w-full bg-surface border rounded-lg overflow-hidden ${SELECT_TRANSITION} card-glow cursor-pointer shrink-0 group outline-none
+      className={`relative w-full bg-surface card-edge rounded-lg overflow-hidden ${SELECT_TRANSITION} card-glow cursor-pointer shrink-0 group outline-none
         ${cardChrome({ selected, focused, bulkActive })}`}
     >
       {/* Dimming rides on the content, never on the card itself — the border and lead ring must
