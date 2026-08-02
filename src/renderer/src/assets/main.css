@@ -229,7 +229,12 @@ html[data-nav-dismiss]
    the edge so there's nothing dark left to leak, and the card's own clip cuts the outer half away,
    so the corner gets one coverage blend instead of two multiplied together. The radius has to stay
    concentric with the card's or the ring pinches to nothing at the corners — hence the calc.
-   `outline` stays free for `.card-lead` / `.card-new`; the z-index clears in-card chrome. */
+   `outline` stays free for `.card-lead` / `.card-new`; the ::after z-index only clears in-card
+   chrome, so isolate the card — otherwise that z-index escapes (cards are relative/auto) and paints
+   over HubDetail (z-20) and anything else below 30. */
+.card-edge {
+    isolation: isolate;
+}
 .card-edge::after {
     content: '';
     position: absolute;
