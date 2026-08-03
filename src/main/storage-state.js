@@ -26,7 +26,7 @@ import { rename, mkdir, stat, lstat, unlink, writeFile } from 'fs/promises'
 import { join, dirname } from 'path'
 import { getPackageIndex, patchStorageState } from './store.js'
 import { setStorageState } from './db.js'
-import { recordOwnedPath } from './watcher.js'
+import { recordOwnedPath, recordOwnedDirChain } from './watcher.js'
 import { notifyToast } from './notify.js'
 import {
   getLibraryDirPath,
@@ -75,7 +75,8 @@ async function guardedRename(from, to) {
   }
   recordOwnedPath(from)
   recordOwnedPath(to)
-  await mkdir(dirname(to), { recursive: true })
+  const destDir = dirname(to)
+  recordOwnedDirChain(destDir, await mkdir(destDir, { recursive: true }))
   await rename(from, to)
 }
 

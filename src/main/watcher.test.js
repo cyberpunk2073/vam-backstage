@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { join, dirname } from 'path'
 import { existsSync } from 'fs'
-import { mkdir, rename, readdir, writeFile, readFile, stat, unlink } from 'fs/promises'
+import { mkdir, rename, readdir, writeFile, readFile, rm, stat, unlink } from 'fs/promises'
+import parcelWatcher from '@parcel/watcher'
 import {
   mkTempVamDir,
   mkAuxDir,
@@ -22,9 +23,11 @@ import {
 } from './db.js'
 import {
   __processBatchForTests,
+  __routeEventsForTests,
   __setProcessBatchStateForTests,
   __prefsEventSyncForTests,
   __localPrefsEventSyncForTests,
+  stopWatcher,
   withBulkWindow,
   recordOwnedPath,
 } from './watcher.js'
@@ -42,6 +45,9 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  // Clears any debounce timer a case left armed, so it can't fire against a closed DB.
+  await stopWatcher()
+  vi.restoreAllMocks()
   closeDatabase()
   if (tmp) await tmp.cleanup()
   delete process.env.VAM_DB_PATH
@@ -216,6 +222,259 @@ describe('watcher.processBatch — nested .var move recovery', () => {
     expect(getAllPackages().filter((r) => r.filename === 'Nest.Gone.1.var')).toHaveLength(0)
     const raw = getDb().prepare('SELECT missing_since FROM packages WHERE filename = ?').get('Nest.Gone.1.var')
     expect(raw?.missing_since).toBeGreaterThan(0)
+  })
+})
+
+// A folder moved into (or out of) a watched tree is reported by the OS as a single
+// directory event, with nothing said about the files inside it — true of FSEvents,
+// ReadDirectoryChangesW and inotify alike. The watcher has to walk it itself, or
+// everything the folder holds stays invisible until the next startup scan.
+describe('watcher — dropped and removed folders', () => {
+  const SCENE = { 'Saves/scene/s.json': '{"atoms":[]}' }
+
+  it('expands a folder dropped into an archive dir into its nested packages', async () => {
+    const archive = await mkAuxDir(tmp.vamDir)
+    const archiveId = insertLibraryDir(archive, true)
+    await runScan(tmp.vamDir)
+    refreshLibraryDirs()
+
+    const dropped = join(archive, 'Dropped')
+    const nested = join(dropped, 'Nested')
+    await mkdir(nested, { recursive: true })
+    await placeVar(
+      nested,
+      'Drop.Pkg.1.var',
+      await buildVar({ meta: { packageName: 'Drop.Pkg', creator: 'D' }, files: SCENE }),
+    )
+
+    __setProcessBatchStateForTests({ vamDir: tmp.vamDir })
+    await __routeEventsForTests({ packageEvents: [[{ path: dropped, type: 'create' }, archiveId]] })
+
+    const row = getAllPackages().find((r) => r.filename === 'Drop.Pkg.1.var')
+    expect(row?.storage_state).toBe('archived')
+    expect(row?.library_dir_id).toBe(archiveId)
+    expect(row?.subpath).toBe('Dropped/Nested')
+  })
+
+  it('treats a folder named like a package as a folder, not a package', async () => {
+    await runScan(tmp.vamDir)
+    // Unzipping a package in place is the common way to get this: the extracted
+    // folder keeps the archive's name, so a name-based check would hand a directory
+    // to the stability gate and index nothing inside it.
+    const unzipped = join(tmp.addonPackages, 'Unzipped.Pkg.1.var')
+    await mkdir(unzipped, { recursive: true })
+    await placeVar(
+      unzipped,
+      'Inside.Pkg.1.var',
+      await buildVar({ meta: { packageName: 'Inside.Pkg', creator: 'I' }, files: SCENE }),
+    )
+
+    __setProcessBatchStateForTests({ vamDir: tmp.vamDir })
+    await __routeEventsForTests({ packageEvents: [[{ path: unzipped, type: 'create' }, null]] })
+
+    expect(getAllPackages().find((r) => r.filename === 'Unzipped.Pkg.1.var')).toBeUndefined()
+    expect(getAllPackages().find((r) => r.filename === 'Inside.Pkg.1.var')?.subpath).toBe('Unzipped.Pkg.1.var')
+  })
+
+  it('tombstones packages inside a deleted folder named like a package', async () => {
+    // A delete can't be probed with readdir and the name lies: this path was an
+    // unzipped-package *folder* holding an indexed .var. The store-side subpath
+    // pass must run for every unlink, var-named or not.
+    await runScan(tmp.vamDir)
+    const unzipped = join(tmp.addonPackages, 'Unzipped.Del.1.var')
+    await mkdir(unzipped, { recursive: true })
+    await placeVar(
+      unzipped,
+      'Inside.Del.1.var',
+      await buildVar({ meta: { packageName: 'Inside.Del', creator: 'I' }, files: SCENE }),
+    )
+    __setProcessBatchStateForTests({ vamDir: tmp.vamDir })
+    await __routeEventsForTests({ packageEvents: [[{ path: unzipped, type: 'create' }, null]] })
+    expect(getAllPackages().find((r) => r.filename === 'Inside.Del.1.var')?.subpath).toBe('Unzipped.Del.1.var')
+
+    await rm(unzipped, { recursive: true, force: true })
+    await __routeEventsForTests({ packageEvents: [[{ path: unzipped, type: 'delete' }, null]] })
+
+    expect(getAllPackages().find((r) => r.filename === 'Inside.Del.1.var')).toBeUndefined()
+  })
+
+  it('reconciles a folder dragged from main into an aux dir as a move, not a removal', async () => {
+    const aux = await mkAuxDir(tmp.vamDir)
+    const auxId = insertLibraryDir(aux)
+    const from = join(tmp.addonPackages, 'Bundle')
+    await mkdir(from, { recursive: true })
+    await placeVar(
+      from,
+      'Move.Folder.1.var',
+      await buildVar({ meta: { packageName: 'Move.Folder', creator: 'M' }, files: SCENE }),
+    )
+    await runScan(tmp.vamDir)
+    expect(getPackageIndex().get('Move.Folder.1.var')?.subpath).toBe('Bundle')
+
+    const to = join(aux, 'Bundle')
+    await rename(from, to)
+    refreshLibraryDirs()
+
+    __setProcessBatchStateForTests({ vamDir: tmp.vamDir })
+    await __routeEventsForTests({
+      packageEvents: [
+        [{ path: from, type: 'delete' }, null],
+        [{ path: to, type: 'create' }, auxId],
+      ],
+    })
+
+    const row = getAllPackages().find((r) => r.filename === 'Move.Folder.1.var')
+    expect(row?.storage_state).toBe('offloaded')
+    expect(row?.library_dir_id).toBe(auxId)
+    expect(row?.subpath).toBe('Bundle')
+  })
+
+  it('tombstones the packages inside a folder that was deleted outright', async () => {
+    const folder = join(tmp.addonPackages, 'Gone')
+    await mkdir(folder, { recursive: true })
+    await placeVar(
+      folder,
+      'Folder.Gone.1.var',
+      await buildVar({ meta: { packageName: 'Folder.Gone', creator: 'G' }, files: SCENE }),
+    )
+    await runScan(tmp.vamDir)
+    expect(getAllPackages().find((r) => r.filename === 'Folder.Gone.1.var')).toBeDefined()
+
+    await rm(folder, { recursive: true, force: true })
+    refreshLibraryDirs()
+
+    __setProcessBatchStateForTests({ vamDir: tmp.vamDir })
+    await __routeEventsForTests({ packageEvents: [[{ path: folder, type: 'delete' }, null]] })
+
+    expect(getAllPackages().find((r) => r.filename === 'Folder.Gone.1.var')).toBeUndefined()
+    const raw = getDb().prepare('SELECT missing_since FROM packages WHERE filename = ?').get('Folder.Gone.1.var')
+    expect(raw?.missing_since).toBeGreaterThan(0)
+  })
+
+  it('picks up the sidecars inside a prefs folder that was copied in', async () => {
+    await runScan(tmp.vamDir)
+    const prefsRoot = join(tmp.vamDir, ADDON_PACKAGES_FILE_PREFS)
+    const stemDir = join(prefsRoot, 'Pkg.Folder.1')
+    await mkdir(join(stemDir, 'Saves', 'scene'), { recursive: true })
+    await writeFile(join(stemDir, 'Saves', 'scene', 'Item.json.hide'), '')
+
+    __setProcessBatchStateForTests({ vamDir: tmp.vamDir, prefsDir: prefsRoot })
+    await __routeEventsForTests({ prefsEvents: [{ path: stemDir, type: 'create' }] })
+
+    expect(getPrefsMap().get('Pkg.Folder.1.var/Saves/scene/Item.json')?.hidden).toBe(true)
+  })
+
+  it('reloads consecutive prefs folder deletions immediately, outside the recovery cooldown', async () => {
+    const prefsRoot = join(tmp.vamDir, ADDON_PACKAGES_FILE_PREFS)
+    const sidecarRel = join('Saves', 'scene', 'Item.json.hide')
+    const firstStem = join(prefsRoot, 'First.Pkg.1')
+    const secondStem = join(prefsRoot, 'Second.Pkg.1')
+    await mkdir(dirname(join(firstStem, sidecarRel)), { recursive: true })
+    await mkdir(dirname(join(secondStem, sidecarRel)), { recursive: true })
+    await writeFile(join(firstStem, sidecarRel), '')
+    await writeFile(join(secondStem, sidecarRel), '')
+    await runScan(tmp.vamDir)
+
+    const firstKey = 'First.Pkg.1.var/Saves/scene/Item.json'
+    const secondKey = 'Second.Pkg.1.var/Saves/scene/Item.json'
+    expect(getPrefsMap().has(firstKey)).toBe(true)
+    expect(getPrefsMap().has(secondKey)).toBe(true)
+
+    __setProcessBatchStateForTests({ vamDir: tmp.vamDir, prefsDir: prefsRoot })
+    await rm(firstStem, { recursive: true, force: true })
+    await __routeEventsForTests({ prefsEvents: [{ path: firstStem, type: 'delete' }] })
+    expect(getPrefsMap().has(firstKey)).toBe(false)
+
+    await rm(secondStem, { recursive: true, force: true })
+    await __routeEventsForTests({ prefsEvents: [{ path: secondStem, type: 'delete' }] })
+    expect(getPrefsMap().has(secondKey)).toBe(false)
+  })
+
+  it('indexes the content and sidecars inside a folder dropped into Custom', async () => {
+    await runScan(tmp.vamDir)
+    const dropped = join(tmp.vamDir, 'Custom', 'Atom', 'Person', 'Appearance', 'Dropped')
+    await mkdir(dropped, { recursive: true })
+    await writeFile(join(dropped, 'L.vap'), 'x')
+    await writeFile(join(dropped, 'L.vap.fav'), '')
+
+    __setProcessBatchStateForTests({ vamDir: tmp.vamDir })
+    await __routeEventsForTests({ localEvents: [{ path: dropped, type: 'create' }] })
+
+    const internalPath = 'Custom/Atom/Person/Appearance/Dropped/L.vap'
+    expect(getPrefsMap().get(`__local__/${internalPath}`)?.favorite).toBe(true)
+    const content = getDb()
+      .prepare('SELECT COUNT(*) AS n FROM contents WHERE package_filename = ? AND internal_path = ?')
+      .get('__local__', internalPath)
+    expect(content.n).toBe(1)
+  })
+})
+
+// FSEvents raises "must re-scan" when the kernel or client drops its event queue,
+// and ReadDirectoryChangesW does the same on buffer overflow. Both mean events were
+// lost, so the only correct response is to reconcile the whole library from disk.
+describe('watcher — lost-event recovery', () => {
+  it('rescans the library when the backend reports dropped events', async () => {
+    await runScan(tmp.vamDir)
+    const buf = await buildVar({
+      meta: { packageName: 'Dropped.Ev', creator: 'D' },
+      files: { 'Saves/scene/d.json': '{"atoms":[]}' },
+    })
+    // Lands on disk with no event ever delivered for it — exactly what a dropped
+    // queue looks like from our side.
+    await placeVar(tmp.addonPackages, 'Dropped.Ev.1.var', buf)
+    expect(getAllPackages().find((r) => r.filename === 'Dropped.Ev.1.var')).toBeUndefined()
+
+    __setProcessBatchStateForTests({ vamDir: tmp.vamDir })
+    await __routeEventsForTests({ errors: ['package'] })
+
+    expect(getAllPackages().find((r) => r.filename === 'Dropped.Ev.1.var')?.storage_state).toBe('enabled')
+  })
+
+  it('rate-limits recovery so an ongoing fault cannot storm full rescans', async () => {
+    await runScan(tmp.vamDir)
+    __setProcessBatchStateForTests({ vamDir: tmp.vamDir })
+    await __routeEventsForTests({ errors: ['package'] })
+
+    await placeVar(
+      tmp.addonPackages,
+      'Storm.Ev.1.var',
+      await buildVar({ meta: { packageName: 'Storm.Ev', creator: 'S' }, files: { 'Saves/scene/s.json': '{}' } }),
+    )
+    // Second error lands inside the cooldown: deferred, not run again right now.
+    await __routeEventsForTests({ errors: ['package'] })
+
+    expect(getAllPackages().find((r) => r.filename === 'Storm.Ev.1.var')).toBeUndefined()
+
+    // Make the queued retry eligible without making this test sleep for the cooldown.
+    __setProcessBatchStateForTests({ vamDir: tmp.vamDir, lastRecoveryAt: 0 })
+    await __routeEventsForTests()
+    expect(getAllPackages().find((r) => r.filename === 'Storm.Ev.1.var')?.storage_state).toBe('enabled')
+  })
+
+  it('retries a failed resubscribe and reconciles the blind gap afterward', async () => {
+    await runScan(tmp.vamDir)
+    const retryBuf = await buildVar({
+      meta: { packageName: 'Retry.Gap', creator: 'R' },
+      files: { 'Saves/scene/r.json': '{}' },
+    })
+    const unsubscribe = vi.fn(async () => {})
+    const subscribe = vi
+      .spyOn(parcelWatcher, 'subscribe')
+      .mockRejectedValueOnce(new Error('backend still unavailable'))
+      .mockResolvedValue({ unsubscribe })
+
+    __setProcessBatchStateForTests({ vamDir: tmp.vamDir, watchersRunning: true })
+    await __routeEventsForTests({ errors: ['package'] })
+    expect(subscribe).toHaveBeenCalledTimes(1)
+
+    await placeVar(tmp.addonPackages, 'Retry.Gap.1.var', retryBuf)
+    expect(getAllPackages().find((r) => r.filename === 'Retry.Gap.1.var')).toBeUndefined()
+
+    __setProcessBatchStateForTests({ vamDir: tmp.vamDir, watchersRunning: true, lastRecoveryAt: 0 })
+    await __routeEventsForTests()
+
+    expect(subscribe).toHaveBeenCalledTimes(2)
+    expect(getAllPackages().find((r) => r.filename === 'Retry.Gap.1.var')?.storage_state).toBe('enabled')
   })
 })
 

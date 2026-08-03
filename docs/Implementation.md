@@ -1143,6 +1143,30 @@ The watcher (`src/main/watcher.js`) runs three sets of `@parcel/watcher` subscri
 
 `@parcel/watcher` is recursive natively (one kernel handle per root, regardless of file count) — no per-file `fs.watch` handle, no userspace catalog walk on resume. Symlinks are not followed by default, so the BrowserAssist symlink-farm problem doesn't apply.
 
+### Folder events
+
+Every backend reports a folder moved or copied into a watched tree as **one create event for the directory**, and says nothing about the files already inside it — FSEvents delivers the rename, `ReadDirectoryChangesW` delivers a single `FILE_ACTION_ADDED`/`RENAMED_NEW_NAME`, inotify a single `IN_CREATE`/`IN_MOVED_TO`. A folder moved out is likewise a single delete. Filtering raw events by filename therefore drops the entire contents of any dropped folder, which then stays invisible until the next startup scan.
+
+So `routeEvent` synthesizes the events the OS withheld: every create is walked with `collectFilesInTree` and, if that yields a listing, re-dispatched as a create per file it holds (bounded by the shared `folderExpandLimit`) _instead of_ the folder event. The three routers therefore never see a folder create — each only ever handles one file, exactly as if the backend had reported them individually.
+
+The walk is also what decides directory-ness; the filename never is. Unzipping a package in place leaves a `Creator.Thing.1.var/` **folder**, so a name check would hand a directory to the stability gate, which opens it, fails to parse a zip, then stat-polls for the 2s stability window before rejecting it — and indexes nothing inside it either. `collectFilesInTree` returning null (`readdir` rejected, typically `ENOTDIR`) is the probe, so an ordinary file event pays one failed syscall and routes as itself.
+
+Only creates can be handled this way. A folder emits an update whenever its contents change, and those changes carry their own per-file events; a delete leaves nothing to walk, so each router reconciles it its own way:
+
+- **packageWatcher** — _every_ unlink queues an unlink for every package the store places under that subpath, so the normal `locateVars` pass relocates or tombstones them. This pass consults only the in-memory store (no disk access), so it works on paths that no longer exist, and it runs unconditionally because a deleted path's name can't decide directory-ness either — a deleted `Creator.Thing.1.var` may have been an unzipped folder holding indexed packages. For a genuine file delete it matches nothing (a file and a folder can't share a name in one directory).
+- **localWatcher** — any non-sidecar event, folder or file, sets the debounced `runLocalScan` flag, which re-walks the loose-content tree anyway.
+- **prefsWatcher** — `prefsMap` has no reverse index by folder, so a folder delete triggers a full `readAllPrefs` re-read.
+
+### Lost-event recovery
+
+A backend error means events were _lost_, not that one file failed: FSEvents raises `kFSEventStreamEventFlagMustScanSubDirs` ("File system must be re-scanned") when the kernel or client drops its queue, and `ReadDirectoryChangesW` raises `ERROR_NOTIFY_ENUM_DIR` on buffer overflow. `onWatcherError` queues a recovery; `recoverLostEvents` resubscribes the affected scope and then reconciles from disk — a full `runScan` for package/local scopes, `readAllPrefs` for prefs.
+
+The resubscribe is not belt-and-braces. `Backend::handleWatcherError` removes the subscription from the backend before reporting the error through its callback, so on Windows a single buffer overflow (which a bulk copy into a library dir readily provokes) kills the watcher permanently — the app would stay blind until relaunch. macOS keeps the subscription alive across a "must re-scan" error, so there it is redundant but cheap (~1ms), and the gap it opens is covered by the reconcile that immediately follows. Only scopes that were actually running get restarted, so a deliberately stopped watcher stays stopped. A failed resubscribe is retried after the cooldown and followed by another reconcile to cover the blind gap.
+
+Recovery is rate-limited to one per `RECOVERY_COOLDOWN_MS`, because the underlying fault may be ongoing (a flaky network drive, a copy large enough to keep overflowing the buffer) and every 500ms batch would otherwise kick off another full scan. A request landing inside the cooldown is re-armed for when it expires rather than dropped, so the last error still gets reconciled. The re-arm never replaces an already-armed sooner batch timer — ordinary events pending alongside would wait out the whole cooldown — it lets that batch run and requeue the recovery itself.
+
+Ordinary reconciliation does not share the backend-recovery rate limit. In particular, deleting a prefs folder queues an immediate `readAllPrefs` reload; otherwise one normal delete could start the recovery cooldown and leave a second delete visibly stale for up to 30 seconds.
+
 ### Event Processing
 
 Events are debounced for 500ms and processed as a batch:
@@ -1167,8 +1191,8 @@ Events are debounced for 500ms and processed as a batch:
 When the app itself does a coordinated bulk of writes (toggle-enabled across hundreds of packages, postDownloadIntegrate writing many sidecars, etc.), it wraps the operation in `withBulkWindow(async (ourPaths) => …)`. While the window is open:
 
 - All FS events from every subscription are buffered instead of dispatched.
-- Each app-initiated path is registered via `recordOwnedPath(p)` (which `applyStorageState`, `setHidden`, `unlinkPackagePhysicalAndAliases`, etc. call internally).
-- When the window closes, buffered events whose path is in `ourPaths` are dropped; all other events flow into the normal pending-event maps.
+- Each app-initiated path is registered via `recordOwnedPath(p)` (which `applyStorageState`, `setHidden`, `unlinkPackagePhysicalAndAliases`, etc. call internally). Directories the app creates on the way (`mkdir -p` for a mirrored subfolder) are registered via `recordOwnedDirChain` — folder creates are expanded, so an unowned one would send the watcher re-walking a tree we just wrote.
+- When the window closes, buffered events whose path is in `ourPaths` are dropped; all other events flow into the normal pending-event maps. Folder creates that survive the filter are expanded with `ourPaths` still in hand, so an unowned directory (a `mkdir` site without `recordOwnedDirChain` — sidecar dirs, import subfolders) never re-dispatches the app-owned files inside it; the unrecorded chain only costs the walk.
 
 Outside a bulk window, `recordOwnedPath` is a no-op. Single non-bulk writes (e.g. one sidecar toggle) accept the resulting watcher event, which is harmless because `scanSingleVar` short-circuits on unchanged (mtime, size) and prefs handling is idempotent.
 

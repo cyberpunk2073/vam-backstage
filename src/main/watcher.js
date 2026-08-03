@@ -1,17 +1,17 @@
 import parcelWatcher from '@parcel/watcher'
-import { join, extname, basename, relative, sep, dirname } from 'path'
+import { join, extname, basename, relative, sep, dirname, isAbsolute } from 'path'
 import { stat, mkdir, rename, unlink, readdir } from 'fs/promises'
 import { ADDON_PACKAGES_FILE_PREFS } from '@shared/paths.js'
 import { LOCAL_PACKAGE_FILENAME, LOCAL_CONTENT_DIRS } from '@shared/local-package.js'
 import { isVarFilename, canonicalVarFilename, qvaroDisabledName } from './scanner/var-reader.js'
 import { scanAndUpsert } from './scanner/ingest.js'
-import { computeAutoHidePathsForNewPackage } from './scanner/index.js'
+import { computeAutoHidePathsForNewPackage, runScan } from './scanner/index.js'
 import { inheritFromOlderVersion } from './scanner/inherit.js'
 import { refreshExtractedPresetsForUpdates } from './scenes/extract-refresh.js'
 import { reconcileExtractedLifecycleAndResync } from './scenes/extracted-reconcile.js'
 import { runLocalScan } from './scanner/local.js'
 import { markPackageMissing, getPackageReconcileInfo, setStorageState } from './db.js'
-import { buildFromDb, getPrefsMap, setPrefsMap } from './store.js'
+import { buildFromDb, getPackageIndex, getPrefsMap, setPrefsMap } from './store.js'
 import { notify, notifyToast } from './notify.js'
 import { enrichNewPackages } from './hub/scanner.js'
 import {
@@ -25,8 +25,16 @@ import {
 import { awaitStable } from './var-stability.js'
 import { hidePackageContent, readAllPrefs, stripDisabledSuffix } from './vam-prefs.js'
 import { warmFileWatcherBackend } from './watcher-warm.js'
+import { pLimit } from './p-limit.js'
 
 const DEBOUNCE_MS = 500
+// Synthetic per-file events dispatched in parallel when a dropped folder is
+// expanded; what it really bounds is the `.var` stability checks they trigger.
+// Matches the scanner's VAR_STAT_CONCURRENCY — 2× the default libuv pool.
+// One shared limiter so simultaneous folder drops share the bound.
+const folderExpandLimit = pLimit(8)
+// Floor between two lost-event recoveries (resubscribe + full rescan). See `recoverLostEvents`.
+const RECOVERY_COOLDOWN_MS = 30_000
 
 /** @type {Array<{ sub: import('@parcel/watcher').AsyncSubscription, dirId: number|null, path: string }>} */
 let packageSubs = []
@@ -43,6 +51,14 @@ let pendingLocalContent = false
 let pendingLocalPrefs = new Map() // fullPath -> 'check'
 let debounceTimer = null
 let processing = false
+/** Watcher scopes to resubscribe, and what to reconcile, after a backend error. See `onWatcherError`. */
+let pendingWatcherRestarts = new Set()
+let pendingFullResync = false
+let pendingPrefsResync = false
+/** Ordinary prefs-tree reloads (for folder deletes), intentionally outside the backend-error cooldown. */
+let pendingPrefsReload = false
+let lastRecoveryAt = 0
+let watchersRunning = false
 
 /**
  * Bulk-window machinery: while a window is active, raw events are buffered
@@ -89,10 +105,12 @@ export async function withBulkWindow(fn) {
       bulkWindow = null
       // Drain: external events route normally, app-owned events drop. Each
       // route* helper schedules its own batch (or, for package events, schedules
-      // after its async stability check), so we don't have to here.
+      // after its async stability check), so we don't have to here. `ourPaths` is
+      // passed along so folder-create expansion can filter the app's own files out
+      // of an unowned folder event too (see routeEvent).
       for (const ev of win.events) {
         if (win.ourPaths.has(ev.path)) continue
-        routeEvent(ev)
+        void routeEvent(ev, win.ourPaths)
       }
     }
   }
@@ -106,6 +124,27 @@ export async function withBulkWindow(fn) {
  */
 export function recordOwnedPath(p) {
   if (bulkWindow) bulkWindow.ourPaths.add(p)
+}
+
+/**
+ * Mark a directory chain the app just created as app-owned. `mkdir(dir, { recursive:
+ * true })` returns the topmost directory it had to create (or undefined when the
+ * path already existed), which bounds the chain: pass that as `firstCreated` and the
+ * target as `leafDir`.
+ *
+ * Folder creates are expanded by the watcher (`routeEvent`), so without this a
+ * bulk move into fresh subfolders would send it re-walking the very tree we just
+ * wrote. The drain filters the expansion's synthetic events against owned paths,
+ * so the walk finds nothing to dispatch — this just skips the wasted walk itself.
+ */
+export function recordOwnedDirChain(leafDir, firstCreated) {
+  if (!bulkWindow || !firstCreated) return
+  let p = leafDir
+  while (p.startsWith(firstCreated)) {
+    recordOwnedPath(p)
+    if (p === firstCreated) break
+    p = dirname(p)
+  }
 }
 
 /** Restart the package watcher with the current library_dirs registry. Idempotent.
@@ -126,7 +165,7 @@ export async function restartPackageWatcher() {
   }
   await Promise.all(packageSubs.map((s) => s.sub.unsubscribe().catch(() => {})))
   packageSubs = []
-  if (dirs.length === 0) return
+  if (dirs.length === 0) return true
 
   const t0 = Date.now()
   const newSubs = []
@@ -135,10 +174,7 @@ export async function restartPackageWatcher() {
       const sub = await parcelWatcher.subscribe(
         d.path,
         (err, events) => {
-          if (err) {
-            console.warn('Package watcher error:', err.message)
-            return
-          }
+          if (err) onWatcherError('package', err)
           for (const ev of events) onPackageRawEvent(ev, d.id)
         },
         // ignore: nothing — but parcel does NOT follow symlinks recursively, so the
@@ -155,9 +191,11 @@ export async function restartPackageWatcher() {
   console.info(
     `FS watcher 'packageWatcher' ready in ${Date.now() - t0} ms (${newSubs.length}/${dirs.length} library root(s))`,
   )
+  return newSubs.length === dirs.length
 }
 
 export async function startWatcher(vamDir) {
+  watchersRunning = true
   vamDirPath = vamDir
 
   // Ensure parcel's native backend is warmed (on a worker) before the first real subscribe,
@@ -203,10 +241,7 @@ async function initLocalWatcher(vamDir) {
       const sub = await parcelWatcher.subscribe(
         dir,
         (err, events) => {
-          if (err) {
-            console.warn('Local watcher error:', err.message)
-            return
-          }
+          if (err) onWatcherError('local', err)
           for (const ev of events) onLocalRawEvent(ev)
         },
         {},
@@ -217,20 +252,21 @@ async function initLocalWatcher(vamDir) {
     }
   }
   console.info(`FS watcher 'localWatcher' ready in ${Date.now() - t0} ms (${localSubs.length}/${dirs.length} dir(s))`)
+  return localSubs.length === dirs.length
 }
 
 function onLocalRawEvent(ev) {
+  const tagged = { ...ev, __source: 'local' }
   if (bulkWindow) {
-    bulkWindow.events.push({ ...ev, __source: 'local' })
+    bulkWindow.events.push(tagged)
     return
   }
-  routeLocal(ev.path)
+  void routeEvent(tagged)
 }
 
-function routeLocal(fullPath) {
-  const ext = extname(fullPath).toLowerCase()
-  if (ext === '.hide' || ext === '.fav') {
-    pendingLocalPrefs.set(fullPath, 'check')
+function routeLocal(ev) {
+  if (isSidecarPath(ev.path)) {
+    pendingLocalPrefs.set(ev.path, 'check')
     scheduleBatch()
     return
   }
@@ -248,30 +284,43 @@ async function initPrefsWatcher(prefsDir) {
     prefsSub = await parcelWatcher.subscribe(
       prefsDir,
       (err, events) => {
-        if (err) {
-          console.warn('Prefs watcher error:', err.message)
-          return
-        }
+        if (err) onWatcherError('prefs', err)
         for (const ev of events) onPrefsRawEvent(ev)
       },
       {},
     )
+    return true
   } catch (err) {
     console.warn('Failed to start prefs watcher:', err.message)
+    return false
   }
 }
 
 function onPrefsRawEvent(ev) {
+  const tagged = { ...ev, __source: 'prefs' }
   if (bulkWindow) {
-    bulkWindow.events.push({ ...ev, __source: 'prefs' })
+    bulkWindow.events.push(tagged)
     return
   }
-  routePrefs(ev.path)
+  void routeEvent(tagged)
 }
 
-function routePrefs(fullPath) {
-  const ext = extname(fullPath).toLowerCase()
-  if (ext !== '.hide' && ext !== '.fav') return
+function routePrefs(ev) {
+  if (isSidecarPath(ev.path)) {
+    routePrefsSidecar(ev.path)
+    return
+  }
+  // Not a sidecar name, so this is a folder: a package's whole prefs folder copied
+  // in or removed. A copy arrives pre-expanded (see `routeEvent`); a removal can't
+  // be enumerated, and `prefsMap` has no reverse index by folder, so re-read the
+  // tree instead. Rare enough that the walk beats the bookkeeping.
+  if (parcelTypeToLegacy(ev.type) === 'unlink') {
+    pendingPrefsReload = true
+    scheduleBatch()
+  }
+}
+
+function routePrefsSidecar(fullPath) {
   if (!prefsDirPath) return
   const rel = relative(prefsDirPath, fullPath)
   const segments = rel.split(sep)
@@ -280,7 +329,13 @@ function routePrefs(fullPath) {
   scheduleBatch()
 }
 
+function isSidecarPath(fullPath) {
+  const ext = extname(fullPath).toLowerCase()
+  return ext === '.hide' || ext === '.fav'
+}
+
 export async function stopWatcher() {
+  watchersRunning = false
   await Promise.all(packageSubs.map((s) => s.sub.unsubscribe().catch(() => {})))
   packageSubs = []
   if (prefsSub) {
@@ -297,22 +352,67 @@ export async function stopWatcher() {
   pendingPrefsEvents.clear()
   pendingLocalPrefs.clear()
   pendingLocalContent = false
+  pendingWatcherRestarts = new Set()
+  pendingFullResync = false
+  pendingPrefsResync = false
+  pendingPrefsReload = false
+  lastRecoveryAt = 0
   vamDirPath = null
 }
 
 function onPackageRawEvent(ev, libraryDirId) {
+  const tagged = { ...ev, __source: 'package', __dirId: libraryDirId }
   if (bulkWindow) {
-    bulkWindow.events.push({ ...ev, __source: 'package', __dirId: libraryDirId })
+    bulkWindow.events.push(tagged)
     return
   }
-  // Fire-and-forget: stability check + push happens async.
-  void routePackage(ev, libraryDirId)
+  // Fire-and-forget: folder expansion + stability check happen async.
+  void routeEvent(tagged)
 }
 
-async function routePackage(ev, libraryDirId) {
-  const name = basename(ev.path)
-  if (!isVarFilename(name)) return
+/**
+ * Route one raw package event. Anything that isn't a `.var` is a folder: a create
+ * arrives pre-expanded into its files (see `routeEvent`), so only the delete needs
+ * handling here.
+ *
+ * A delete leaves nothing to probe for directory-ness, and the name can't decide it
+ * either — a deleted `Creator.Thing.1.var` may have been an unzipped *folder* holding
+ * indexed packages. So every unlink takes the vanished-folder pass: the store knows
+ * which packages it placed under the path, and for a genuine file delete the pass
+ * matches nothing (a file and a folder can't share a name in one directory).
+ */
+function routePackage(ev, libraryDirId) {
   const type = parcelTypeToLegacy(ev.type)
+  if (type === 'unlink') queueVanishedFolder(ev.path, libraryDirId)
+  if (isVarFilename(basename(ev.path))) return routePackageFile(ev.path, type, libraryDirId)
+}
+
+/**
+ * Queue an unlink for every package the store still places inside `folderPath`, so
+ * the batch's normal relocate-or-tombstone pass reconciles each one against disk —
+ * a folder dragged to another library dir survives as a move, a folder genuinely
+ * deleted tombstones its packages. A delete of something that never held packages
+ * (a stray sidecar, say) simply matches nothing.
+ */
+function queueVanishedFolder(folderPath, libraryDirId) {
+  const root = getLibraryDirPath(libraryDirId)
+  if (!root) return
+  const rel = relative(root, folderPath)
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return
+  const prefix = rel.split(sep).join('/')
+  let queued = false
+  for (const pkg of getPackageIndex().values()) {
+    if ((pkg.library_dir_id ?? null) !== (libraryDirId ?? null)) continue
+    const subpath = pkg.subpath ?? ''
+    if (subpath !== prefix && !subpath.startsWith(prefix + '/')) continue
+    pendingPackageEvents.set(join(root, ...subpath.split('/'), pkg.filename), { type: 'unlink', libraryDirId })
+    queued = true
+  }
+  if (queued) scheduleBatch()
+}
+
+async function routePackageFile(fullPath, type, libraryDirId) {
+  const name = basename(fullPath)
   // A `.var.disabled` in main can be an empty marker (VaM-native disable), not a
   // readable zip — gating it on zip stability would silently drop the disable
   // event, so a 0-byte one passes straight through (its handling re-resolves the
@@ -322,17 +422,127 @@ async function routePackage(ev, libraryDirId) {
   if (type !== 'unlink') {
     let isEmptyMainMarker = false
     if (libraryDirId == null && /\.disabled$/i.test(name)) {
-      const s = await stat(ev.path).catch(() => null)
+      const s = await stat(fullPath).catch(() => null)
       if (!s) return // vanished before we could look — the unlink event follows
       isEmptyMainMarker = s.size === 0
     }
     if (!isEmptyMainMarker) {
-      const ok = await awaitStable(ev.path)
+      const ok = await awaitStable(fullPath)
       if (!ok) return // file vanished or never settled into a valid zip
     }
   }
-  pendingPackageEvents.set(ev.path, { type, libraryDirId })
+  pendingPackageEvents.set(fullPath, { type, libraryDirId })
   scheduleBatch()
+}
+
+/**
+ * A backend error means *events were lost*, not that one file failed: FSEvents
+ * raises "must re-scan" when the kernel or the client drops its queue, and
+ * ReadDirectoryChangesW raises it on buffer overflow. Queue a recovery (see
+ * `recoverLostEvents`) on the normal debounce, so a burst of errors coalesces.
+ */
+function onWatcherError(scope, err) {
+  console.warn(`[watcher] ${scope} watcher error — resyncing from disk:`, err.message)
+  pendingWatcherRestarts.add(scope)
+  if (scope === 'prefs') pendingPrefsResync = true
+  else pendingFullResync = true
+  scheduleBatch()
+}
+
+/**
+ * Recover from a backend error: resubscribe the affected scopes, then reconcile
+ * against disk.
+ *
+ * Resubscribing is not optional. `Backend::handleWatcherError` removes the
+ * subscription from the backend before reporting the error callback, so on Windows a single
+ * `ERROR_NOTIFY_ENUM_DIR` (buffer overflow — what a bulk copy into a library dir
+ * provokes) permanently kills the watcher; without this the app is blind until it
+ * restarts. macOS keeps the subscription alive across a "must re-scan" error, so
+ * there the resubscribe is redundant but cheap (~1ms), and the gap it opens is
+ * covered by the reconcile that follows it.
+ *
+ * Rate-limited, because the fault may be ongoing (a flaky network drive, a copy
+ * big enough to keep overflowing the event buffer) and every 500ms batch would
+ * otherwise kick off another full scan. Requests inside the cooldown are re-armed
+ * for when it expires rather than dropped, so the last error still gets reconciled.
+ *
+ * @returns {Promise<{ resynced: boolean, prefsRefreshed: boolean }>} `resynced`
+ *   means the whole library was rebuilt (packages, contents and prefs alike).
+ */
+async function recoverLostEvents({ restarts, fullResync, prefsResync }) {
+  const sinceLast = Date.now() - lastRecoveryAt
+  if (sinceLast < RECOVERY_COOLDOWN_MS) {
+    requeueRecovery({ restarts, fullResync, prefsResync }, RECOVERY_COOLDOWN_MS - sinceLast)
+    return { resynced: false, prefsRefreshed: false }
+  }
+  lastRecoveryAt = Date.now()
+
+  // Resubscribe before reconciling so changes made during the scan still register.
+  // `watchersRunning` prevents a recovery already snapshotted by processBatch from
+  // reviving a deliberately stopped watcher. Failed scopes are retried after the
+  // cooldown even when their subscription arrays are now empty.
+  const failedRestarts = new Set()
+  if (watchersRunning) {
+    const attempts = [
+      ['package', () => restartPackageWatcher()],
+      ['prefs', () => initPrefsWatcher(prefsDirPath)],
+      ['local', () => initLocalWatcher(vamDirPath)],
+    ]
+    for (const [scope, restart] of attempts) {
+      if (!restarts.has(scope)) continue
+      try {
+        if (!(await restart())) failedRestarts.add(scope)
+      } catch (err) {
+        console.warn(`Watcher: ${scope} resubscribe after error failed:`, err.message)
+        failedRestarts.add(scope)
+      }
+    }
+  }
+
+  let resynced = false
+  let prefsRefreshed = false
+  let fullResyncFailed = false
+  let prefsResyncFailed = false
+  if (vamDirPath && fullResync) {
+    try {
+      // A full scan subsumes prefs and loose content, and rebuilds the store.
+      await runScan(vamDirPath, (progress) => notify('scan:progress', progress))
+      resynced = true
+    } catch (err) {
+      console.warn('Watcher: full resync after error failed:', err.message)
+      fullResyncFailed = true
+    }
+  } else if (vamDirPath && prefsResync) {
+    try {
+      setPrefsMap(await readAllPrefs(vamDirPath))
+      prefsRefreshed = true
+    } catch (err) {
+      console.warn('Watcher: prefs resync after error failed:', err.message)
+      prefsResyncFailed = true
+    }
+  }
+
+  // A failed resubscribe needs another reconcile too: changes made in the blind
+  // gap after this pass would otherwise remain invisible when the retry succeeds.
+  const retryFullResync = fullResyncFailed || failedRestarts.has('package') || failedRestarts.has('local')
+  const retryPrefsResync = prefsResyncFailed || failedRestarts.has('prefs')
+  if (retryFullResync || retryPrefsResync) {
+    requeueRecovery(
+      { restarts: failedRestarts, fullResync: retryFullResync, prefsResync: retryPrefsResync },
+      RECOVERY_COOLDOWN_MS,
+    )
+  }
+  return { resynced, prefsRefreshed }
+}
+
+function requeueRecovery({ restarts, fullResync, prefsResync }, delayMs) {
+  for (const scope of restarts) pendingWatcherRestarts.add(scope)
+  pendingFullResync = pendingFullResync || fullResync
+  pendingPrefsResync = pendingPrefsResync || prefsResync
+  // Never clobber an already-armed (sooner) timer: ordinary events pending
+  // alongside would wait out the whole cooldown. The flags are set, so the sooner
+  // batch re-attempts recovery and, still inside the cooldown, requeues itself.
+  if (!debounceTimer) scheduleBatch(delayMs)
 }
 
 function parcelTypeToLegacy(t) {
@@ -340,20 +550,85 @@ function parcelTypeToLegacy(t) {
   return t === 'create' ? 'add' : 'change'
 }
 
-/** Drain a single buffered event into the appropriate pending-events map. */
-function routeEvent(ev) {
-  if (ev.__source === 'package') {
-    if (!isVarFilename(basename(ev.path))) return
-    void routePackage(ev, ev.__dirId)
-    return
+/**
+ * Dispatch one raw event to the routers — but when it's the create of a *folder*,
+ * dispatch a synthetic create per file inside it instead.
+ *
+ * A folder moved or copied into a watched tree surfaces as a single create for the
+ * directory: FSEvents, ReadDirectoryChangesW and inotify all report it and say
+ * nothing about the files already inside. Synthesizing the events the OS withheld
+ * keeps the routers ignorant of folders — each only ever handles one file — and
+ * without it everything the folder holds stays invisible until the next startup
+ * scan.
+ *
+ * Directory-ness is decided by the walk, never by the name, because the two
+ * disagree: unzipping a package commonly leaves a `Creator.Thing.1.var/` *folder*,
+ * which a name check hands to the stability gate to stat-poll for two seconds
+ * before rejecting it as a non-zip. `collectFilesInTree` returning null (`readdir`
+ * rejected, typically ENOTDIR) is the probe, so an ordinary file event pays one
+ * failed syscall and routes as itself.
+ *
+ * Only creates are expanded. A folder emits an update whenever its contents change
+ * and those changes carry their own per-file events; a delete leaves nothing to
+ * walk, so each router reconciles that its own way (`queueVanishedFolder`,
+ * `pendingPrefsReload`, the loose-content rescan).
+ *
+ * `ownedPaths` (from a bulk-window drain) filters app-owned files out of the
+ * expansion: the drain only drops events whose own path is owned, but an *unowned*
+ * folder create (a dir the app made without `recordOwnedDirChain` — sidecar dirs,
+ * import subfolders) would otherwise re-dispatch the app's own writes inside it.
+ */
+async function routeEvent(ev, ownedPaths) {
+  if (parcelTypeToLegacy(ev.type) === 'add') {
+    const nested = await collectFilesInTree(ev.path)
+    if (nested) {
+      const files = ownedPaths ? nested.filter((p) => !ownedPaths.has(p)) : nested
+      await Promise.all(files.map((p) => folderExpandLimit(() => dispatchEvent({ ...ev, path: p }))))
+      return
+    }
   }
-  if (ev.__source === 'prefs') return routePrefs(ev.path)
-  if (ev.__source === 'local') return routeLocal(ev.path)
+  await dispatchEvent(ev)
 }
 
-function scheduleBatch() {
+/** Async so every route path returns a promise: only the package router awaits
+ *  anything (the stability gate), but `pLimit` above needs one from all of them. */
+async function dispatchEvent(ev) {
+  if (ev.__source === 'package') return routePackage(ev, ev.__dirId)
+  if (ev.__source === 'prefs') return routePrefs(ev)
+  if (ev.__source === 'local') return routeLocal(ev)
+}
+
+/**
+ * Recursively collect every file under `dirPath`, skipping symlinks (which neither
+ * parcel nor our scanners follow). Returns `null` when the path isn't a readable
+ * directory, which is what makes it usable as the folder probe above.
+ */
+async function collectFilesInTree(dirPath, out = []) {
+  let entries
+  try {
+    entries = await readdir(dirPath, { withFileTypes: true })
+  } catch {
+    return null
+  }
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue
+    const full = join(dirPath, entry.name)
+    if (entry.isDirectory()) await collectFilesInTree(full, out)
+    else if (entry.isFile()) out.push(full)
+  }
+  return out
+}
+
+/** `delayMs` above the default is only used to defer a rate-limited recovery; any
+ *  real event arriving meanwhile re-arms the normal debounce and runs on time. */
+function scheduleBatch(delayMs = DEBOUNCE_MS) {
   if (debounceTimer) clearTimeout(debounceTimer)
-  debounceTimer = setTimeout(processBatch, DEBOUNCE_MS)
+  // Null on fire so "is a batch armed?" (see requeueRecovery) can be answered by
+  // the handle alone — a fired timer must not read as pending.
+  debounceTimer = setTimeout(() => {
+    debounceTimer = null
+    processBatch()
+  }, delayMs)
 }
 
 /**
@@ -434,18 +709,48 @@ export async function normalizeAuxDisabled(fullPath) {
  *
  * `state.packageEvents` / `prefsEvents` / `localPrefs`: arrays of
  * `[fullPath, payload]`. `state.localContent`: boolean. `state.vamDir`:
- * string used by the local-content branch.
+ * string used by the local-content branch. Recovery timing/running state can
+ * be overridden with `lastRecoveryAt` / `watchersRunning`.
  */
 export function __setProcessBatchStateForTests(state = {}) {
   pendingPackageEvents = new Map(state.packageEvents ?? [])
   pendingPrefsEvents = new Map(state.prefsEvents ?? [])
   pendingLocalPrefs = new Map(state.localPrefs ?? [])
   pendingLocalContent = !!state.localContent
+  lastRecoveryAt = state.lastRecoveryAt ?? 0 // default: don't leak cooldown state between cases
   if (state.vamDir !== undefined) vamDirPath = state.vamDir
   if (state.prefsDir !== undefined) prefsDirPath = state.prefsDir
+  if (state.watchersRunning !== undefined) watchersRunning = state.watchersRunning
 }
 
 export { processBatch as __processBatchForTests }
+
+/**
+ * Test seam — push raw parcel-shaped events (`{ path, type }`) through the same
+ * routing the live subscriptions use (folder expansion, stability gate,
+ * folder-removal reconciliation), then run the batch without the debounce wait.
+ * `errors` injects backend failures by scope ('package' | 'prefs' | 'local').
+ *
+ * `packageEvents` entries are `[event, libraryDirId]`.
+ */
+export async function __routeEventsForTests({
+  packageEvents = [],
+  prefsEvents = [],
+  localEvents = [],
+  errors = [],
+} = {}) {
+  for (const scope of errors) onWatcherError(scope, new Error('events were dropped'))
+  for (const [ev, libraryDirId = null] of packageEvents) {
+    await routeEvent({ ...ev, __source: 'package', __dirId: libraryDirId })
+  }
+  for (const ev of prefsEvents) await routeEvent({ ...ev, __source: 'prefs' })
+  for (const ev of localEvents) await routeEvent({ ...ev, __source: 'local' })
+  if (debounceTimer) {
+    clearTimeout(debounceTimer)
+    debounceTimer = null
+  }
+  await processBatch()
+}
 
 async function processBatch() {
   if (processing) {
@@ -459,18 +764,39 @@ async function processBatch() {
   // then the watcher's resulting events buffer here and drop on close. Without this,
   // every internal rename triggers a redundant follow-up batch that mtime+size
   // cache-hits but still costs a stat.
+  //
+  // The `finally` is load-bearing: anything escaping the window would otherwise
+  // leave `processing` stuck true and silently wedge every later batch.
+  try {
+    await runBatch()
+  } finally {
+    processing = false
+  }
+}
+
+async function runBatch() {
   await withBulkWindow(async () => {
     const pkgEvents = new Map(pendingPackageEvents)
     const prefsEvents = new Map(pendingPrefsEvents)
     const localPrefsEvents = new Map(pendingLocalPrefs)
     const localContentChanged = pendingLocalContent
+    const restarts = pendingWatcherRestarts
+    const fullResync = pendingFullResync
+    const prefsResync = pendingPrefsResync
+    const prefsReload = pendingPrefsReload
     pendingPackageEvents.clear()
     pendingPrefsEvents.clear()
     pendingLocalPrefs.clear()
     pendingLocalContent = false
+    pendingWatcherRestarts = new Set()
+    pendingFullResync = false
+    pendingPrefsResync = false
+    pendingPrefsReload = false
 
     let packagesChanged = false
     let contentsChanged = false
+    let resynced = false
+    let prefsRefreshed = false
     // Enabled filenames freshly added/changed on disk — fed to Hub enrichment only.
     // We deliberately do NOT cascade-enable their deps: a watcher event is an
     // *external* change (VaM, a sync tool, another app), and silently enabling
@@ -481,6 +807,25 @@ async function processBatch() {
     const newlyScannedEnabled = []
     /** @type {Array<{ filename: string, pkgType: string|null, contentItems: Array<any>, packageName: string, isNewInstall: boolean }>} */
     const autoHideCandidates = [] // freshly-scanned packages eligible for auto-hide rule application
+
+    // --- Lost-event recovery (see onWatcherError) ---
+    if (restarts.size > 0 || fullResync || prefsResync) {
+      const recovery = await recoverLostEvents({ restarts, fullResync, prefsResync })
+      resynced = recovery.resynced
+      prefsRefreshed = recovery.prefsRefreshed
+      if (prefsRefreshed) contentsChanged = true
+    }
+
+    // Folder deletion is an ordinary filesystem event, not a lost-event recovery:
+    // refresh immediately even if an unrelated backend error is in cooldown.
+    if (prefsReload && !resynced && !prefsRefreshed && vamDirPath) {
+      try {
+        setPrefsMap(await readAllPrefs(vamDirPath))
+        contentsChanged = true
+      } catch (err) {
+        console.warn('Watcher: prefs reload after folder deletion failed:', err.message)
+      }
+    }
 
     // --- Package events ---
     if (pkgEvents.size > 0) {
@@ -768,10 +1113,9 @@ async function processBatch() {
     if (localContentChanged) buildFromDb()
 
     // --- Notify renderer ---
-    if (packagesChanged) notify('packages:updated')
-    if (contentsChanged) notify('contents:updated')
+    if (packagesChanged || resynced) notify('packages:updated')
+    if (contentsChanged || resynced) notify('contents:updated')
   })
-  processing = false
 }
 
 /**
