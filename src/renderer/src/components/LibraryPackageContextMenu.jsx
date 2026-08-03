@@ -32,6 +32,8 @@ import { LabelsApplyMenuItems } from '@/components/labels/LabelsApplyMenuItems'
 import { singleTargetStateMap, bulkStateMap, applyLabelToFilenames } from '@/components/labels/labelHelpers'
 import { AlertDialog } from '@/components/ui/alert-dialog'
 import {
+  BulkForceRemoveDialogContent,
+  BulkLibraryRemoveDialogContent,
   DisablePackageDialogContent,
   ForceRemoveDialogContent,
   UninstallDialogContent,
@@ -172,6 +174,10 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, scope =
   const [uninstallOpen, setUninstallOpen] = useState(false)
   const [disableOpen, setDisableOpen] = useState(false)
   const [forceRemoveOpen, setForceRemoveOpen] = useState(false)
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
+  const [bulkDeletePackages, setBulkDeletePackages] = useState([])
+  const [bulkLibraryRemoveOpen, setBulkLibraryRemoveOpen] = useState(false)
+  const [bulkLibraryRemovePackages, setBulkLibraryRemovePackages] = useState([])
   const [archiveOpen, setArchiveOpen] = useState(false)
   const [installArchiveOpen, setInstallArchiveOpen] = useState(false)
   const auxDirs = useLibraryDirsStore((s) => s.aux)
@@ -268,7 +274,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, scope =
     try {
       await window.api.packages.forceRemove(p.filename)
     } catch (err) {
-      toast(`Remove failed: ${err.message}`)
+      toast(`Delete failed: ${err.message}`)
     }
   }
   const handleRedownload = async () => {
@@ -327,7 +333,7 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, scope =
   const bulkEnableUi = useMemo(() => libraryBulkEnabledState(bulkPackages), [bulkPackages])
 
   // How many of the bulk selection are archived — drives whether the bulk menu
-  // shows archive-shelf actions (Install/Remove) or the normal library actions.
+  // shows archive-shelf actions (Install / Delete from disk) or the normal library actions.
   const bulkArchivedCount = bulkPackages.filter((p) => isPackageArchived(p.storageState)).length
   const bulkNonArchivedFilenames = useMemo(
     () => bulkPackages.filter((p) => !isPackageArchived(p.storageState)).map((p) => p.filename),
@@ -512,10 +518,13 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, scope =
                   <ContextMenuSeparator />
                   <ContextMenuItem
                     variant="destructive"
-                    onSelect={() => void runLibraryBulkRemoveFromArchive(bulkPackages)}
+                    onSelect={() => {
+                      setBulkDeletePackages(bulkPackages.filter((p) => isPackageArchived(p.storageState)))
+                      setBulkDeleteOpen(true)
+                    }}
                   >
                     <Trash2 size={12} className="shrink-0" />
-                    Remove from archive
+                    Delete from disk…
                   </ContextMenuItem>
                 </>
               ) : (
@@ -603,9 +612,15 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, scope =
                       Archive…
                     </ContextMenuItem>
                   )}
-                  <ContextMenuItem variant="destructive" onSelect={() => void runLibraryBulkRemove(bulkPackages)}>
+                  <ContextMenuItem
+                    variant="destructive"
+                    onSelect={() => {
+                      setBulkLibraryRemovePackages(bulkPackages)
+                      setBulkLibraryRemoveOpen(true)
+                    }}
+                  >
                     <Trash2 size={12} className="shrink-0" />
-                    Remove
+                    Remove…
                   </ContextMenuItem>
                 </>
               )}
@@ -775,9 +790,13 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, scope =
               {isArchived ? (
                 <>
                   <ContextMenuSeparator />
-                  <ContextMenuItem variant="destructive" onSelect={() => void handleForceRemove()}>
+                  <ContextMenuItem
+                    variant="destructive"
+                    onSelect={() => openConfirm(setForceRemoveOpen)}
+                    disabled={!detail}
+                  >
                     <Trash2 size={12} className="shrink-0" />
-                    Remove from archive
+                    Delete from disk…
                   </ContextMenuItem>
                 </>
               ) : (
@@ -866,6 +885,42 @@ export function LibraryPackageContextMenu({ pkg, updateInfo, onNavigate, scope =
             name={displayName(confirmDetail)}
             hasDependents={(confirmDetail.dependents?.length ?? 0) > 0}
             onConfirm={handleForceRemove}
+          />
+        ) : null}
+      </AlertDialog>
+
+      <AlertDialog
+        open={bulkDeleteOpen}
+        onOpenChange={(open) => {
+          setBulkDeleteOpen(open)
+          if (!open) setBulkDeletePackages([])
+        }}
+      >
+        {bulkDeleteOpen && bulkDeletePackages.length > 0 ? (
+          <BulkForceRemoveDialogContent
+            packages={bulkDeletePackages}
+            onConfirm={() => {
+              setBulkDeleteOpen(false)
+              void runLibraryBulkRemoveFromArchive(bulkDeletePackages)
+            }}
+          />
+        ) : null}
+      </AlertDialog>
+
+      <AlertDialog
+        open={bulkLibraryRemoveOpen}
+        onOpenChange={(open) => {
+          setBulkLibraryRemoveOpen(open)
+          if (!open) setBulkLibraryRemovePackages([])
+        }}
+      >
+        {bulkLibraryRemoveOpen && bulkLibraryRemovePackages.length > 0 ? (
+          <BulkLibraryRemoveDialogContent
+            packages={bulkLibraryRemovePackages}
+            onConfirm={() => {
+              setBulkLibraryRemoveOpen(false)
+              void runLibraryBulkRemove(bulkLibraryRemovePackages)
+            }}
           />
         ) : null}
       </AlertDialog>

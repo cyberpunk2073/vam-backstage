@@ -37,6 +37,46 @@ function depNames(deps) {
   return names.join(', ') + (deps.length > 2 ? ` +${deps.length - 2}` : '')
 }
 
+/**
+ * Local-only callout shared by deletion confirms.
+ * `strong` — intentional delete (uninstall / force-remove / archive exit).
+ * `trash` — orphan cleanup; irreplaceable but likely junk.
+ */
+export function LocalOnlyDeletionNote({ packages, tone = 'strong' }) {
+  const localOnly = packages.filter((p) => p.isLocalOnly)
+  if (!localOnly.length) return null
+  const n = localOnly.length
+
+  if (tone === 'trash') {
+    return (
+      <div>
+        <p className="text-warning font-medium">
+          {n} local-only package{n !== 1 ? 's are' : ' is'} not on the Hub — unused in practice, but
+          {n !== 1 ? ' they' : ' it'} cannot be re-downloaded if you change your mind:
+        </p>
+        <NameList items={localOnly} getName={(p) => p.filename} />
+      </div>
+    )
+  }
+
+  if (n === 1 && packages.length === 1) {
+    return (
+      <p className="text-warning font-medium">
+        This package is not available on the Hub. Once deleted, you will not be able to reinstall it.
+      </p>
+    )
+  }
+  return (
+    <div>
+      <p className="text-warning font-medium">
+        {n} local-only package{n !== 1 ? 's are' : ' is'} not available on the Hub and cannot be reinstalled after
+        deletion:
+      </p>
+      <NameList items={localOnly} getName={(p) => p.filename} />
+    </div>
+  )
+}
+
 /** Non-archived dependents — the only ones that demote on uninstall (Rule 1). */
 export function hasPinningDependents(pkg) {
   return (pkg.dependents || []).some((d) => !isPackageArchived(d.storageState))
@@ -83,11 +123,7 @@ export function UninstallDialogContent({ pkg, name, onConfirm }) {
         </AlertDialogTitle>
         <AlertDialogDescription asChild>
           <div className="space-y-2 select-text cursor-text">
-            {pkg.isLocalOnly && !demote && !relocate && (
-              <p className="text-warning font-medium">
-                This package is not available on the Hub. You will not be able to reinstall it.
-              </p>
-            )}
+            {!demote && !relocate && <LocalOnlyDeletionNote packages={[pkg]} />}
             {demote ? (
               <p>
                 This package is still used by <strong className={EMPHASIS}>{depNames(pinning)}</strong>. It will be kept
@@ -183,20 +219,17 @@ export function DisablePackageDialogContent({ pkg, name, onConfirm }) {
 
 export function ForceRemoveDialogContent({ pkg, name, hasDependents, onConfirm }) {
   const dependents = pkg.dependents || []
+  const localOnly = !!pkg.isLocalOnly
 
   return (
     <AlertDialogContent>
       <AlertDialogHeader>
         <AlertDialogTitle className="select-text cursor-text">
-          {hasDependents ? `Force remove ${name}?` : `Remove ${name}?`}
+          {hasDependents ? `Force delete ${name}?` : `Delete ${name} from disk?`}
         </AlertDialogTitle>
         <AlertDialogDescription asChild>
           <div className="space-y-2 select-text cursor-text">
-            {pkg.isLocalOnly && (
-              <p className="text-warning font-medium">
-                This package is not available on the Hub. You will not be able to reinstall it.
-              </p>
-            )}
+            <LocalOnlyDeletionNote packages={[pkg]} />
             <p>The package file ({formatBytes(pkg.sizeBytes)}) will be permanently deleted from disk.</p>
             {hasDependents ? (
               <>
@@ -209,15 +242,93 @@ export function ForceRemoveDialogContent({ pkg, name, hasDependents, onConfirm }
                 <p className="text-error">This cannot be undone.</p>
               </>
             ) : (
-              <p>Nothing depends on this package, so it is safe to remove.</p>
+              <p>Nothing depends on this package.</p>
             )}
           </div>
         </AlertDialogDescription>
       </AlertDialogHeader>
       <AlertDialogFooter>
         <AlertDialogCancel>Cancel</AlertDialogCancel>
-        <AlertDialogAction variant={hasDependents ? 'destructive' : 'destructive-outline'} onClick={onConfirm}>
-          {hasDependents ? 'Force Remove' : 'Remove'}
+        <AlertDialogAction
+          variant={hasDependents || localOnly ? 'destructive' : 'destructive-outline'}
+          onClick={onConfirm}
+        >
+          {hasDependents ? 'Force Delete' : localOnly ? 'Delete permanently' : 'Delete'}
+        </AlertDialogAction>
+      </AlertDialogFooter>
+    </AlertDialogContent>
+  )
+}
+
+/** Bulk permanent delete (archive shelf). Always deletes; escalates when local-only. */
+export function BulkForceRemoveDialogContent({ packages, onConfirm }) {
+  const count = packages.length
+  const irreversible = packages.some((p) => p.isLocalOnly)
+  const totalBytes = packages.reduce((sum, p) => sum + (p.sizeBytes || 0), 0)
+
+  return (
+    <AlertDialogContent>
+      <AlertDialogHeader>
+        <AlertDialogTitle className="select-text cursor-text">
+          Delete {count} package{count !== 1 ? 's' : ''} from disk?
+        </AlertDialogTitle>
+        <AlertDialogDescription asChild>
+          <div className="space-y-2 select-text cursor-text">
+            <p>
+              {count} package file{count !== 1 ? 's' : ''} ({formatBytes(totalBytes)}) will be permanently deleted from
+              disk.
+            </p>
+            <LocalOnlyDeletionNote packages={packages} />
+            <p className="text-error">This cannot be undone.</p>
+          </div>
+        </AlertDialogDescription>
+      </AlertDialogHeader>
+      <AlertDialogFooter>
+        <AlertDialogCancel>Cancel</AlertDialogCancel>
+        <AlertDialogAction variant="destructive" onClick={onConfirm}>
+          {irreversible ? 'Delete permanently' : 'Delete'}
+        </AlertDialogAction>
+      </AlertDialogFooter>
+    </AlertDialogContent>
+  )
+}
+
+/**
+ * Bulk library Remove (non-archive). Mix of uninstall (directs, may demote) and
+ * force-remove (deps). Shares the local-only callout with permanent-delete dialogs.
+ */
+export function BulkLibraryRemoveDialogContent({ packages, onConfirm }) {
+  const direct = packages.filter((p) => p.isDirect)
+  const dep = packages.filter((p) => !p.isDirect)
+  const irreversible = packages.some((p) => p.isLocalOnly)
+
+  return (
+    <AlertDialogContent>
+      <AlertDialogHeader>
+        <AlertDialogTitle className="select-text cursor-text">
+          Remove {packages.length} package{packages.length !== 1 ? 's' : ''}?
+        </AlertDialogTitle>
+        <AlertDialogDescription asChild>
+          <div className="space-y-2 select-text cursor-text">
+            {direct.length > 0 && (
+              <p>
+                {direct.length} installed package{direct.length !== 1 ? 's' : ''} will be uninstalled
+                {direct.length > 1 ? '. Packages' : ', or'} demoted to dependency if other packages depend on them.
+              </p>
+            )}
+            {dep.length > 0 && (
+              <p>
+                {dep.length} dependenc{dep.length !== 1 ? 'ies' : 'y'} will be removed from disk.
+              </p>
+            )}
+            <LocalOnlyDeletionNote packages={packages} />
+          </div>
+        </AlertDialogDescription>
+      </AlertDialogHeader>
+      <AlertDialogFooter>
+        <AlertDialogCancel>Cancel</AlertDialogCancel>
+        <AlertDialogAction variant="destructive" onClick={onConfirm}>
+          {irreversible ? 'Remove permanently' : 'Remove'}
         </AlertDialogAction>
       </AlertDialogFooter>
     </AlertDialogContent>

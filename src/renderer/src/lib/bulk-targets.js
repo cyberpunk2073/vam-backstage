@@ -103,6 +103,7 @@ export async function runLibraryBulkInstallFromArchive(items = resolveLibraryBul
   }
 }
 
+/** Permanently delete archived packages from disk (force-remove). Caller confirms first. */
 export async function runLibraryBulkRemoveFromArchive(items = resolveLibraryBulkPackages()) {
   const fnames = items.filter((p) => isPackageArchived(p.storageState)).map((p) => p.filename)
   if (!fnames.length) return
@@ -111,7 +112,7 @@ export async function runLibraryBulkRemoveFromArchive(items = resolveLibraryBulk
     useLibraryStore.getState().clearSelection()
     await useLibraryStore.getState().fetchPackages()
   } catch (err) {
-    toast(`Remove failed: ${err.message}`)
+    toast(`Delete failed: ${err.message}`)
   }
 }
 

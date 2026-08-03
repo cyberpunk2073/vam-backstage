@@ -113,6 +113,9 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 import { LibraryPackageContextMenu } from '@/components/LibraryPackageContextMenu'
 import { SelectionPanel } from '@/components/SelectionPanel'
 import {
+  BulkForceRemoveDialogContent,
+  BulkLibraryRemoveDialogContent,
+  LocalOnlyDeletionNote,
   UninstallDialogContent,
   DisablePackageDialogContent,
   ForceRemoveDialogContent,
@@ -776,13 +779,7 @@ export default function LibraryView({ onNavigate, navContext }) {
   const bulkEnabledState = useMemo(() => libraryBulkEnabledState(bulkSelectedPackages), [bulkSelectedPackages])
 
   const [bulkRemoveOpen, setBulkRemoveOpen] = useState(false)
-
-  const bulkRemoveSummary = useMemo(() => {
-    const items = bulkSelectedPackages
-    const direct = items.filter((p) => p.isDirect)
-    const dep = items.filter((p) => !p.isDirect)
-    return { items, direct, dep }
-  }, [bulkSelectedPackages])
+  const [bulkArchiveDeleteOpen, setBulkArchiveDeleteOpen] = useState(false)
 
   const runBulkToggleEnabled = useCallback(
     () => void runLibraryBulkToggleEnabled(bulkSelectedPackages),
@@ -802,7 +799,7 @@ export default function LibraryView({ onNavigate, navContext }) {
   )
 
   const runBulkRemoveFromArchive = useCallback(async () => {
-    setBulkRemoveOpen(false)
+    setBulkArchiveDeleteOpen(false)
     await runLibraryBulkRemoveFromArchive(bulkSelectedPackages)
   }, [bulkSelectedPackages])
 
@@ -909,11 +906,11 @@ export default function LibraryView({ onNavigate, navContext }) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => void runBulkRemoveFromArchive()}
+                  onClick={() => setBulkArchiveDeleteOpen(true)}
                   className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded cursor-pointer border border-border text-error hover:bg-error/10 text-[11px]"
                 >
                   <Trash2 size={16} className="shrink-0" />
-                  Remove from archive
+                  Delete from disk
                 </button>
               </>
             ) : (
@@ -955,7 +952,7 @@ export default function LibraryView({ onNavigate, navContext }) {
                   <Trash2 size={16} className="shrink-0" />
                   Remove
                 </button>
-                {bulkRemoveSummary.dep.length > 0 && (
+                {bulkSelectedPackages.some((p) => !p.isDirect) && (
                   <button
                     type="button"
                     onClick={() => void runBulkPromote()}
@@ -1255,37 +1252,18 @@ export default function LibraryView({ onNavigate, navContext }) {
         ))}
 
       <AlertDialog open={bulkRemoveOpen} onOpenChange={setBulkRemoveOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="select-text cursor-text">
-              Remove {bulkRemoveSummary.items.length} package{bulkRemoveSummary.items.length !== 1 ? 's' : ''}?
-            </AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-2 select-text cursor-text">
-                {bulkRemoveSummary.direct.length > 0 && (
-                  <p>
-                    {bulkRemoveSummary.direct.length} installed package
-                    {bulkRemoveSummary.direct.length !== 1 ? 's' : ''} will be uninstalled
-                    {bulkRemoveSummary.direct.length > 1 ? '. Packages' : ', or'} demoted to dependency if other
-                    packages depend on them.
-                  </p>
-                )}
-                {bulkRemoveSummary.dep.length > 0 && (
-                  <p>
-                    {bulkRemoveSummary.dep.length} dependenc{bulkRemoveSummary.dep.length !== 1 ? 'ies' : 'y'} will be
-                    removed from disk.
-                  </p>
-                )}
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={() => void runBulkRemove()}>
-              Remove
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
+        {bulkRemoveOpen ? (
+          <BulkLibraryRemoveDialogContent packages={bulkSelectedPackages} onConfirm={() => void runBulkRemove()} />
+        ) : null}
+      </AlertDialog>
+
+      <AlertDialog open={bulkArchiveDeleteOpen} onOpenChange={setBulkArchiveDeleteOpen}>
+        {bulkArchiveDeleteOpen ? (
+          <BulkForceRemoveDialogContent
+            packages={bulkSelectedPackages.filter((p) => isPackageArchived(p.storageState))}
+            onConfirm={() => void runBulkRemoveFromArchive()}
+          />
+        ) : null}
       </AlertDialog>
     </div>
   )
@@ -1421,6 +1399,7 @@ function ToolbarActions({
 
   if (statusFilter === 'orphan' && statusCounts.orphan > 0) {
     const orphanSize = filtered.reduce((sum, p) => sum + (p.sizeBytes || 0), 0)
+    const localOnlyOrphans = filtered.filter((p) => p.isLocalOnly)
     return (
       <AlertDialog>
         <AlertDialogTrigger asChild>
@@ -1430,14 +1409,15 @@ function ToolbarActions({
         </AlertDialogTrigger>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove all orphan dependencies?</AlertDialogTitle>
+            <AlertDialogTitle className="select-text cursor-text">Remove all orphan dependencies?</AlertDialogTitle>
             <AlertDialogDescription asChild>
-              <div className="space-y-2">
+              <div className="space-y-2 select-text cursor-text">
                 <p>
                   {statusCounts.orphan} orphan dependenc{statusCounts.orphan !== 1 ? 'ies' : 'y'} will be permanently
                   deleted from disk.
                 </p>
                 <p>These packages are not used by any installed package.</p>
+                <LocalOnlyDeletionNote packages={localOnlyOrphans} tone="trash" />
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -1962,7 +1942,7 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
     try {
       await window.api.packages.forceRemove(pkg.filename)
     } catch (err) {
-      toast(`Remove failed: ${err.message}`)
+      toast(`Delete failed: ${err.message}`)
     }
   }
   const handleRedownload = async () => {
@@ -2136,7 +2116,7 @@ function LibraryDetailPanel({ pkg, onNavigate, onFilterAuthor, updateInfo }) {
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button variant="destructive-outline" size="sm" className="w-full text-[10px]">
-                      <Trash2 size={10} /> Remove from archive
+                      <Trash2 size={10} /> Delete from disk
                     </Button>
                   </AlertDialogTrigger>
                   <ForceRemoveDialogContent
