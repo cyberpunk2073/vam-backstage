@@ -1177,6 +1177,7 @@ export default function ContentView({ onNavigate, navContext }) {
           kind="content"
           items={bulkSelectedItems}
           onRemove={(item) => toggleSelected(item.id)}
+          onDeselect={() => collapseSelection()}
           onNavigate={onNavigate}
           onToggleHidden={handleToggleHidden}
           onToggleFavorite={handleToggleFavorite}

@@ -15,7 +15,7 @@ const NAME_H = 34
  * click is a no-op (avoid accidental deselect). Right-click opens the single-item
  * menu with "Select only this" at the top.
  */
-export function SelectionPanel({ kind, items, onRemove, onNavigate, onToggleHidden, onToggleFavorite }) {
+export function SelectionPanel({ kind, items, onRemove, onDeselect, onNavigate, onToggleHidden, onToggleFavorite }) {
   const [panelWidth] = usePersistedPanelWidth('panel_width_detail', {
     min: 260,
     max: 500,
@@ -27,12 +27,25 @@ export function SelectionPanel({ kind, items, onRemove, onNavigate, onToggleHidd
 
   return (
     <div className="shrink-0 border-l border-border bg-surface flex flex-col min-h-0" style={{ width: panelWidth }}>
-      <div className="p-4 pb-2 shrink-0">
-        <div className="text-sm font-semibold text-text-primary">
-          {n} {noun}
-          {n !== 1 ? 's' : ''} selected
+      <div className="p-4 pb-2 shrink-0 flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold text-text-primary">
+            {n} {noun}
+            {n !== 1 ? 's' : ''} selected
+          </div>
+          {totalSize != null && <div className={cn(META_DENSE, 'mt-1')}>{formatBytes(totalSize)}</div>}
         </div>
-        {totalSize != null && <div className={cn(META_DENSE, 'mt-1')}>{formatBytes(totalSize)}</div>}
+        {onDeselect && (
+          <button
+            type="button"
+            title="Deselect (Esc)"
+            aria-label="Deselect"
+            onClick={onDeselect}
+            className="p-1.5 -mr-1.5 -mt-1 rounded cursor-pointer text-text-aside hover:text-text-primary hover:bg-elevated shrink-0"
+          >
+            <X size={16} />
+          </button>
+        )}
       </div>
       <div className="flex-1 min-h-0 flex flex-col">
         <VirtualGrid

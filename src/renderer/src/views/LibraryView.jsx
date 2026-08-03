@@ -1240,6 +1240,7 @@ export default function LibraryView({ onNavigate, navContext }) {
             kind="library"
             items={bulkSelectedPackages}
             onRemove={(pkg) => toggleSelected(pkg.filename)}
+            onDeselect={() => collapseSelection()}
             onNavigate={onNavigate}
           />
         ) : selectedDetail ? (
