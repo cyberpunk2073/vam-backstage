@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { PackagePlus, Loader2 } from 'lucide-react'
 import {
   AlertDialog,
@@ -420,18 +421,23 @@ export default function DropImport() {
 
   return (
     <>
-      {dragging && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-base/70 backdrop-blur-sm pointer-events-none">
-          <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-accent-blue/60 bg-surface/80 px-10 py-8 text-center shadow-2xl">
-            <PackagePlus size={40} className="text-accent-blue" />
-            <div className="text-sm font-medium text-text-primary">Drop to add to your library</div>
-            <div className={CLARIFY}>Release .var files or folders to import them</div>
-          </div>
-        </div>
-      )}
+      {dragging &&
+        createPortal(
+          <div className="fixed inset-0 z-60 flex items-center justify-center bg-base/70 backdrop-blur-sm pointer-events-none">
+            <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-accent-blue/60 bg-surface/80 px-10 py-8 text-center shadow-2xl">
+              <PackagePlus size={40} className="text-accent-blue" />
+              <div className="text-sm font-medium text-text-primary">Drop to add to your library</div>
+              <div className={CLARIFY}>Release .var files or folders to import them</div>
+            </div>
+          </div>,
+          document.body,
+        )}
 
       <AlertDialog open={open} onOpenChange={(o) => !o && cancel()}>
-        <AlertDialogContent onEscapeKeyDown={(e) => (importing || scanning) && e.preventDefault()}>
+        <AlertDialogContent
+          className="data-[size=default]:max-w-[min(28rem,calc(100%-2rem))]"
+          onEscapeKeyDown={(e) => (importing || scanning) && e.preventDefault()}
+        >
           {scanning && !pending ? (
             <AlertDialogHeader>
               <AlertDialogMedia>
@@ -450,13 +456,13 @@ export default function DropImport() {
                   {willMove ? 'Move' : 'Add'} {count} package{count === 1 ? '' : 's'} to your library?
                 </AlertDialogTitle>
                 <AlertDialogDescription asChild>
-                  <div>
+                  <div className="min-w-0">
                     <p>
                       {willMove
                         ? `${formatBytes(pending?.totalBytes ?? 0)} moved into your VaM library and scanned as direct installs. The original files are removed.`
                         : `${formatBytes(pending?.totalBytes ?? 0)} copied into your VaM library and scanned as direct installs.`}
                     </p>
-                    <ul className="mt-2 max-h-40 overflow-y-auto space-y-0.5">
+                    <ul className="mt-2 max-h-40 min-w-0 overflow-y-auto space-y-0.5">
                       {pending?.items.map((m, i) => (
                         <li
                           key={`${m.name}-${i}`}
