@@ -405,16 +405,18 @@ Unknown id/name → `{"status": "error", "error": "Resource not found.", "resour
 - `downloadUrl` ≡ `latestUrl` in every capture. No `urlHosted` on deps.
 - **Unresolvable** deps keep `packageName`/`filename`/`version`/`licenseType`; everything else is JSON `null` and `promotional_link` is absent. (Contrast `findPackages`, which uses the **string** `"null"`.)
 
-**`dependencies`** is always a single-key object. The key depends on query shape:
+**`dependencies`** is keyed by the package(s) whose deps are listed — usually one key, but **multi-var resources** (common for Paid posts that ship several `.var`s) return **one key per attached package**, each with that package's own dep array. When `hubFiles` is omitted (typical for Paid), those outer keys are the only signal of which packages belong to the listing.
 
-| Query            | Has deps | Outer key                              |
-| ---------------- | -------- | -------------------------------------- |
-| `package_name=X` | no       | echoes `X` verbatim (any suffix)       |
-| `package_name=X` | yes      | package base name (no version segment) |
-| `resource_id=N`  | no       | `""`                                   |
-| `resource_id=N`  | yes      | package base name                      |
+| Query            | Has deps | Outer key                                     |
+| ---------------- | -------- | --------------------------------------------- |
+| `package_name=X` | no       | echoes `X` verbatim (any suffix)              |
+| `package_name=X` | yes      | package base name, or `X` echoed with suffix  |
+| `resource_id=N`  | no       | `""`                                          |
+| `resource_id=N`  | yes      | package base name (multi-var → multiple keys) |
 
-Use the array, not the key. Empty deps → value `[]` (e.g. `"dependencies": {"AshAuryn.Expressions.latest": []}` or `"dependencies": {"": []}`).
+Use the array for dep rows; use the keys to tell which packages are primaries of this resource. Empty deps → value `[]` (e.g. `"dependencies": {"AshAuryn.Expressions.latest": []}` or `"dependencies": {"": []}`).
+
+**Name-lookup false positives:** `package_name` for a package that is only someone else's dependency can return an unrelated resource that depends on it. Treat a hit as belonging to the queried package only if that package appears in `hubFiles[*].filename` or as a `dependencies` outer key.
 
 **`hubFiles[]` entries** (same shape here and in `getResources`):
 

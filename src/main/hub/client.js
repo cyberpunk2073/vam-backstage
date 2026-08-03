@@ -231,32 +231,97 @@ export async function getResourceDetail(resourceId) {
   return data
 }
 
+/** Trailing VaM version segment: `12`, `latest`, or `min178`. */
+function isVersionSegment(seg) {
+  return seg === 'latest' || /^\d+$/.test(seg) || /^min\d+$/i.test(seg)
+}
+
+/**
+ * Strip `.var` and a trailing version segment → `Creator.Package`.
+ * `Author.Pkg.12.var` / `Author.Pkg.latest` / `Author.Pkg` → `Author.Pkg`.
+ */
+export function hubPackageBaseName(name) {
+  if (!name) return ''
+  const s = String(name).replace(/\.var$/i, '')
+  const parts = s.split('.')
+  if (parts.length >= 3 && isVersionSegment(parts[parts.length - 1])) {
+    return parts.slice(0, -1).join('.')
+  }
+  return s
+}
+
+/**
+ * Hub's package_name lookup can return a resource that merely *depends on* the
+ * queried package (common for unpaid PC assets pulled into paid looks). Accept
+ * only when the package is a primary file of that resource: listed in
+ * `hubFiles[]`, or an outer key of `dependencies` (paid multi-var listings put
+ * each attached `.var` there — Hub omits `hubFiles` for those).
+ */
+export function resourceDetailMatchesPackageName(detail, packageName) {
+  if (!detail?.resource_id || !packageName) return false
+  const base = hubPackageBaseName(packageName)
+  if (!base) return false
+
+  for (const f of detail.hubFiles || []) {
+    if (f?.filename && hubPackageBaseName(f.filename) === base) return true
+  }
+
+  for (const key of Object.keys(detail.dependencies || {})) {
+    if (!key) continue
+    // Keys are either the package base (`Creator.Pkg`) or the queried ref
+    // echoed verbatim (`Creator.Pkg.latest` / `.N`).
+    if (key === base || key === packageName || key === `${base}.latest`) return true
+    if (hubPackageBaseName(key) === base) return true
+  }
+  return false
+}
+
 /**
  * Look up resource detail by package base name (e.g. "Creator.PackageName").
  * Uses the Hub's package_name lookup with ".latest" suffix.
+ * Returns null when Hub answers with an unrelated resource that only lists the
+ * package as a dependency (see `resourceDetailMatchesPackageName`).
  */
 export async function getResourceDetailByName(packageName) {
   const key = 'pkg:' + packageName
   const cached = lruGet(cache.details, key)
-  if (cached) return cached
+  if (cached !== undefined) return cached
 
   // throwOnApiError:false so an authoritative "Resource not found" comes back as
   // null (a real negative answer the caller can cache), while transport/HTTP
   // failures still throw out of hubPost and are NOT mistaken for "absent".
-  const data = await hubPost(
+  const queried = packageName + '.latest'
+  let data = await hubPost(
     {
       action: 'getResourceDetail',
       latest_image: 'Y',
-      package_name: packageName + '.latest',
+      package_name: queried,
     },
     { throwOnApiError: false },
   )
 
-  try {
-    if (data?.resource_id && upsertHubResourceDetail(String(data.resource_id), data)) notify('wishlist:updated')
-  } catch {}
+  if (data?.resource_id && !resourceDetailMatchesPackageName(data, packageName)) {
+    hubDebug('name lookup rejected (package not primary on resource)', {
+      packageName,
+      resource_id: data.resource_id,
+      title: data.title,
+      package_id: data.package_id,
+    })
+    // Still persist the payload under its real resource_id — it's valid detail
+    // for that listing — but treat the *name* as unresolved.
+    try {
+      if (upsertHubResourceDetail(String(data.resource_id), data)) notify('wishlist:updated')
+    } catch {}
+    lruSet(cache.details, String(data.resource_id), data, MAX_DETAILS)
+    data = null
+  } else {
+    try {
+      if (data?.resource_id && upsertHubResourceDetail(String(data.resource_id), data)) notify('wishlist:updated')
+    } catch {}
+    if (data?.resource_id) lruSet(cache.details, String(data.resource_id), data, MAX_DETAILS)
+  }
+
   lruSet(cache.details, key, data, MAX_DETAILS)
-  if (data?.resource_id) lruSet(cache.details, String(data.resource_id), data, MAX_DETAILS)
   return data
 }
 

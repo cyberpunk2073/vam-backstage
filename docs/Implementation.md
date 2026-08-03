@@ -1085,7 +1085,7 @@ The Hub API is a single POST endpoint (`https://hub.virtamate.com/citizenx/api.p
 - **`getFilters()`**: Returns filter metadata (categories, tags, sort options, etc.)
 - **`searchResources(params)`**: Paginated full-text search with type, pricing, author, tag, license, and sort filters. Default `perpage` is 60 (`HUB_PER_PAGE`).
 - **`getResourceDetail(resourceId)`**: Full resource detail including `hubFiles` array (one entry per `.var` version)
-- **`getResourceDetailByName(packageName)`**: Lookup by package group name
+- **`getResourceDetailByName(packageName)`**: Lookup by package group name. Rejects Hub hits where the package is only a dependency of the returned resource (requires membership in `hubFiles[]` or a `dependencies` outer key) so unpaid PC assets are not linked to whichever paid look first listed them.
 - **`findPackages(refs)`**: Batch lookup of package references — returns `{ref: hubFileData}` for available packages. A version the Hub doesn't have resolves to the nearest one it does (`Creator.Pkg.9999` → `Creator.Pkg.6.var`) rather than failing, so callers that asked about a _specific_ version must compare `hubFileData.filename` against what they requested. Only an unknown package **name** yields the string-`"null"` placeholder.
 
 ### Windowed Hub gallery
