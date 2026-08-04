@@ -506,15 +506,16 @@ export default function DropImport() {
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogCancel
-                  disabled={importing}
-                  onClick={(e) => {
-                    e.preventDefault()
-                    cancel()
-                  }}
-                >
-                  Cancel
-                </AlertDialogCancel>
+                {!importing && (
+                  <AlertDialogCancel
+                    onClick={(e) => {
+                      e.preventDefault()
+                      cancel()
+                    }}
+                  >
+                    Cancel
+                  </AlertDialogCancel>
+                )}
                 <AlertDialogAction
                   disabled={importing}
                   onClick={(e) => {
