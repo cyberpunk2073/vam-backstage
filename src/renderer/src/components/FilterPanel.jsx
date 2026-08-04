@@ -125,13 +125,16 @@ export default function FilterPanel({
                   placeholder="Search…"
                   value={search}
                   onChange={(e) => onSearchChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') onSearchChange(search, { immediate: true })
+                  }}
                   className="h-8 bg-elevated pl-8 pr-7 text-xs"
                 />
                 {search && (
                   <Button
                     variant="ghost"
                     size="icon-xs"
-                    onClick={() => onSearchChange('')}
+                    onClick={() => onSearchChange('', { immediate: true })}
                     className="absolute right-1 top-1 text-text-aside hover:text-text-secondary"
                   >
                     <X size={12} />

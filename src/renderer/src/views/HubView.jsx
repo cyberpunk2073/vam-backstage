@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, Activity } from 'react'
-import { Grid2x2, Grid3x3, RefreshCw, Pin, Ban } from 'lucide-react'
+import { Grid2x2, Grid3x3, RefreshCw, Pin, Ban, Loader2 } from 'lucide-react'
 import { dismissTransientOverlays } from '@/lib/dismissOverlays'
 import { CONTENT_TYPES, compareContentTypes, getTypeColor, formatTimeAgo } from '@/lib/utils'
 import {
@@ -7,10 +7,12 @@ import {
   hubFilterSignature,
   HUB_FILTER_DEFAULTS,
   WISHLIST_FILTER_DEFAULTS,
+  CATALOG_FILTER_DEFAULTS,
   isHubEmptySlot,
 } from '@/stores/useHubStore'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { useWishlistStore } from '@/stores/useWishlistStore'
+import { useCatalogStore } from '@/stores/useCatalogStore'
 import { useDownloadStore } from '@/stores/useDownloadStore'
 import { useInstalledStore } from '@/stores/useInstalledStore'
 import { HubCard } from '@/components/PackageCard'
@@ -18,7 +20,7 @@ import HubDetail from '@/components/HubDetail'
 import FilterPanel, { sectionActive } from '@/components/FilterPanel'
 import { LICENSE_FILTER_OPTIONS, getHubResourceLicense } from '@/lib/licenses'
 import { matchesSmartQuery, parseSmartQuery } from '@/lib/smart-search'
-import { WISHLIST_IS_FLAGS, wishlistFlags } from '@/lib/search-text'
+import { WISHLIST_IS_FLAGS, CATALOG_IS_FLAGS, wishlistFlags } from '@/lib/search-text'
 import { matchesPolarityList, matchesAuthorFilter, matchesLicenseFilter } from '@/lib/filter-match'
 import { parseCommaTags, suggestionCounts } from '@/lib/suggestion-counts'
 import { SearchOnHubButton } from '@/components/SearchOnHubButton'
@@ -29,9 +31,13 @@ import { META_DENSE } from '@/lib/typography'
 import { HubBrowsedRail } from '@/components/HubBrowsedRail'
 import { useHubRangeLoader } from '@/hooks/useHubRangeLoader'
 import { useHubNavGestures } from '@/hooks/useHubNavGestures'
+import { useDebouncedCommit } from '@/hooks/useDebouncedCommit'
 
-/** Hub text search: avoid a network request on every keystroke */
-const HUB_SEARCH_DEBOUNCE_MS = 320
+/** Hub keyboard fields (search / author): avoid a network request on every keystroke. */
+const HUB_TEXT_DEBOUNCE_MS = 320
+/** Offline catalog keyboard fields: longer pause so typing doesn't refilter ~50k rows mid-word. */
+const CATALOG_TEXT_DEBOUNCE_MS = 1000
+const trimSearch = (v) => v.trim()
 /**
  * Medium HubCard footer height below the square thumb. Unlike LibraryCard, HubCard adds a
  * full-width action button row, so it's taller: author+stats block (~68px) + button row
@@ -73,6 +79,25 @@ const WISHLIST_SORT_FNS = {
   author: (a, b) => String(a.username || '').localeCompare(String(b.username || '')) || wlByAdded(a, b),
 }
 
+/** Offline catalog sorts — cache is one consistent snapshot, so last_update is valid. */
+const CATALOG_SORTS = [
+  { value: 'updated', label: 'Latest Update' },
+  { value: 'author', label: 'Author (A–Z)' },
+  { value: 'name', label: 'Name (A–Z)' },
+  { value: 'downloads', label: 'Downloads' },
+  { value: 'rating', label: 'Rating' },
+  { value: 'likes', label: 'Reaction Score' },
+]
+const catByUpdated = (a, b) => wlNum(b.last_update) - wlNum(a.last_update)
+const CATALOG_SORT_FNS = {
+  updated: catByUpdated,
+  downloads: (a, b) => wlNum(b.download_count) - wlNum(a.download_count) || catByUpdated(a, b),
+  rating: (a, b) => (parseFloat(b.rating_avg) || 0) - (parseFloat(a.rating_avg) || 0) || catByUpdated(a, b),
+  likes: (a, b) => wlNum(b.reaction_score) - wlNum(a.reaction_score) || catByUpdated(a, b),
+  name: (a, b) => String(a.title || '').localeCompare(String(b.title || '')) || catByUpdated(a, b),
+  author: (a, b) => String(a.username || '').localeCompare(String(b.username || '')) || catByUpdated(a, b),
+}
+
 /**
  * Tags on the stored snapshot mirror the hub detail `tags` field: a single
  * comma-separated string (same shape the library persists to `hub_tags`).
@@ -81,15 +106,15 @@ function parseSnapshotTags(r) {
   return parseCommaTags(r.tags)
 }
 
-/** All wishlist filter dimensions, in a fixed key order for facet cross-filtering. */
-const WISHLIST_FILTER_KEYS = ['search', 'type', 'tags', 'paid', 'author', 'license']
+/** Local gallery filter dimensions (Wishlist + Offline), fixed order for facet cross-filtering. */
+const LOCAL_HUB_FILTER_KEYS = ['search', 'type', 'tags', 'paid', 'author', 'license']
 
 /**
  * Build one predicate per filter dimension bound to the current filter state.
  * The gallery ANDs them all; Type/Paid facet counts AND every dimension except
  * their own (standard cross-filtered faceting).
  */
-function wishlistPredicates({ search, type, tags, paid, author, excludedAuthors, license }) {
+function localHubPredicates({ search, type, tags, paid, author, excludedAuthors, license }) {
   const { tokens } = parseSmartQuery(search)
   const tagItems = tags || []
   const excluded = excludedAuthors || []
@@ -113,17 +138,17 @@ function wishlistPredicates({ search, type, tags, paid, author, excludedAuthors,
 }
 
 /** Items passing every filter dimension except `exclude` — the input set for that facet's counts. */
-function wishlistItemsExcept(items, preds, exclude) {
-  const keys = WISHLIST_FILTER_KEYS.filter((k) => k !== exclude)
+function localHubItemsExcept(items, preds, exclude) {
+  const keys = LOCAL_HUB_FILTER_KEYS.filter((k) => k !== exclude)
   return items.filter((r) => keys.every((k) => preds[k](r)))
 }
 
-/** Apply the full wishlist filter/sort state to the raw snapshot list. */
-function filterAndSortWishlist(items, state) {
-  const preds = wishlistPredicates(state)
+/** Apply the full local filter/sort state to a snapshot list (Wishlist or Offline). */
+function filterAndSortLocalHub(items, state, sortFns = WISHLIST_SORT_FNS) {
+  const preds = localHubPredicates(state)
   // `.filter` always returns a fresh array, so sorting never mutates the store's.
-  const result = items.filter((r) => WISHLIST_FILTER_KEYS.every((k) => preds[k](r)))
-  return result.sort(WISHLIST_SORT_FNS[state.sort] || WISHLIST_SORT_FNS.added)
+  const result = items.filter((r) => LOCAL_HUB_FILTER_KEYS.every((k) => preds[k](r)))
+  return result.sort(sortFns[state.sort] || WISHLIST_SORT_FNS.added)
 }
 
 export default function HubView({ onNavigate }) {
@@ -148,6 +173,14 @@ export default function HubView({ onNavigate }) {
     wlExcludedAuthors,
     wlLicense,
     wlSort,
+    catSearch,
+    catType,
+    catTags,
+    catPaid,
+    catAuthor,
+    catExcludedAuthors,
+    catLicense,
+    catSort,
     detailResource,
     detailData,
     detailNonce,
@@ -175,8 +208,17 @@ export default function HubView({ onNavigate }) {
     setWlExcludedAuthors,
     setWlLicense,
     setWlSort,
+    setCatSearch,
+    setCatType,
+    setCatTags,
+    setCatPaid,
+    setCatAuthor,
+    setCatExcludedAuthors,
+    setCatLicense,
+    setCatSort,
     resetFilters,
     resetWishlistFilters,
+    resetCatalogFilters,
     setCardMode,
     setCardWidth,
     fetchResources,
@@ -188,6 +230,9 @@ export default function HubView({ onNavigate }) {
   } = useHubStore()
 
   const wishlistMode = galleryMode === 'wishlist'
+  const offlineMode = galleryMode === 'offline'
+  /** Wishlist + Offline: dense local list (same role `wishlistMode` had vs Hub). */
+  const localMode = wishlistMode || offlineMode
   const detailBackLabel = detailHistory.length > 0 ? detailHistory[detailHistory.length - 1].title : null
   const detailNavRef = useRef(null)
 
@@ -202,41 +247,28 @@ export default function HubView({ onNavigate }) {
     if (result?.navigateTo) onNavigate?.(result.navigateTo)
   }, [onNavigate])
 
-  const [searchDraft, setSearchDraft] = useState(search)
-  const searchDraftRef = useRef(search)
-  const searchDebounceRef = useRef(null)
   const [hubScrollEl, setHubScrollEl] = useState(null)
-  useEffect(() => {
-    setSearchDraft(search)
-    searchDraftRef.current = search
-  }, [search])
-  useEffect(
-    () => () => {
-      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
-    },
-    [],
+  // Keyboard fields: draft in the input, commit to store after idle (Enter / autocomplete flush early).
+  const { draft: searchDraft, onChange: handleSearchChange } = useDebouncedCommit(
+    search,
+    setSearch,
+    HUB_TEXT_DEBOUNCE_MS,
+    { prepare: trimSearch },
   )
-  const handleSearchChange = useCallback(
-    (value) => {
-      setSearchDraft(value)
-      searchDraftRef.current = value
-      if (searchDebounceRef.current) {
-        clearTimeout(searchDebounceRef.current)
-        searchDebounceRef.current = null
-      }
-      const trimmed = value.trim()
-      if (trimmed === '') {
-        setSearch('')
-        return
-      }
-      searchDebounceRef.current = setTimeout(() => {
-        searchDebounceRef.current = null
-        // Ignore stale timers (clear clicked after timeout fired, or newer keystrokes).
-        if (searchDraftRef.current !== value) return
-        setSearch(trimmed)
-      }, HUB_SEARCH_DEBOUNCE_MS)
-    },
-    [setSearch],
+  const { draft: authorDraft, onChange: handleAuthorChange } = useDebouncedCommit(
+    authorSearch,
+    setAuthorSearch,
+    HUB_TEXT_DEBOUNCE_MS,
+  )
+  const { draft: catSearchDraft, onChange: handleCatSearchChange } = useDebouncedCommit(
+    catSearch,
+    setCatSearch,
+    CATALOG_TEXT_DEBOUNCE_MS,
+  )
+  const { draft: catAuthorDraft, onChange: handleCatAuthorChange } = useDebouncedCommit(
+    catAuthor,
+    setCatAuthor,
+    CATALOG_TEXT_DEBOUNCE_MS,
   )
 
   const sortOptions = useMemo(() => filterOptions?.sort || [], [filterOptions])
@@ -289,6 +321,32 @@ export default function HubView({ onNavigate }) {
     })
   }, [])
 
+  // Offline catalog: feature-gated; load JSON on tab entry; scan progress from main.
+  const offlineCatalogEnabled = useCatalogStore((s) => s.enabled)
+  const catalogItems = useCatalogStore((s) => s.items)
+  const catalogLoading = useCatalogStore((s) => s.loading)
+  const catalogLoaded = useCatalogStore((s) => s.loaded)
+  const catalogScanning = useCatalogStore((s) => s.scanning)
+  const catalogScanProgress = useCatalogStore((s) => s.scanProgress)
+  const catalogScannedAt = useCatalogStore((s) => s.scannedAt)
+  useEffect(() => {
+    useCatalogStore.getState().loadEnabled()
+  }, [])
+  useEffect(() => {
+    if (!offlineCatalogEnabled && galleryMode === 'offline') setGalleryMode('hub')
+  }, [offlineCatalogEnabled, galleryMode, setGalleryMode])
+  // Load on Offline entry; drop RAM rows when leaving. Scan keeps running in main;
+  // leaving does not cancel — only Settings toggle / Cancel does.
+  useEffect(() => {
+    if (offlineMode && offlineCatalogEnabled) useCatalogStore.getState().load()
+    else if (!offlineMode) useCatalogStore.getState().unload()
+  }, [offlineMode, offlineCatalogEnabled])
+  useEffect(() => {
+    return window.api.onCatalogScanProgress((data) => {
+      useCatalogStore.setState({ scanProgress: data })
+    })
+  }, [])
+
   const [availableWidth, setAvailableWidth] = useState(0)
   const [gridCols, setGridCols] = useState(1)
   const handleGridLayout = useCallback(({ availableWidth: w, cols }) => {
@@ -299,7 +357,7 @@ export default function HubView({ onNavigate }) {
   // Wishlist filtering/sorting is client-side over the locally stored snapshots.
   const wishlistFiltered = useMemo(
     () =>
-      filterAndSortWishlist(wishlistItems, {
+      filterAndSortLocalHub(wishlistItems, {
         search: wlSearch,
         type: wlType,
         tags: wlTags,
@@ -311,6 +369,25 @@ export default function HubView({ onNavigate }) {
       }),
     [wishlistItems, wlSearch, wlType, wlTags, wlPaid, wlAuthor, wlExcludedAuthors, wlLicense, wlSort],
   )
+  const catalogFiltered = useMemo(
+    () =>
+      filterAndSortLocalHub(
+        catalogItems,
+        {
+          search: catSearch,
+          type: catType,
+          tags: catTags,
+          paid: catPaid,
+          author: catAuthor,
+          excludedAuthors: catExcludedAuthors,
+          license: catLicense,
+          sort: catSort,
+        },
+        CATALOG_SORT_FNS,
+      ),
+    [catalogItems, catSearch, catType, catTags, catPaid, catAuthor, catExcludedAuthors, catLicense, catSort],
+  )
+  const localFiltered = wishlistMode ? wishlistFiltered : offlineMode ? catalogFiltered : []
 
   // Per-mode scroll reset keys: each grid resets only on a filter change within its
   // own mode, so toggling Hub<->Wishlist keeps both scroll positions. The hub key
@@ -325,11 +402,16 @@ export default function HubView({ onNavigate }) {
       `${wlSearch}\0${wlType}\0${wlTags.map((t) => `${typeof t === 'object' ? t.value : t}:${t?.negate ? 1 : 0}`).join(',')}\0${wlPaid}\0${wlAuthor}\0${wlExcludedAuthors.join(',')}\0${wlLicense}\0${wlSort}`,
     [wlSearch, wlType, wlTags, wlPaid, wlAuthor, wlExcludedAuthors, wlLicense, wlSort],
   )
+  const catScrollResetKey = useMemo(
+    () =>
+      `${catSearch}\0${catType}\0${catTags.map((t) => `${typeof t === 'object' ? t.value : t}:${t?.negate ? 1 : 0}`).join(',')}\0${catPaid}\0${catAuthor}\0${catExcludedAuthors.join(',')}\0${catLicense}\0${catSort}`,
+    [catSearch, catType, catTags, catPaid, catAuthor, catExcludedAuthors, catLicense, catSort],
+  )
 
   const hubShowSkeleton = itemCount === 0 && (loading || !sort)
   const compactCards = cardMode === 'minimal'
   const { onRangeChange: onHubRangeChange, scrubbing } = useHubRangeLoader({
-    enabled: !wishlistMode && !!sort,
+    enabled: !localMode && !!sort,
     cols: gridCols,
   })
 
@@ -350,6 +432,8 @@ export default function HubView({ onNavigate }) {
       // Re-list the wishlist so its cards' installed/dep badges reconcile too
       // (wishlist items aren't part of the hub sparse map, so the block below misses them).
       if (useWishlistStore.getState().loaded) useWishlistStore.getState().load()
+      // Only while Offline is loaded in memory (unloaded off-tab).
+      if (useCatalogStore.getState().loaded) useCatalogStore.getState().refreshInstallState()
 
       const { resourcesByIndex: byIndex } = useHubStore.getState()
       const entries = Object.entries(byIndex).filter(([, r]) => !isHubEmptySlot(r))
@@ -418,17 +502,19 @@ export default function HubView({ onNavigate }) {
       // wishlist author filter, in hub mode the hub search. The gallery mode can't
       // change while a detail overlay is open (the toggle sits behind it), so
       // reading it live also correctly reflects where the detail was opened from.
-      if (useHubStore.getState().galleryMode === 'wishlist') setWlAuthor(author)
+      const mode = useHubStore.getState().galleryMode
+      if (mode === 'wishlist') setWlAuthor(author)
+      else if (mode === 'offline') setCatAuthor(author)
       else setAuthorSearch(author)
     },
-    [setAuthorSearch, setWlAuthor],
+    [setAuthorSearch, setWlAuthor, setCatAuthor],
   )
 
   // --- Prev/Next navigation through the current gallery list ---
   // Wishlist mode steps a dense filtered array. Hub mode uses the sparse map's global
   // index (`detailIndex`) so the counter reflects true position in the full result set.
-  const wishlistViewRef = useRef(wishlistFiltered)
-  wishlistViewRef.current = wishlistFiltered
+  const wishlistViewRef = useRef(localFiltered)
+  wishlistViewRef.current = localFiltered
   // Enabled after the first Prev/Next within a panel-open session; gates neighbor
   // detail prefetch so users who never step through don't pay extra `hub:detail` requests.
   const detailPrefetchRef = useRef(false)
@@ -437,30 +523,28 @@ export default function HubView({ onNavigate }) {
   }, [detailResource])
 
   const currentDetailId = detailResource ? String(detailData?.resource_id ?? detailResource.resource_id ?? '') : ''
-  const wishlistDetailIdx = wishlistMode
+  const wishlistDetailIdx = localMode
     ? currentDetailId
-      ? wishlistFiltered.findIndex((r) => String(r.resource_id) === currentDetailId)
+      ? localFiltered.findIndex((r) => String(r.resource_id) === currentDetailId)
       : -1
     : -1
-  const hubDetailIdx = !wishlistMode && detailIndex != null ? detailIndex : -1
-  const detailIdx = wishlistMode ? wishlistDetailIdx : hubDetailIdx
+  const hubDetailIdx = !localMode && detailIndex != null ? detailIndex : -1
+  const detailIdx = localMode ? wishlistDetailIdx : hubDetailIdx
   // Hub: an unloaded hole still counts as a neighbor (Next may load it), so only an
   // all-empty remaining tail disables the pager.
   const hubHasNeighbor = (dir) => hubDetailIdx >= 0 && !!findNeighbor(hubDetailIdx + dir, dir)
-  const canPrevDetail = wishlistMode ? detailIdx > 0 : hubHasNeighbor(-1)
-  const canNextDetail = wishlistMode ? detailIdx >= 0 && detailIdx < wishlistFiltered.length - 1 : hubHasNeighbor(1)
+  const canPrevDetail = localMode ? detailIdx > 0 : hubHasNeighbor(-1)
+  const canNextDetail = localMode ? detailIdx >= 0 && detailIdx < localFiltered.length - 1 : hubHasNeighbor(1)
   // null → pager hidden (neighbor unknown, or dep-drill history is active)
   const detailPosition =
-    detailBackLabel || detailIdx < 0
-      ? null
-      : { n: detailIdx + 1, total: wishlistMode ? wishlistFiltered.length : itemCount }
+    detailBackLabel || detailIdx < 0 ? null : { n: detailIdx + 1, total: localMode ? localFiltered.length : itemCount }
 
   /** Step the open detail by `dir` (±1) through whichever list the gallery is showing. */
   const stepDetail = useCallback(
     async (dir) => {
       detailPrefetchRef.current = true
       const store = useHubStore.getState()
-      if (store.galleryMode === 'wishlist') {
+      if (store.galleryMode === 'wishlist' || store.galleryMode === 'offline') {
         const list = wishlistViewRef.current
         const cur = store.detailResource
           ? String(store.detailData?.resource_id ?? store.detailResource.resource_id ?? '')
@@ -490,22 +574,22 @@ export default function HubView({ onNavigate }) {
 
   // Prefetch the next hub slot when nearing an unloaded neighbor so Next is rarely a wait.
   useEffect(() => {
-    if (wishlistMode || hubDetailIdx < 0) return
+    if (localMode || hubDetailIdx < 0) return
     const hit = findNeighbor(hubDetailIdx + 1, 1)
     if (hit && !hit.item) useHubStore.getState().loadRange(hit.index, hit.index)
-  }, [wishlistMode, hubDetailIdx, findNeighbor, resourcesByIndex])
+  }, [localMode, hubDetailIdx, findNeighbor, resourcesByIndex])
 
   // Once stepping through, warm neighbor details into the main-process LRU cache
   // so Prev/Next resolve without a network round-trip (LRU may have evicted a
   // previously viewed item; Prev neighbors were never warmed until now).
   useEffect(() => {
-    if (wishlistMode || !detailPrefetchRef.current || hubDetailIdx < 0) return
+    if (localMode || !detailPrefetchRef.current || hubDetailIdx < 0) return
     const { prefetchDetail } = useHubStore.getState()
     for (const dir of [1, -1]) {
       const hit = findNeighbor(hubDetailIdx + dir, dir)
       if (hit?.item?.resource_id) prefetchDetail(hit.item.resource_id)
     }
-  }, [wishlistMode, hubDetailIdx, findNeighbor, resourcesByIndex])
+  }, [localMode, hubDetailIdx, findNeighbor, resourcesByIndex])
 
   const sections = useMemo(
     () => [
@@ -548,9 +632,9 @@ export default function HubView({ onNavigate }) {
         key: 'author',
         label: 'Author',
         type: 'text-autocomplete',
-        value: authorSearch,
+        value: authorDraft,
         default: HUB_FILTER_DEFAULTS.authorSearch,
-        onChange: setAuthorSearch,
+        onChange: handleAuthorChange,
         suggestions: userSuggestions,
         placeholder: 'Filter by author…',
       },
@@ -569,7 +653,7 @@ export default function HubView({ onNavigate }) {
       selectedType,
       paidFilter,
       selectedHubTags,
-      authorSearch,
+      authorDraft,
       license,
       sort,
       sortOptions,
@@ -579,7 +663,7 @@ export default function HubView({ onNavigate }) {
       setSelectedType,
       setPaidFilter,
       setSelectedHubTags,
-      setAuthorSearch,
+      handleAuthorChange,
       setLicense,
       setSort,
     ],
@@ -588,7 +672,7 @@ export default function HubView({ onNavigate }) {
   // Type/Paid: cross-filtered facet counts. Author/tag autocomplete uses overall
   // totals via wishlistSuggestCounts (same model as Library/Content).
   const wishlistFacets = useMemo(() => {
-    const preds = wishlistPredicates({
+    const preds = localHubPredicates({
       search: wlSearch,
       type: wlType,
       tags: wlTags,
@@ -603,11 +687,11 @@ export default function HubView({ onNavigate }) {
       return m
     }
     const addType = (r, m) => r.type && m.set(r.type, (m.get(r.type) || 0) + 1)
-    const typeFacet = bucket(wishlistItemsExcept(wishlistItems, preds, 'type'), addType)
+    const typeFacet = bucket(localHubItemsExcept(wishlistItems, preds, 'type'), addType)
 
     let free = 0
     let paid = 0
-    for (const r of wishlistItemsExcept(wishlistItems, preds, 'paid')) {
+    for (const r of localHubItemsExcept(wishlistItems, preds, 'paid')) {
       if (r.category === 'Free') free++
       else if (r.category === 'Paid') paid++
     }
@@ -644,6 +728,59 @@ export default function HubView({ onNavigate }) {
         tags: (r) => r.tags,
       }),
     [wishlistItems],
+  )
+
+  // Offline catalog: same facet model over the cached list.
+  const catalogFacets = useMemo(() => {
+    const preds = localHubPredicates({
+      search: catSearch,
+      type: catType,
+      tags: catTags,
+      paid: catPaid,
+      author: catAuthor,
+      excludedAuthors: catExcludedAuthors,
+      license: catLicense,
+    })
+    const bucket = (items, fn) => {
+      const m = new Map()
+      for (const r of items) fn(r, m)
+      return m
+    }
+    const addType = (r, m) => r.type && m.set(r.type, (m.get(r.type) || 0) + 1)
+    const typeFacet = bucket(localHubItemsExcept(catalogItems, preds, 'type'), addType)
+    let free = 0
+    let paid = 0
+    for (const r of localHubItemsExcept(catalogItems, preds, 'paid')) {
+      if (r.category === 'Free') free++
+      else if (r.category === 'Paid') paid++
+    }
+    const coreSet = new Set(CONTENT_TYPES)
+    const typeOverall = bucket(catalogItems, addType)
+    const typeItems = [
+      { value: 'All', label: 'All' },
+      ...CONTENT_TYPES.map((t) => ({ value: t, label: t, color: getTypeColor(t), count: typeFacet.get(t) || 0 })),
+      ...[...typeOverall.entries()]
+        .filter(([t]) => !coreSet.has(t))
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .map(([t]) => ({ value: t, label: t, color: getTypeColor(t), count: typeFacet.get(t) || 0 })),
+    ]
+    return {
+      typeItems,
+      paidItems: [
+        { value: 'all', label: 'All' },
+        { value: 'free', label: 'Free', count: free },
+        { value: 'paid', label: 'Paid', count: paid },
+      ],
+    }
+  }, [catalogItems, catSearch, catType, catTags, catPaid, catAuthor, catExcludedAuthors, catLicense])
+
+  const catalogSuggestCounts = useMemo(
+    () =>
+      suggestionCounts(catalogItems, {
+        author: (r) => r.username,
+        tags: (r) => r.tags,
+      }),
+    [catalogItems],
   )
 
   const wishlistSections = useMemo(
@@ -721,30 +858,120 @@ export default function HubView({ onNavigate }) {
     ],
   )
 
-  const activeSections = wishlistMode ? wishlistSections : sections
+  const catalogSections = useMemo(
+    () => [
+      {
+        key: 'cat-type',
+        label: 'Type',
+        type: 'list',
+        value: catType,
+        default: CATALOG_FILTER_DEFAULTS.catType,
+        onChange: setCatType,
+        items: catalogFacets.typeItems,
+      },
+      {
+        key: 'cat-paid',
+        label: 'Pricing',
+        type: 'list',
+        value: catPaid,
+        default: CATALOG_FILTER_DEFAULTS.catPaid,
+        onChange: setCatPaid,
+        items: catalogFacets.paidItems,
+      },
+      {
+        key: 'cat-tags',
+        label: 'Tags',
+        type: 'tags-autocomplete',
+        value: catTags,
+        default: CATALOG_FILTER_DEFAULTS.catTags,
+        onChange: setCatTags,
+        suggestions: catalogSuggestCounts.tags,
+        placeholder: 'Filter by tags…',
+        allowNegate: true,
+      },
+      {
+        key: 'cat-author',
+        label: 'Author',
+        type: 'text-autocomplete',
+        value: catAuthorDraft,
+        default: CATALOG_FILTER_DEFAULTS.catAuthor,
+        onChange: handleCatAuthorChange,
+        excluded: catExcludedAuthors,
+        onExcludedChange: setCatExcludedAuthors,
+        suggestions: catalogSuggestCounts.authors,
+        placeholder: 'Filter by author…',
+        titleAction: catAuthor ? <SearchOnHubButton author={catAuthor} /> : null,
+      },
+      {
+        key: 'cat-license',
+        label: 'License',
+        type: 'select',
+        value: catLicense,
+        default: CATALOG_FILTER_DEFAULTS.catLicense,
+        onChange: setCatLicense,
+        options: LICENSE_FILTER_OPTIONS,
+      },
+      {
+        key: 'cat-sort',
+        label: 'Sort by',
+        type: 'select',
+        value: catSort,
+        onChange: setCatSort,
+        options: CATALOG_SORTS,
+      },
+    ],
+    [
+      catType,
+      catTags,
+      catPaid,
+      catAuthorDraft,
+      catAuthor,
+      catExcludedAuthors,
+      catLicense,
+      catSort,
+      catalogFacets,
+      catalogSuggestCounts,
+      setCatType,
+      setCatTags,
+      setCatPaid,
+      handleCatAuthorChange,
+      setCatExcludedAuthors,
+      setCatLicense,
+      setCatSort,
+    ],
+  )
+
+  const activeSections = offlineMode ? catalogSections : wishlistMode ? wishlistSections : sections
   const activeFilterCount = activeSections.filter((s) => sectionActive(s) === true).length
 
   const refreshBusy = loading && itemCount === 0
 
   return (
     <div className="h-full flex min-w-0 relative">
-      {/* Both modes use the same panel; hub filters drive the server query while
-          wishlist filters run client-side over the local snapshots. */}
+      {/* Shared panel: Hub filters drive the server query; Wishlist/Offline run client-side. */}
       <FilterPanel
-        search={wishlistMode ? wlSearch : searchDraft}
-        onSearchChange={wishlistMode ? setWlSearch : handleSearchChange}
+        search={offlineMode ? catSearchDraft : wishlistMode ? wlSearch : searchDraft}
+        onSearchChange={offlineMode ? handleCatSearchChange : wishlistMode ? setWlSearch : handleSearchChange}
         smartSearch={
-          wishlistMode
+          offlineMode
             ? {
-                authors: wishlistSuggestCounts.authors,
-                tags: wishlistSuggestCounts.tags,
+                authors: catalogSuggestCounts.authors,
+                tags: catalogSuggestCounts.tags,
                 labels: [],
                 types: hubTypes,
-                flags: WISHLIST_IS_FLAGS,
+                flags: CATALOG_IS_FLAGS,
               }
-            : null
+            : wishlistMode
+              ? {
+                  authors: wishlistSuggestCounts.authors,
+                  tags: wishlistSuggestCounts.tags,
+                  labels: [],
+                  types: hubTypes,
+                  flags: WISHLIST_IS_FLAGS,
+                }
+              : null
         }
-        sections={wishlistMode ? wishlistSections : sections}
+        sections={offlineMode ? catalogSections : wishlistMode ? wishlistSections : sections}
       />
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
@@ -759,7 +986,7 @@ export default function HubView({ onNavigate }) {
                 dismissTransientOverlays()
                 setGalleryMode('hub')
               }}
-              className={`px-2 py-1 rounded cursor-pointer transition-colors ${!wishlistMode ? 'bg-hover text-text-primary' : 'text-text-aside hover:text-text-secondary'}`}
+              className={`px-2 py-1 rounded cursor-pointer transition-colors ${!localMode ? 'bg-hover text-text-primary' : 'text-text-aside hover:text-text-secondary'}`}
             >
               Hub
             </button>
@@ -774,17 +1001,41 @@ export default function HubView({ onNavigate }) {
               Wishlist
               {wishlistCount > 0 && <span className="tabular-nums opacity-70">{wishlistCount}</span>}
             </button>
+            {offlineCatalogEnabled && (
+              <button
+                type="button"
+                onClick={() => {
+                  dismissTransientOverlays()
+                  setGalleryMode('offline')
+                }}
+                className={`px-2 py-1 rounded cursor-pointer transition-colors ${offlineMode ? 'bg-hover text-text-primary' : 'text-text-aside hover:text-text-secondary'}`}
+              >
+                Offline
+              </button>
+            )}
           </div>
           <span className={META_DENSE}>
-            {wishlistMode
-              ? wishlistLoading && !wishlistLoaded
-                ? 'Loading…'
-                : wishlistFiltered.length !== wishlistItems.length
-                  ? `${wishlistFiltered.length.toLocaleString()} of ${wishlistItems.length.toLocaleString()} wishlisted`
-                  : `${wishlistItems.length.toLocaleString()} wishlisted`
-              : loading && itemCount === 0
-                ? 'Searching…'
-                : `${itemCount.toLocaleString()} packages`}
+            {offlineMode
+              ? catalogScanning
+                ? catalogScanProgress
+                  ? `Scanning… ${catalogScanProgress.count.toLocaleString()} (page ${catalogScanProgress.page}/${catalogScanProgress.totalPages || '?'})`
+                  : 'Scanning…'
+                : catalogLoading && !catalogLoaded
+                  ? 'Loading…'
+                  : catalogFiltered.length !== catalogItems.length
+                    ? `${catalogFiltered.length.toLocaleString()} of ${catalogItems.length.toLocaleString()} cached`
+                    : catalogItems.length
+                      ? `${catalogItems.length.toLocaleString()} cached`
+                      : 'No cache'
+              : wishlistMode
+                ? wishlistLoading && !wishlistLoaded
+                  ? 'Loading…'
+                  : wishlistFiltered.length !== wishlistItems.length
+                    ? `${wishlistFiltered.length.toLocaleString()} of ${wishlistItems.length.toLocaleString()} wishlisted`
+                    : `${wishlistItems.length.toLocaleString()} wishlisted`
+                : loading && itemCount === 0
+                  ? 'Searching…'
+                  : `${itemCount.toLocaleString()} packages`}
           </span>
           {activeFilterCount > 0 && (
             <span className={`shrink-0 flex items-center gap-1.5 whitespace-nowrap ${META_DENSE}`}>
@@ -796,7 +1047,9 @@ export default function HubView({ onNavigate }) {
                 (
                 <button
                   type="button"
-                  onClick={() => (wishlistMode ? resetWishlistFilters() : resetFilters())}
+                  onClick={() =>
+                    offlineMode ? resetCatalogFilters() : wishlistMode ? resetWishlistFilters() : resetFilters()
+                  }
                   title="Reset all filters to their defaults"
                   className="text-text-aside hover:text-text-secondary transition-colors cursor-pointer"
                 >
@@ -808,7 +1061,7 @@ export default function HubView({ onNavigate }) {
           )}
           {/* Network-backed hub search gets a cache-busting refresh; the wishlist
               is local + live, so it needs none. */}
-          {!wishlistMode && (
+          {!localMode && (
             <button
               type="button"
               onClick={() => fetchResources({ forceRefresh: true })}
@@ -818,6 +1071,39 @@ export default function HubView({ onNavigate }) {
             >
               <RefreshCw size={13} className={refreshBusy ? 'animate-spin' : ''} />
             </button>
+          )}
+          {offlineMode && (
+            <>
+              {catalogScannedAt && !catalogScanning && (
+                <span className={META_DENSE} title={new Date(catalogScannedAt).toLocaleString()}>
+                  · scanned {formatTimeAgo(catalogScannedAt)}
+                </span>
+              )}
+              {catalogScanning ? (
+                <button
+                  type="button"
+                  onClick={() => useCatalogStore.getState().cancelScan()}
+                  className="px-2 py-0.5 rounded text-[11px] text-text-aside hover:text-text-secondary border border-border cursor-pointer"
+                >
+                  Cancel
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => useCatalogStore.getState().startScan()}
+                  disabled={catalogLoading}
+                  title={
+                    catalogItems.length
+                      ? 'Refresh catalog — fetch new/updated packages from the Hub head'
+                      : 'Scan Hub into local cache'
+                  }
+                  className="px-2 py-0.5 rounded text-[11px] text-text-aside hover:text-text-secondary border border-border cursor-pointer disabled:opacity-30 flex items-center gap-1"
+                >
+                  <RefreshCw size={11} />
+                  {catalogItems.length ? 'Refresh' : 'Scan Hub'}
+                </button>
+              )}
+            </>
           )}
           <div className="flex-1" />
           <ThumbnailSizeSlider cardWidth={cardWidth} availableWidth={availableWidth} onCardWidthChange={setCardWidth} />
@@ -844,7 +1130,7 @@ export default function HubView({ onNavigate }) {
         {/* Gallery — cards + wishlist are two <Activity>-kept scroll surfaces, so
             toggling modes preserves each one's scroll and DOM. */}
         <div className="relative flex-1 min-h-0 flex flex-col min-w-0">
-          <Activity mode={wishlistMode ? 'hidden' : 'visible'}>
+          <Activity mode={localMode ? 'hidden' : 'visible'}>
             <div className="relative flex-1 min-h-0 flex flex-col min-w-0">
               {error && (
                 <div className="shrink-0 mx-4 mt-4 px-4 py-3 rounded-lg bg-error/10 border border-error/20 text-error text-xs select-text cursor-text">
@@ -955,6 +1241,68 @@ export default function HubView({ onNavigate }) {
               {wishlistItems.length > 0 && wishlistFiltered.length === 0 && (
                 <EmptyState overlay className="pointer-events-none absolute inset-0 flex items-start justify-center">
                   No wishlisted packages match your filters
+                </EmptyState>
+              )}
+            </div>
+          </Activity>
+
+          <Activity mode={offlineMode ? 'visible' : 'hidden'}>
+            <div className="relative flex-1 min-h-0 flex flex-col min-w-0">
+              <VirtualGrid
+                items={catalogFiltered}
+                itemWidth={cardWidth}
+                itemHeight={compactCards ? cardWidth : cardWidth + HUB_CARD_FOOTER_PX}
+                fixedHeight={compactCards ? 0 : HUB_CARD_FOOTER_PX}
+                className="flex-1"
+                scrollResetKey={catScrollResetKey}
+                onLayout={handleGridLayout}
+                hideEmptyMessage
+                renderItem={(r) => (
+                  <HubCard
+                    key={r.resource_id}
+                    resource={r}
+                    onClick={openDetail}
+                    onViewInLibrary={handleViewInLibrary}
+                    onInstall={handleInstall}
+                    onPromote={promoteResource}
+                    onFilterAuthor={handleFilterAuthor}
+                    mode={cardMode}
+                    hideType={catType !== 'All'}
+                  />
+                )}
+              />
+              {/* Full first scan only — refresh keeps the grid and reports progress in the toolbar. */}
+              {catalogScanning && catalogItems.length === 0 && (
+                <EmptyState
+                  overlay
+                  icon={<Loader2 size={28} className="text-text-tertiary animate-spin" />}
+                  className="pointer-events-none absolute inset-0 flex flex-col items-center max-w-sm mx-auto"
+                  clarification={
+                    catalogScanProgress
+                      ? `${catalogScanProgress.count.toLocaleString()} packages · page ${catalogScanProgress.page} of ${catalogScanProgress.totalPages || '?'}`
+                      : 'Fetching the full Hub catalog…'
+                  }
+                >
+                  Scanning Hub
+                </EmptyState>
+              )}
+              {!catalogScanning && catalogLoaded && catalogItems.length === 0 && (
+                <div className="absolute inset-0 flex flex-col items-center pt-16 max-w-sm mx-auto px-4">
+                  <EmptyState clarification="Downloads the full Hub package list (no thumbnails) for local filtering.">
+                    No offline cache yet
+                  </EmptyState>
+                  <button
+                    type="button"
+                    onClick={() => useCatalogStore.getState().startScan()}
+                    className="mt-3 px-3 py-1.5 rounded bg-hover text-text-primary text-sm cursor-pointer hover:bg-border"
+                  >
+                    Scan Hub
+                  </button>
+                </div>
+              )}
+              {!catalogScanning && catalogItems.length > 0 && catalogFiltered.length === 0 && (
+                <EmptyState overlay className="pointer-events-none absolute inset-0 flex items-start justify-center">
+                  No cached packages match your filters
                 </EmptyState>
               )}
             </div>

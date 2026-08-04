@@ -10,6 +10,8 @@ import {
   findLocalByHubResourceId,
   findLocalByFilename,
   annotateInstallState,
+  annotateInstallStates,
+  hubInstallSnapshot,
   getCreatorsNeedingUserId,
   getPackageIndex,
   getGroupIndex,
@@ -29,6 +31,7 @@ import {
 import { cacheAvatarsFromResources } from '../avatar-cache.js'
 import { notify } from '../notify.js'
 import { scanHubDetails } from '../hub/scanner.js'
+import { loadCatalogCache, scanCatalogCache, cancelCatalogScan } from '../hub/catalog-cache.js'
 import {
   isLoggedIn,
   getResourceUserState,
@@ -51,6 +54,24 @@ export function registerHubHandlers() {
 
   ipcMain.handle('hub:scan-packages', async () => {
     return await scanHubDetails((data) => notify('hub-scan:progress', data))
+  })
+
+  // Offline Hub catalog: full getResources dump → userData JSON.
+  ipcMain.handle('hub:catalog-load', async () => {
+    const data = await loadCatalogCache()
+    if (!data?.resources) return null
+    annotateInstallStates(data.resources)
+    return data
+  })
+
+  ipcMain.handle('hub:catalog-scan', async () => {
+    const data = await scanCatalogCache()
+    annotateInstallStates(data.resources)
+    return data
+  })
+
+  ipcMain.handle('hub:catalog-scan-cancel', async () => {
+    cancelCatalogScan()
   })
 
   ipcMain.handle('hub:isLoggedIn', async () => {
@@ -155,17 +176,8 @@ export function registerHubHandlers() {
     return result
   })
 
-  /** Reconcile hub list rows with local DB after promote/uninstall/etc. (renderer cache is otherwise stale). */
-  ipcMain.handle('hub:localSnapshot', async (_, resourceIds) => {
-    const out = {}
-    for (const id of resourceIds || []) {
-      const local = findLocalByHubResourceId(id)
-      if (local) {
-        out[String(id)] = { filename: local.filename, is_direct: !!local.is_direct }
-      }
-    }
-    return out
-  })
+  /** Reconcile hub list rows with local install state. Omit ids → all hub-linked packages. */
+  ipcMain.handle('hub:localSnapshot', async (_, resourceIds) => hubInstallSnapshot(resourceIds))
 
   ipcMain.handle('hub:check-availability', async (_, refs) => {
     if (!refs?.length) return {}

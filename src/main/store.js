@@ -1229,12 +1229,54 @@ export function getContentVisibilityCounts() {
 
 // --- Hub cross-referencing ---
 
+/** hub_resource_id → first matching user package (same winner as a linear scan). */
+function hubResourceInstallIndex() {
+  const byRid = new Map()
+  for (const pkg of userPackageValues()) {
+    if (pkg.hub_resource_id == null || pkg.hub_resource_id === '') continue
+    const rid = String(pkg.hub_resource_id)
+    if (!byRid.has(rid)) byRid.set(rid, pkg)
+  }
+  return byRid
+}
+
 export function findLocalByHubResourceId(resourceId) {
   const rid = String(resourceId)
   for (const pkg of userPackageValues()) {
     if (pkg.hub_resource_id === rid) return pkg
   }
   return null
+}
+
+/**
+ * filename/is_direct for hub-linked local packages. Pass `resourceIds` to filter;
+ * omit/null for the full map (Offline catalog refresh — library-sized, not catalog-sized).
+ */
+export function hubInstallSnapshot(resourceIds) {
+  const byRid = hubResourceInstallIndex()
+  const out = {}
+  if (resourceIds == null) {
+    for (const [rid, pkg] of byRid) {
+      out[rid] = { filename: pkg.filename, is_direct: !!pkg.is_direct }
+    }
+    return out
+  }
+  for (const id of resourceIds) {
+    const pkg = byRid.get(String(id))
+    if (pkg) out[String(id)] = { filename: pkg.filename, is_direct: !!pkg.is_direct }
+  }
+  return out
+}
+
+function applyInstallAnnotation(target, local) {
+  if (local) {
+    target._installed = true
+    target._isDirect = !!local.is_direct
+    target._localFilename = local.filename
+  } else {
+    target._installed = false
+    target._isDirect = false
+  }
 }
 
 /**
@@ -1246,15 +1288,17 @@ export function findLocalByHubResourceId(resourceId) {
  */
 export function annotateInstallState(target, resourceId = target?.resource_id) {
   const local = findLocalByHubResourceId(resourceId)
-  if (local) {
-    target._installed = true
-    target._isDirect = !!local.is_direct
-    target._localFilename = local.filename
-  } else {
-    target._installed = false
-    target._isDirect = false
-  }
+  applyInstallAnnotation(target, local)
   return local
+}
+
+/** Bulk annotate — one library pass. Use for Offline catalog load/scan. */
+export function annotateInstallStates(resources) {
+  const byRid = hubResourceInstallIndex()
+  for (const target of resources || []) {
+    const local = target?.resource_id != null ? byRid.get(String(target.resource_id)) : null
+    applyInstallAnnotation(target, local || null)
+  }
 }
 
 export function findLocalByFilename(filename) {

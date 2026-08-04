@@ -42,6 +42,7 @@ import { toast } from '@/components/Toast'
 import { useStatusStore } from '@/stores/useStatusStore'
 import { useLibraryStore } from '@/stores/useLibraryStore'
 import { useRemoteUiStore } from '@/stores/useRemoteUiStore'
+import { useCatalogStore } from '@/stores/useCatalogStore'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -73,6 +74,7 @@ export default function SettingsView() {
   const blurThumbnails = useRemoteUiStore((s) => s.blurThumbnails)
   const setBlurThumbnails = useRemoteUiStore((s) => s.setBlurThumbnails)
   const [hubDebugRequests, setHubDebugRequests] = useState(false)
+  const offlineCatalogEnabled = useCatalogStore((s) => s.enabled)
   const [isDev, setIsDev] = useState(false)
   const [developerUnlocked, setDeveloperUnlocked] = useState(false)
   const [deletedData, setDeletedData] = useState({ packages: 0, contentLabels: 0 })
@@ -181,6 +183,7 @@ export default function SettingsView() {
   useEffect(() => {
     window.api.settings.get('vam_dir').then((v) => setVamDir(v || ''))
     window.api.settings.get('hub_debug_requests').then((v) => setHubDebugRequests(v === '1'))
+    useCatalogStore.getState().loadEnabled()
     window.api.dev.getUnlocked().then((v) => setDeveloperUnlocked(!!v))
     window.api.settings.get('disable_behavior').then((v) => setDisableBehavior(v || 'suffix'))
     window.api.settings.get('import_move_files').then((v) => setMoveOnImport(v === '1'))
@@ -468,6 +471,10 @@ export default function SettingsView() {
   const handleToggleHubDebug = useCallback(async (checked) => {
     setHubDebugRequests(checked)
     await window.api.settings.set('hub_debug_requests', checked ? '1' : '0')
+  }, [])
+
+  const handleToggleOfflineCatalog = useCallback(async (checked) => {
+    await useCatalogStore.getState().setEnabled(checked)
   }, [])
 
   const handleChannelChange = useCallback(
@@ -1358,6 +1365,15 @@ export default function SettingsView() {
                 description="Print Hub API request and response bodies to the main process console."
               >
                 <Switch checked={hubDebugRequests} onCheckedChange={handleToggleHubDebug} />
+              </SettingRow>
+
+              <SettingRow
+                as="label"
+                icon={<Compass size={14} className="text-text-tertiary shrink-0" />}
+                label="Offline Hub catalog"
+                description="Adds an Offline tab in Hub that can download the full package list for local filtering. For development only."
+              >
+                <Switch checked={offlineCatalogEnabled} onCheckedChange={handleToggleOfflineCatalog} />
               </SettingRow>
 
               <div className="border-t border-border pt-4 flex flex-wrap items-center gap-3">

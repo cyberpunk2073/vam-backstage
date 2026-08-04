@@ -66,7 +66,10 @@ export function contentFlags(c) {
 /** Autocomplete values for Hub wishlist `is:` flags. */
 export const WISHLIST_IS_FLAGS = ['unavailable', 'installed']
 
-/** Lowercased `is:` flags for a wishlist hub resource. */
+/** Autocomplete values for Offline catalog `is:` flags (no wishlist-only `unavailable`). */
+export const CATALOG_IS_FLAGS = ['installed']
+
+/** Lowercased `is:` flags for a wishlist / offline-catalog hub resource. */
 export function wishlistFlags(r) {
   const flags = []
   if (r._unavailable) flags.push('unavailable')

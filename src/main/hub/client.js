@@ -134,9 +134,13 @@ export async function refreshFilters() {
 }
 
 export async function searchResources(params = {}) {
+  // `persist: false` — skip session LRU + hub_resources upsert (full-catalog scan).
+  const persist = params.persist !== false
   const cacheKey = JSON.stringify(params)
-  const cached = lruGet(cache.searches, cacheKey)
-  if (cached) return cached
+  if (persist) {
+    const cached = lruGet(cache.searches, cacheKey)
+    if (cached) return cached
+  }
 
   const body = {
     action: 'getResources',
@@ -181,20 +185,22 @@ export async function searchResources(params = {}) {
     }
   }
 
-  try {
-    transact(() => {
-      for (const r of resources) {
-        if (r.resource_id) upsertHubResourceSearch(String(r.resource_id), r)
-      }
-    })
-  } catch {}
+  if (persist) {
+    try {
+      transact(() => {
+        for (const r of resources) {
+          if (r.resource_id) upsertHubResourceSearch(String(r.resource_id), r)
+        }
+      })
+    } catch {}
+  }
 
   const result = {
     resources,
     totalFound: parseInt(data.pagination?.total_found || '0', 10),
     totalPages: parseInt(data.pagination?.total_pages || '0', 10),
   }
-  lruSet(cache.searches, cacheKey, result, MAX_SEARCHES)
+  if (persist) lruSet(cache.searches, cacheKey, result, MAX_SEARCHES)
   return result
 }
 

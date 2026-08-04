@@ -45,7 +45,7 @@ export function AuthorAutocomplete({
   const pickSuggestion = (name) => {
     if (pendingNegate) commitExclude(name)
     else {
-      onChange(name)
+      onChange(name, { immediate: true })
       setDraft(null)
     }
     combobox.setOpen(false)
@@ -53,7 +53,7 @@ export function AuthorAutocomplete({
 
   const promoteExclude = (name) => {
     onExcludedChange(excludedList.filter((a) => a !== name))
-    onChange(name)
+    onChange(name, { immediate: true })
     setDraft(null)
   }
 
@@ -61,10 +61,17 @@ export function AuthorAutocomplete({
     matches,
     onSelect: ([name]) => pickSuggestion(name),
     onCommitRaw: (trigger) => {
-      if (!(pendingNegate && matchQuery.trim())) return false
-      commitExclude(matchQuery)
-      if (trigger === 'enter') combobox.setOpen(false)
-      return true
+      if (pendingNegate && matchQuery.trim()) {
+        commitExclude(matchQuery)
+        if (trigger === 'enter') combobox.setOpen(false)
+        return true
+      }
+      // Enter with a positive value — flush past parent debounce.
+      if (trigger === 'enter' && !pendingNegate) {
+        onChange(displayValue, { immediate: true })
+        return true
+      }
+      return false
     },
     commaCommits: true,
     onEscape: () => {
@@ -109,7 +116,7 @@ export function AuthorAutocomplete({
         onClear={() => {
           if (draft !== null) setDraft(null)
           else {
-            onChange('')
+            onChange('', { immediate: true })
             combobox.setOpen(false)
           }
         }}

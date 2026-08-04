@@ -156,7 +156,8 @@ export function SmartSearchBar({
   const pick = (name) => {
     if (!active) return
     const next = spliceToken(value, active, name)
-    onChange(next)
+    // Autocomplete commits immediately (skip parent debounce).
+    onChange(next, { immediate: true })
     const newCaret = active.start + active.prefix.length + name.length + 1
     requestAnimationFrame(() => {
       const el = combobox.inputRef.current
@@ -266,7 +267,11 @@ export function SmartSearchBar({
           onScroll={syncScroll}
           onKeyDown={(e) => {
             combobox.onKeyDown(e)
-            if (e.key === 'Enter' && !e.defaultPrevented) e.preventDefault()
+            if (e.key === 'Enter' && !e.defaultPrevented) {
+              e.preventDefault()
+              // No suggestion selected — flush the current draft to the store now.
+              onChange(value, { immediate: true })
+            }
           }}
           className={`relative z-1 block w-full min-w-0 resize-none rounded-md border border-input bg-transparent py-1.75 pl-2.5 pr-6 text-xs leading-4 transition-[height,border-color] duration-100 outline-none placeholder:text-text-placeholder focus-visible:border-ring/50 ${
             focused
@@ -280,7 +285,7 @@ export function SmartSearchBar({
             variant="ghost"
             size="icon-xs"
             onClick={() => {
-              onChange('')
+              onChange('', { immediate: true })
               combobox.setOpen(false)
             }}
             className="absolute right-1 top-1.5 z-10 size-5 text-text-aside hover:text-text-secondary"

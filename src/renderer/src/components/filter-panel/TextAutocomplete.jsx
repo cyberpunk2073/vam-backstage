@@ -11,11 +11,19 @@ export function TextAutocomplete({ value = '', onChange, suggestions = {}, place
   const matches = useMemo(() => rankSuggestions(suggestions, q), [suggestions, q])
 
   const pick = (name) => {
-    onChange(name)
+    onChange(name, { immediate: true })
     combobox.setOpen(false)
   }
 
-  const combobox = useCombobox({ matches, onSelect: ([name]) => pick(name) })
+  const combobox = useCombobox({
+    matches,
+    onSelect: ([name]) => pick(name),
+    onCommitRaw: (trigger) => {
+      if (trigger !== 'enter') return false
+      onChange(value, { immediate: true })
+      return true
+    },
+  })
 
   return (
     <div ref={combobox.containerRef} className="relative">
@@ -30,7 +38,7 @@ export function TextAutocomplete({ value = '', onChange, suggestions = {}, place
         onKeyDown={combobox.onKeyDown}
         placeholder={placeholder}
         onClear={() => {
-          onChange('')
+          onChange('', { immediate: true })
           combobox.setOpen(false)
         }}
         clearLabel="Clear"

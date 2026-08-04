@@ -6,7 +6,7 @@ import { persistViewState, oneOf, asArray, asPolarityList, asString, asCardWidth
 import { HUB_PER_PAGE } from '@shared/hub-http.js'
 
 /** Gallery data sources. Extend this (and the toolbar segmented control) to add future modes. */
-export const GALLERY_MODES = ['hub', 'wishlist']
+export const GALLERY_MODES = ['hub', 'wishlist', 'offline']
 
 /**
  * Freshness key over the hub-query fields, so returning to Hub doesn't refetch
@@ -47,6 +47,17 @@ export const WISHLIST_FILTER_DEFAULTS = {
   wlAuthor: '',
   wlExcludedAuthors: [],
   wlLicense: 'Any',
+}
+
+/** Offline catalog gallery filters — same client-side model as wishlist, own namespace. */
+export const CATALOG_FILTER_DEFAULTS = {
+  catSearch: '',
+  catType: 'All',
+  catTags: [],
+  catPaid: 'all',
+  catAuthor: '',
+  catExcludedAuthors: [],
+  catLicense: 'Any',
 }
 
 let fetchSeq = 0
@@ -187,6 +198,10 @@ export const useHubStore = create(
       ...WISHLIST_FILTER_DEFAULTS,
       wlSort: 'added',
 
+      // Offline catalog: `catSort` keys in HubView (CATALOG_SORTS); default latest update.
+      ...CATALOG_FILTER_DEFAULTS,
+      catSort: 'updated',
+
       detailResource: null,
       detailData: null,
       detailLoading: false,
@@ -209,7 +224,7 @@ export const useHubStore = create(
       cardMode: 'medium',
       cardWidth: 220,
 
-      // Gallery data source (see GALLERY_MODES): 'hub' search or local 'wishlist'.
+      // Gallery data source (see GALLERY_MODES): hub search, wishlist, or offline catalog.
       // Not persisted — always start in hub mode after a restart; switching never
       // touches hub search state (filters/results/page), so switching back is lossless.
       galleryMode: 'hub',
@@ -258,6 +273,14 @@ export const useHubStore = create(
       setWlExcludedAuthors: (wlExcludedAuthors) => set({ wlExcludedAuthors }),
       setWlLicense: (wlLicense) => set({ wlLicense }),
       setWlSort: (wlSort) => set({ wlSort }),
+      setCatSearch: (catSearch) => set({ catSearch }),
+      setCatType: (catType) => set({ catType }),
+      setCatTags: (catTags) => set({ catTags }),
+      setCatPaid: (catPaid) => set({ catPaid }),
+      setCatAuthor: (catAuthor) => set({ catAuthor }),
+      setCatExcludedAuthors: (catExcludedAuthors) => set({ catExcludedAuthors }),
+      setCatLicense: (catLicense) => set({ catLicense }),
+      setCatSort: (catSort) => set({ catSort }),
       setCardMode: (cardMode) => set({ cardMode }),
       setCardWidth: (cardWidth) => set({ cardWidth }),
       setGalleryMode: (galleryMode) => set({ galleryMode }),
@@ -608,6 +631,9 @@ export const useHubStore = create(
        *  is left as-is — reordering doesn't hide content. */
       resetWishlistFilters: () => set({ ...WISHLIST_FILTER_DEFAULTS }),
 
+      /** Same idea as `resetWishlistFilters` for the Offline catalog mode. */
+      resetCatalogFilters: () => set({ ...CATALOG_FILTER_DEFAULTS }),
+
       // Jump to a Hub search scoped to one author. Only sets the author and
       // switches to hub mode — the other hub filters are left as-is (the wishlist
       // filters that were narrowing the view are deliberately NOT mirrored, since
@@ -636,6 +662,14 @@ export const useHubStore = create(
       wlExcludedAuthors: asArray,
       wlLicense: asString,
       wlSort: asString,
+      catSearch: asString,
+      catType: asString,
+      catTags: asPolarityList,
+      catPaid: oneOf(['all', 'free', 'paid']),
+      catAuthor: asString,
+      catExcludedAuthors: asArray,
+      catLicense: asString,
+      catSort: asString,
       cardMode: oneOf(['minimal', 'medium']),
       cardWidth: asCardWidth,
     }),
