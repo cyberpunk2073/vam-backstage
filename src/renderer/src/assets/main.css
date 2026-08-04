@@ -229,9 +229,9 @@ html[data-nav-dismiss]
    the edge so there's nothing dark left to leak, and the card's own clip cuts the outer half away,
    so the corner gets one coverage blend instead of two multiplied together. The radius has to stay
    concentric with the card's or the ring pinches to nothing at the corners — hence the calc.
-   `outline` stays free for `.card-lead` / `.card-new`; the ::after z-index only clears in-card
-   chrome, so isolate the card — otherwise that z-index escapes (cards are relative/auto) and paints
-   over HubDetail (z-20) and anything else below 30. */
+   `outline` stays free for `.card-lead`; `.card-new` uses a ::before ring above this edge. The
+   ::after z-index only clears in-card chrome, so isolate the card — otherwise that z-index escapes
+   (cards are relative/auto) and paints over HubDetail (z-20) and anything else below 30. */
 .card-edge {
     isolation: isolate;
 }
@@ -253,13 +253,18 @@ html[data-nav-dismiss]
         0 4px 16px -4px rgba(0, 0, 0, 0.4);
 }
 
-/* Post-refresh "new since your last look" hint. Animating `outline` rather than the border or
-   box-shadow keeps `.card-glow:hover` alive — a running animation outranks author-normal
-   declarations. The inset offset lays the ring over the 1px edge, so nothing shifts. */
-.card-new {
-    outline: 1px solid transparent;
-    outline-offset: -1px;
+/* Post-refresh "new since your last look" hint. Drawn as its own ring above `.card-edge::after`
+   (not `outline`: the edge's z-index:30 covers an inset outline in the same pixels). Animating
+   this ::before's box-shadow leaves `.card-glow:hover` on the card itself free to run. */
+.card-new::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: calc(var(--radius-lg) + 1px);
+    box-shadow: inset 0 0 0 2px transparent;
     animation: card-new-flash 3s linear;
+    pointer-events: none;
+    z-index: 31;
 }
 
 /* Keyboard lead, bulk mode only (single-select needs none — lead and selection move together).
@@ -320,16 +325,16 @@ html[data-nav-dismiss]
    lingering, which reads as an unfinished process rather than a steady state. */
 @keyframes card-new-flash {
     0% {
-        outline-color: rgba(74, 145, 241, 0);
+        box-shadow: inset 0 0 0 2px rgba(74, 145, 241, 0);
         animation-timing-function: ease-out;
     }
     8%,
     80% {
-        outline-color: rgba(74, 145, 241, 0.5);
+        box-shadow: inset 0 0 0 2px rgba(74, 145, 241, 0.5);
         animation-timing-function: ease-in;
     }
     100% {
-        outline-color: rgba(74, 145, 241, 0);
+        box-shadow: inset 0 0 0 2px rgba(74, 145, 241, 0);
     }
 }
 
