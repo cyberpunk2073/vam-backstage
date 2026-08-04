@@ -612,9 +612,12 @@ export const useHubStore = create(
       // switches to hub mode — the other hub filters are left as-is (the wishlist
       // filters that were narrowing the view are deliberately NOT mirrored, since
       // the models aren't 1:1 and the intent is to broaden to the creator). The
-      // authorSearch change drives HubView's fetch effect.
+      // authorSearch change drives HubView's fetch effect. Dismiss any open detail
+      // so a stale panel from a previous hub visit doesn't cover the new results
+      // (navigateTo intentionally restores detail on plain tab switches).
       searchHubForAuthor: (author) => {
         if (!author) return
+        get().closeDetail()
         set({ authorSearch: author, galleryMode: 'hub' })
       },
     }),
