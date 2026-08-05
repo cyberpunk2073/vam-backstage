@@ -6,6 +6,52 @@
  */
 export const CHANGELOG = [
   {
+    version: '0.5.0',
+    date: '2026-08-05',
+    notes: [
+      {
+        kind: 'new',
+        title: 'Archive folders to free up disk space',
+        body: 'Archiving a package reclaims space by dropping only the dependencies that can be re-fetched from the Hub while keeping any irreplaceable ones, and installing it back later re-downloads exactly what it needs on its own. Archived packages live in an archive folder you set up in Settings, where they stay browsable but no longer load in VaM or nag about missing dependencies.',
+      },
+      {
+        kind: 'improved',
+        title: 'Browse the entire Hub in one scroll',
+        body: 'The Hub gallery now presents the entire timeline of results as one continuous list, with a scrollbar sized to the full count, so you can scroll the whole catalog freely and jump straight to any spot in the results.',
+      },
+      {
+        kind: 'improved',
+        title: 'Reworked package disabling and offloading',
+        body: 'Disabling and offloading packages now match how VaM and tools like BrowserAssist and qvaro handle them, so packages no longer show up as missing or broken when another tool disables or offloads them, and offloaded packages always restore to their original subfolder.',
+      },
+      {
+        kind: 'improved',
+        title: 'Nicer multi-select and bulk actions',
+        body: 'Selecting many packages or content items at once is smoother, with more keyboard shortcuts, clearer highlighting of what is picked, and a side panel that gathers your whole selection into a gallery you can act on together.',
+      },
+      {
+        kind: 'improved',
+        title: 'Smarter search',
+        body: 'Search boxes now understand filters like is:favorite, is:wishlist, is:broken, is:orphan, and pkg: types, with color-coded highlighting and autocomplete as you type.',
+      },
+      {
+        kind: 'improved',
+        title: 'Your organization survives removed packages',
+        body: 'Labels, categories, favorites, and Hub links now stick with a package even if its file disappears, and return automatically if it comes back. Extracted presets also enable and disable to match their source package on their own.',
+      },
+      {
+        kind: 'improved',
+        title: 'Many small improvements',
+        body: 'Wishlisted packages show a pin in your Library, drag-and-drop can move files in instead of copying, and the details Back button returns to where you came from.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Many small fixes',
+        body: 'More reliable updates, steadier remote connections with no window focus stealing, live tracking of package folders and their subfolders, and fewer wrong Hub matches for dependency-only packages.',
+      },
+    ],
+  },
+  {
     version: '0.4.0',
     date: '2026-07-15',
     notes: [
