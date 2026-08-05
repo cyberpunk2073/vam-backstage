@@ -60,7 +60,7 @@ const HUB_CARD_FOOTER_PX = 120
  */
 const WISHLIST_SORTS = [
   { value: 'added', label: 'Recently added' },
-  { value: 'author', label: 'Author (A–Z)' },
+  { value: 'author', label: 'Author' },
   { value: 'name', label: 'Name (A–Z)' },
   { value: 'downloads', label: 'Downloads' },
   { value: 'rating', label: 'Rating' },
@@ -70,32 +70,45 @@ const WISHLIST_SORTS = [
 const wlNum = (v) => parseInt(v || '0', 10) || 0
 /** Tiebreaker: most recently wishlisted first (matches the default order). */
 const wlByAdded = (a, b) => (b._wishlistedAt || 0) - (a._wishlistedAt || 0)
+/** A–Z by username — used as secondary when sorting by author package count. */
+const wlByAuthorName = (a, b) => String(a.username || '').localeCompare(String(b.username || '')) || wlByAdded(a, b)
 const WISHLIST_SORT_FNS = {
   added: wlByAdded,
   downloads: (a, b) => wlNum(b.download_count) - wlNum(a.download_count) || wlByAdded(a, b),
   rating: (a, b) => (parseFloat(b.rating_avg) || 0) - (parseFloat(a.rating_avg) || 0) || wlByAdded(a, b),
   likes: (a, b) => wlNum(b.reaction_score) - wlNum(a.reaction_score) || wlByAdded(a, b),
   name: (a, b) => String(a.title || '').localeCompare(String(b.title || '')) || wlByAdded(a, b),
-  author: (a, b) => String(a.username || '').localeCompare(String(b.username || '')) || wlByAdded(a, b),
+  author: wlByAuthorName,
 }
 
 /** Offline catalog sorts — cache is one consistent snapshot, so last_update is valid. */
 const CATALOG_SORTS = [
   { value: 'updated', label: 'Latest Update' },
-  { value: 'author', label: 'Author (A–Z)' },
+  { value: 'author', label: 'Author' },
   { value: 'name', label: 'Name (A–Z)' },
   { value: 'downloads', label: 'Downloads' },
   { value: 'rating', label: 'Rating' },
   { value: 'likes', label: 'Reaction Score' },
 ]
 const catByUpdated = (a, b) => wlNum(b.last_update) - wlNum(a.last_update)
+const catByAuthorName = (a, b) => String(a.username || '').localeCompare(String(b.username || '')) || catByUpdated(a, b)
 const CATALOG_SORT_FNS = {
   updated: catByUpdated,
   downloads: (a, b) => wlNum(b.download_count) - wlNum(a.download_count) || catByUpdated(a, b),
   rating: (a, b) => (parseFloat(b.rating_avg) || 0) - (parseFloat(a.rating_avg) || 0) || catByUpdated(a, b),
   likes: (a, b) => wlNum(b.reaction_score) - wlNum(a.reaction_score) || catByUpdated(a, b),
   name: (a, b) => String(a.title || '').localeCompare(String(b.title || '')) || catByUpdated(a, b),
-  author: (a, b) => String(a.username || '').localeCompare(String(b.username || '')) || catByUpdated(a, b),
+  author: catByAuthorName,
+}
+
+/** Unfiltered username → package count. Used for author sort (stable vs facets, one O(n) pass). */
+function countPackagesByAuthor(items) {
+  const counts = Object.create(null)
+  for (const r of items) {
+    const a = r.username
+    if (a) counts[a] = (counts[a] || 0) + 1
+  }
+  return counts
 }
 
 /**
@@ -148,6 +161,13 @@ function filterAndSortLocalHub(items, state, sortFns = WISHLIST_SORT_FNS) {
   const preds = localHubPredicates(state)
   // `.filter` always returns a fresh array, so sorting never mutates the store's.
   const result = items.filter((r) => LOCAL_HUB_FILTER_KEYS.every((k) => preds[k](r)))
+  if (state.sort === 'author') {
+    // Count over the full unfiltered list (not the active facet): one cheap pass,
+    // order stays put as other filters toggle, and it matches autocomplete totals.
+    const counts = countPackagesByAuthor(items)
+    const byName = sortFns.author || wlByAuthorName
+    return result.sort((a, b) => (counts[b.username] || 0) - (counts[a.username] || 0) || byName(a, b))
+  }
   return result.sort(sortFns[state.sort] || WISHLIST_SORT_FNS.added)
 }
 
