@@ -984,7 +984,8 @@ export default function SettingsView() {
             <AutoHideSwitch
               settingKey="auto_hide_deps"
               label="Auto-hide dependency content"
-              description="Automatically hide content items from dependency packages so only directly installed content is visible."
+              description="Keep content from dependency packages out of your VaM browser so only the packages you installed show. Turning this off offers to bring everything back."
+              descriptionWhenOff="Keep content from dependency packages out of your VaM browser so only the packages you installed show. Turning this on offers to also hide the dependency content you already have."
               apply={() => window.api.scan.applyAutoHide('deps')}
               remove={() => window.api.scan.removeAutoHide('deps')}
               hideTitle="Hide dependency content?"
@@ -992,19 +993,23 @@ export default function SettingsView() {
               progressNoun="dependency content"
               hideBody={
                 <>
-                  <p>Would you like to hide content from existing dependency packages now?</p>
+                  <p>Dependency content from packages you add going forward will be kept out of VaM automatically.</p>
                   <p>
-                    You can enable auto-hide for new installs only — choose &quot;Turn on&quot; and hide existing items
-                    later from the Content browser.
+                    Want to tidy your existing library too? Choose{' '}
+                    <strong className="text-text-primary">Turn on and hide all</strong> to also hide content from the
+                    dependency packages you already have. Choose <strong className="text-text-primary">Turn on</strong>{' '}
+                    to apply going forward only.
                   </p>
+                  <p>Nothing is deleted — this only changes what VaM shows, and you can undo it here anytime.</p>
                 </>
               }
               unhideBody={
                 <>
-                  <p>Would you like to also unhide all hidden content from dependency packages?</p>
+                  <p>Turning off stops hiding dependency content from packages you add going forward.</p>
                   <p>
-                    You can keep them hidden and only turn off auto-hide for future installs — choose &quot;Turn
-                    off&quot;.
+                    Choose <strong className="text-text-primary">Turn off and unhide all</strong> to also bring back
+                    everything currently hidden by this rule. Choose{' '}
+                    <strong className="text-text-primary">Turn off</strong> to keep existing items hidden.
                   </p>
                   <p>Items still claimed by another active auto-hide rule will stay hidden.</p>
                 </>

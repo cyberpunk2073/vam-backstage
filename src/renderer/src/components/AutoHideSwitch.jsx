@@ -40,6 +40,7 @@ export function AutoHideSwitch({
   settingKey,
   label,
   description,
+  descriptionWhenOff,
   apply,
   remove,
   hideTitle,
@@ -117,7 +118,11 @@ export function AutoHideSwitch({
 
   return (
     <>
-      <SettingRow as="label" label={label} description={description}>
+      <SettingRow
+        as="label"
+        label={label}
+        description={!enabled && descriptionWhenOff ? descriptionWhenOff : description}
+      >
         <Switch checked={enabled} onCheckedChange={(next) => setMode(next ? 'on' : 'off')} disabled={working} />
       </SettingRow>
 

@@ -14,6 +14,8 @@ export const useStatusStore = create((set) => ({
     depSize: 0,
     contentByType: {},
     missingDepCount: 0,
+    depContentCount: 0,
+    depContentVisible: 0,
   },
 
   scan: null, // { phase, step, total, message } or null when idle

@@ -5,20 +5,18 @@ import {
   Check,
   CheckCircle2,
   Package,
-  Eye,
   EyeOff,
   ArrowRight,
   Loader2,
   AlertTriangle,
   ShieldAlert,
-  ShieldCheck,
-  RotateCcw,
-  Plus,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { Dialog, DialogOverlay, DialogPortal } from '@/components/ui/dialog'
 import { Progress } from '@/components/ui/progress'
 import { Dialog as DialogPrimitive } from 'radix-ui'
+import { useDepHideOfferStore } from '@/stores/useDepHideOfferStore'
 
 /** Relative time/effort per phase (any positive scale; normalized by sum). Easier to extend than % that must total 100. */
 const SCAN_STEPS = [
@@ -52,13 +50,22 @@ export default function FirstRun({ onDone }) {
   const [scanError, setScanError] = useState(null)
   const [stats, setStats] = useState(null)
   const [scanSkippedFiles, setScanSkippedFiles] = useState([])
-  const [hideDepContent, setHideDepContent] = useState(true)
+  // Going-forward opt-in only (non-subtractive): enables auto-hide for content
+  // the user adds/reclassifies later, without sweeping the existing library.
+  const [autoCurate, setAutoCurate] = useState(true)
   const [applying, setApplying] = useState(false)
-  const [hideProgress, setHideProgress] = useState(null)
   const [detectSource, setDetectSource] = useState(null)
   const [offloadSuggestions, setOffloadSuggestions] = useState([])
   const [selectedOffload, setSelectedOffload] = useState(() => new Set())
   const [registeringOffload, setRegisteringOffload] = useState(false)
+
+  // Only genuine fresh installs reach the wizard (it mounts when
+  // `initial_scan_done` is unset), so this is where the in-app dependency-hide
+  // offer becomes eligible. Existing users never re-run the wizard and leave the
+  // flag at its default, so the nudge stays hidden for them without a migration.
+  useEffect(() => {
+    useDepHideOfferStore.getState().setEligible(true)
+  }, [])
 
   useEffect(() => {
     window.api.wizard.detectVamDir().then(({ path, varCount: count, source }) => {
@@ -206,33 +213,26 @@ export default function FirstRun({ onDone }) {
     runScanFlow()
   }, [offloadSuggestions, selectedOffload, runScanFlow])
 
+  // Non-subtractive: only records the going-forward preference. The existing
+  // library is never swept here — that stays a deliberate, taught opt-in from
+  // the in-app offer once the user has explored.
   const handleApply = useCallback(async () => {
     setApplying(true)
-    setHideProgress(null)
-    let hideCleanup = null
     try {
-      if (hideDepContent) {
-        hideCleanup = window.api.onApplyAutoHideProgress((data) => {
-          setHideProgress(data)
-        })
-        await window.api.scan.applyAutoHide('deps')
-        await window.api.settings.set('auto_hide_deps', '1')
-        const pkgStats = await window.api.packages.stats()
-        setStats(pkgStats)
-      }
+      await window.api.settings.set('auto_hide_deps', autoCurate ? '1' : '0')
+    } catch (err) {
+      console.warn('Failed to save auto-hide preference:', err.message)
     } finally {
-      hideCleanup?.()
       setApplying(false)
-      setHideProgress(null)
     }
-    setStep(hideDepContent ? 'applied' : 'done')
-  }, [hideDepContent])
+    setStep('done')
+  }, [autoCurate])
 
   return (
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open && (step === 'done' || step === 'applied')) onDone()
+        if (!open && step === 'done') onDone()
       }}
     >
       <DialogPortal>
@@ -240,13 +240,13 @@ export default function FirstRun({ onDone }) {
         <DialogPrimitive.Content
           className="fade-in fixed top-1/2 left-1/2 z-50 w-[480px] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-[#13141e] border border-white/10 overflow-hidden shadow-[0_32px_80px_rgba(0,0,0,0.7),0_0_0_1px_rgba(58,124,244,0.1)] outline-none"
           onPointerDownOutside={(e) => {
-            if (step !== 'done' && step !== 'applied') e.preventDefault()
+            if (step !== 'done') e.preventDefault()
           }}
           onInteractOutside={(e) => {
-            if (step !== 'done' && step !== 'applied') e.preventDefault()
+            if (step !== 'done') e.preventDefault()
           }}
           onEscapeKeyDown={(e) => {
-            if (step !== 'done' && step !== 'applied') e.preventDefault()
+            if (step !== 'done') e.preventDefault()
           }}
         >
           <div className="h-[3px] bg-linear-to-r from-accent-blue to-[#c040ee]" />
@@ -284,18 +284,16 @@ export default function FirstRun({ onDone }) {
             {step === 'setup' && (
               <SetupStep
                 stats={stats}
-                hideDepContent={hideDepContent}
-                setHideDepContent={setHideDepContent}
+                autoCurate={autoCurate}
+                setAutoCurate={setAutoCurate}
                 applying={applying}
-                hideProgress={hideProgress}
                 onApply={handleApply}
               />
             )}
-            {step === 'applied' && <AppliedStep stats={stats} onDone={onDone} />}
             {step === 'done' && (
               <DoneStep
                 stats={stats}
-                hideEnabled={hideDepContent}
+                autoCurate={autoCurate}
                 scanHadSkips={scanSkippedFiles.length > 0}
                 onDone={onDone}
               />
@@ -600,96 +598,41 @@ function UnhandledVarFilesStep({ stats, scanSkippedFiles, onContinue }) {
   )
 }
 
-function SetupStep({ stats, hideDepContent, setHideDepContent, applying, hideProgress, onApply }) {
-  const showProgress = applying && hideDepContent && hideProgress && hideProgress.total > 0
-  const pct = showProgress ? Math.min(Math.round((hideProgress.current / hideProgress.total) * 100), 100) : 0
+function SetupStep({ stats, autoCurate, setAutoCurate, applying, onApply }) {
   return (
     <div>
       <div className="flex items-center gap-2.5 mb-2">
         <CheckCircle2 size={20} className="text-success" />
         <h2 className="m-0 text-[17px] font-semibold text-text-primary">Scan complete</h2>
       </div>
-      <p className="text-xs text-white/40 mb-6">
+      <p className="text-xs text-white/40 mb-4">
         Found <strong className="text-white/70">{stats.totalCount.toLocaleString()} packages</strong>
         {' \u2014 '}
         <strong className="text-white/70">{stats.directCount.toLocaleString()}</strong> direct installs,{' '}
         <strong className="text-white/70">{stats.depCount.toLocaleString()}</strong> dependencies
       </p>
 
-      <p className="text-xs leading-[1.7] text-white/50 mb-5">
-        We detected that{' '}
-        <strong className="text-white/75">{(stats.depContentCount || 0).toLocaleString()} content items</strong> belong
-        to dependency packages. Would you like to automatically hide them in VaM so your library only shows content from
-        directly installed packages?
-      </p>
-
-      <div className={`flex flex-col gap-2 ${showProgress ? 'mb-4' : 'mb-3'}`}>
-        {[
-          {
-            id: true,
-            icon: EyeOff,
-            label: 'Hide dependency content',
-            desc: `Recommended. Your VaM library will only show content from your ${stats.directCount.toLocaleString()} direct packages. Dependencies remain hidden unless you promote them.`,
-          },
-          {
-            id: false,
-            icon: Eye,
-            label: 'Keep everything visible',
-            desc: `All ${stats.totalContent.toLocaleString()} items stay visible in VaM. You can manage visibility manually later.`,
-          },
-        ].map(({ id, icon: Icon, label, desc }) => (
-          <button
-            key={String(id)}
-            type="button"
-            onClick={() => setHideDepContent(id)}
-            className={`flex gap-3 p-3.5 rounded-[10px] cursor-pointer text-left transition-all duration-150 ${
-              hideDepContent === id
-                ? 'bg-[rgba(74,145,241,0.1)] border border-[rgba(74,145,241,0.4)]'
-                : 'bg-white/4 border border-white/8'
-            }`}
-          >
-            <Icon
-              size={16}
-              className={`shrink-0 mt-0.5 ${hideDepContent === id ? 'text-accent-blue' : 'text-white/35'}`}
-            />
-            <div>
-              <p
-                className={`m-0 text-[13px] font-medium mb-0.5 ${hideDepContent === id ? 'text-[#d0d1de]' : 'text-white/55'}`}
-              >
-                {label}
-              </p>
-              <p className="m-0 text-[11px] text-white/35 leading-snug">{desc}</p>
-            </div>
-          </button>
-        ))}
+      <div className="flex gap-3.5 p-4 rounded-[10px] bg-white/4 border border-white/8 mb-4">
+        <EyeOff size={18} className="shrink-0 mt-0.5 text-accent-blue" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-3">
+            <p className="m-0 text-[13px] font-medium text-[#d0d1de]">Keep dependency clutter out of VaM</p>
+            <Switch checked={autoCurate} onCheckedChange={setAutoCurate} disabled={applying} />
+          </div>
+          <p className="m-0 mt-1.5 text-[11px] text-white/40 leading-snug">
+            Recommended. When you install or add packages later, their dependency content stays out of your VaM browser
+            automatically, so you keep a curated set of the packages you chose.{' '}
+            <span className="text-white/55">Your current library is untouched.</span>
+          </p>
+        </div>
       </div>
 
-      {!showProgress && (
-        <p className="flex items-start gap-1.5 text-[11px] leading-snug text-white/35 mb-6">
-          <ShieldCheck size={13} className="shrink-0 mt-px text-white/30" />
-          <span>
-            Non-destructive and reversible — hiding only changes what VaM shows. Nothing is deleted, and you can undo it
-            anytime in Settings.
-          </span>
+      <div className="flex items-start gap-2.5 mb-6 pl-3 border-l-2 border-accent-blue/40">
+        <p className="m-0 text-[12px] leading-snug text-white/60">
+          Want to tidy the library you already have? You can do that anytime later, right from the app. Change this
+          whenever you like in Settings.
         </p>
-      )}
-
-      {showProgress && (
-        <div className="mb-5">
-          <div className="flex justify-between mb-2 text-xs text-white/40">
-            <span className="truncate pr-2">
-              Hiding dependency content — {hideProgress.current.toLocaleString()} of{' '}
-              {hideProgress.total.toLocaleString()} packages
-            </span>
-            <span className="text-white/65 shrink-0">{pct}%</span>
-          </div>
-          <Progress
-            value={pct}
-            className="h-[5px] bg-white/8"
-            indicatorClassName="bg-linear-to-r from-accent-blue to-[#c040ee]"
-          />
-        </div>
-      )}
+      </div>
 
       <Button
         variant="gradient"
@@ -700,11 +643,11 @@ function SetupStep({ stats, hideDepContent, setHideDepContent, applying, hidePro
       >
         {applying ? (
           <>
-            <Loader2 size={14} className="spin-slow" /> {hideDepContent ? 'Hiding dependency content…' : 'Applying…'}
+            <Loader2 size={14} className="spin-slow" /> Saving…
           </>
         ) : (
           <>
-            Apply & continue <ArrowRight size={15} />
+            Continue <ArrowRight size={15} />
           </>
         )}
       </Button>
@@ -712,85 +655,10 @@ function SetupStep({ stats, hideDepContent, setHideDepContent, applying, hidePro
   )
 }
 
-function AppliedStep({ stats, onDone }) {
-  const depContent = stats?.depContentCount || 0
-  const directCount = stats?.directCount || 0
-  return (
-    <div>
-      <div className="flex items-center gap-2.5 mb-2">
-        <EyeOff size={20} className="text-accent-blue" />
-        <h2 className="m-0 text-[17px] font-semibold text-text-primary">Dependency content hidden</h2>
-      </div>
-      <p className="text-xs leading-[1.7] text-white/50 mb-5">
-        {depContent > 0 ? (
-          <>
-            Hidden <strong className="text-white/75">{depContent.toLocaleString()} dependency items</strong>. Your VaM
-            library now shows only content from your{' '}
-            <strong className="text-white/75">{directCount.toLocaleString()} direct packages</strong>.
-          </>
-        ) : (
-          <>Auto-hide is on — dependency content will stay hidden in VaM.</>
-        )}
-      </p>
-
-      <div className="flex flex-col gap-2 mb-7">
-        {[
-          {
-            icon: ShieldCheck,
-            iconClass: 'text-success',
-            title: 'Nothing was deleted',
-            body: (
-              <>Hiding is non-destructive — it only tells VaM not to show this content. All your files stay on disk.</>
-            ),
-          },
-          {
-            icon: RotateCcw,
-            iconClass: 'text-accent-blue',
-            title: 'Undo anytime',
-            body: (
-              <>
-                Changed your mind? Turn this off in <strong className="text-white/60">Settings &rarr; Display</strong>{' '}
-                by unchecking <strong className="text-white/60">Auto-hide dependency content</strong> to bring
-                everything back.
-              </>
-            ),
-          },
-          {
-            icon: Plus,
-            iconClass: 'text-accent-blue',
-            title: 'Missing something you use?',
-            body: (
-              <>
-                A package you actually use may have been detected as a dependency. Open the{' '}
-                <strong className="text-white/60">Dependencies</strong> filter in your Library and click{' '}
-                <strong className="text-white/60">Add to Library</strong> to move it into your library and make its
-                content visible again.
-              </>
-            ),
-          },
-        ].map(({ icon: Icon, iconClass, title, body }) => (
-          <div key={title} className="flex gap-3 p-3.5 rounded-[10px] bg-white/4 border border-white/8 text-left">
-            <Icon size={16} className={`shrink-0 mt-0.5 ${iconClass}`} />
-            <div>
-              <p className="m-0 text-[13px] font-medium text-white/70 mb-0.5">{title}</p>
-              <p className="m-0 text-[11px] text-white/40 leading-snug">{body}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <Button variant="gradient" size="lg" onClick={onDone} className="w-full rounded-[10px] text-[13px]">
-        Open VaM Backstage
-      </Button>
-    </div>
-  )
-}
-
-function DoneStep({ stats, hideEnabled, scanHadSkips, onDone }) {
-  const depContent = stats?.depContentCount || 0
+function DoneStep({ stats, autoCurate, scanHadSkips, onDone }) {
   const hasIndexed = stats && stats.totalCount > 0
   return (
-    <div className="text-center py-3">
+    <div className="text-center">
       <div className="w-14 h-14 rounded-2xl mx-auto mb-5 flex items-center justify-center bg-success/12 border border-success/25">
         <CheckCircle2 size={28} className="text-success" />
       </div>
@@ -798,9 +666,9 @@ function DoneStep({ stats, hideEnabled, scanHadSkips, onDone }) {
       <h2 className="m-0 mb-2 text-xl font-semibold text-text-primary">You&apos;re all set!</h2>
       <p className="m-0 mb-6 text-[13px] text-white/45 leading-[1.7]">
         {hasIndexed
-          ? hideEnabled
-            ? `${depContent.toLocaleString()} dependency items have been hidden in VaM. Browse your library \u2014 only your direct packages are visible.`
-            : 'Library scanned and indexed. You can manage content visibility anytime from the Content browser.'
+          ? autoCurate
+            ? 'New packages you add will keep their dependency content out of VaM automatically. Your current library is untouched. Tidy it anytime from the Library.'
+            : 'Library scanned and indexed. You can curate what VaM shows anytime from the Library or Settings.'
           : scanHadSkips
             ? 'No packages could be indexed. Fix or remove the unreadable .var files you reviewed, then rescan from Settings.'
             : 'No packages found. Add .var files to your AddonPackages folder and rescan from Settings.'}

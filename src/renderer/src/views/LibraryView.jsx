@@ -111,6 +111,7 @@ import {
 import { LicenseTag } from '@/components/LicenseTag'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { LibraryPackageContextMenu } from '@/components/LibraryPackageContextMenu'
+import { DepHideOffer } from '@/components/DepHideOffer'
 import { SelectionPanel } from '@/components/SelectionPanel'
 import {
   BulkForceRemoveDialogContent,
@@ -1130,6 +1131,10 @@ export default function LibraryView({ onNavigate, navContext }) {
               </div>
             )}
           </div>
+        )}
+
+        {!bulkActive && statusFilter !== 'missing' && statusFilter !== 'archived' && (
+          <DepHideOffer variant={statusFilter === 'dependency' ? 'dependency' : 'library'} />
         )}
 
         {statusFilter === 'missing' ? (

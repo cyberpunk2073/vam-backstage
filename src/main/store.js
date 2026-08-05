@@ -661,9 +661,15 @@ function computeStats() {
   }
 
   let depContentCount = 0
+  // Dependency content still showing in VaM: what a "hide existing" sweep would
+  // act on. Drives the in-app offer nudge, which hides itself once this hits 0.
+  let depContentVisible = 0
   for (const item of contentItems) {
     contentByType[item.category] = (contentByType[item.category] || 0) + 1
-    if (!item.isDirect) depContentCount++
+    if (!item.isDirect) {
+      depContentCount++
+      if (!item.hidden) depContentVisible++
+    }
   }
 
   let totalMorphCount = 0
@@ -693,6 +699,7 @@ function computeStats() {
     contentByType,
     missingDepCount,
     depContentCount,
+    depContentVisible,
   }
 }
 
