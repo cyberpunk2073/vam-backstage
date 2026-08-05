@@ -594,9 +594,7 @@ export default function ContentView({ onNavigate, navContext }) {
           { value: 'all', label: 'All', count: packageStatusCounts.all },
           { value: 'enabled', label: 'Enabled', count: packageStatusCounts.enabled },
           { value: 'disabled', label: 'Disabled', count: packageStatusCounts.disabled },
-          ...(hasArchiveDirs
-            ? [{ value: 'archived', label: 'Archived', count: packageStatusCounts.archived, dividerBefore: true }]
-            : []),
+          ...(hasArchiveDirs ? [{ value: 'archived', label: 'Archived', count: packageStatusCounts.archived }] : []),
         ],
       },
       {
