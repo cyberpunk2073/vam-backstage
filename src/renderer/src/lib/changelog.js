@@ -15,14 +15,14 @@ export const CHANGELOG = [
         body: 'Archiving a package reclaims space by dropping only the dependencies that can be re-fetched from the Hub while keeping any irreplaceable ones, and installing it back later re-downloads exactly what it needs on its own. Archived packages live in an archive folder you set up in Settings, where they stay browsable but no longer load in VaM or nag about missing dependencies.',
       },
       {
-        kind: 'improved',
+        kind: 'new',
         title: 'Browse the entire Hub in one scroll',
         body: 'The Hub gallery now presents the entire timeline of results as one continuous list, with a scrollbar sized to the full count, so you can scroll the whole catalog freely and jump straight to any spot in the results.',
       },
       {
         kind: 'improved',
         title: 'Reworked package disabling and offloading',
-        body: 'Disabling and offloading packages now match how VaM and tools like BrowserAssist and qvaro handle them, so packages no longer show up as missing or broken when another tool disables or offloads them, and offloaded packages always restore to their original subfolder.',
+        body: 'Disabling and offloading packages now match how VaM and tools like BrowserAssist and qvaro handle them, so Backstage better recognizes their disabled status, and offloaded packages always restore to their original subfolder.',
       },
       {
         kind: 'improved',
@@ -32,7 +32,7 @@ export const CHANGELOG = [
       {
         kind: 'improved',
         title: 'Smarter search',
-        body: 'Search boxes now understand filters like is:favorite, is:wishlist, is:broken, is:orphan, and pkg: types, with color-coded highlighting and autocomplete as you type.',
+        body: 'Search boxes now understand filters like is:favorite, is:wishlist, is:nopreset, and package types, with color-coded highlighting and autocomplete as you type.',
       },
       {
         kind: 'improved',
@@ -47,7 +47,7 @@ export const CHANGELOG = [
       {
         kind: 'fixed',
         title: 'Many small fixes',
-        body: 'More reliable updates, steadier remote connections with no window focus stealing, live tracking of package folders and their subfolders, and fewer wrong Hub matches for dependency-only packages.',
+        body: 'More reliable updates, steadier remote connections with no window focus stealing, live tracking of package subfolders, and fewer wrong Hub matches for dependency-only packages.',
       },
     ],
   },
