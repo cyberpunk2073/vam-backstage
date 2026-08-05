@@ -1,7 +1,7 @@
 {
   "name": "vam-backstage",
   "version": "0.5.0",
-  "description": "VaM Backstage — desktop app for managing Virt-a-Mate .var packages",
+  "description": "VaM Backstage \u2014 desktop app for managing Virt-a-Mate .var packages",
   "main": "./out/main/index.js",
   "author": "cyberpunk2073 <cyberpunk2073@users.noreply.github.com>",
   "homepage": "https://github.com/cyberpunk2073/vam-backstage",
@@ -82,5 +82,8 @@
   },
   "lint-staged": {
     "*.{js,jsx,mjs,css,json,yaml,yml,md}": "prettier --write"
+  },
+  "overrides": {
+    "brace-expansion": "5.0.7"
   }
 }
