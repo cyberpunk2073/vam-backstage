@@ -16,8 +16,8 @@ export const CHANGELOG = [
       },
       {
         kind: 'new',
-        title: 'Browse the entire Hub in one scroll',
-        body: 'The Hub gallery now presents the entire timeline of results as one continuous list, with a scrollbar sized to the full count, so you can scroll the whole catalog freely and jump straight to any spot in the results.',
+        title: 'Scroll straight to any spot in Hub results',
+        body: 'The Hub gallery is now one continuous scroll whose scrollbar reflects the full result count, so you can drag to any point and land right where you want instead of scrolling there step by step. Results still load on demand as you reach them, fetching only the part you actually scroll to.',
       },
       {
         kind: 'improved',
