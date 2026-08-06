@@ -84,6 +84,29 @@ describe('resourceDetailMatchesPackageName', () => {
     expect(resourceDetailMatchesPackageName(detail, 'everlaster.FloatParamRandomizerEE')).toBe(true)
   })
 
+  it('matches deps keys / hubFiles case-insensitively', () => {
+    // Paid listing: no hubFiles; Hub keeps creator casing on the deps key while
+    // the local .var (and package_name query) may be all-lowercase.
+    const detail = {
+      resource_id: '67307',
+      title: 'Skallet Jo',
+      hubFiles: undefined,
+      dependencies: {
+        'caelryn.Skallet': [{ packageName: 'AcidBubbles.ColliderEditor' }],
+      },
+    }
+    expect(resourceDetailMatchesPackageName(detail, 'caelryn.skallet')).toBe(true)
+    expect(resourceDetailMatchesPackageName(detail, 'Caelryn.Skallet')).toBe(true)
+    expect(resourceDetailMatchesPackageName(detail, 'caelryn.Skallet')).toBe(true)
+
+    const withFiles = {
+      resource_id: '1',
+      hubFiles: [{ filename: 'Author.MyPkg.3.var' }],
+      dependencies: {},
+    }
+    expect(resourceDetailMatchesPackageName(withFiles, 'author.mypkg')).toBe(true)
+  })
+
   it('returns false without a resource_id', () => {
     expect(resourceDetailMatchesPackageName(null, 'A.B')).toBe(false)
     expect(resourceDetailMatchesPackageName({}, 'A.B')).toBe(false)

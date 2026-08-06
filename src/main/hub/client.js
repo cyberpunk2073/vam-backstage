@@ -262,22 +262,28 @@ export function hubPackageBaseName(name) {
  * only when the package is a primary file of that resource: listed in
  * `hubFiles[]`, or an outer key of `dependencies` (paid multi-var listings put
  * each attached `.var` there — Hub omits `hubFiles` for those).
+ *
+ * Comparison is case-insensitive: Hub's name lookup ignores case, but deps
+ * keys / hubFiles keep the creator's casing, which can differ from the local
+ * `.var` filename (e.g. `caelryn.skallet` vs `caelryn.Skallet`).
+ *
+ * Outer deps keys are usually the bare package base; when queried by
+ * `package_name` Hub sometimes echoes the ref with a version suffix
+ * (`.latest` / `.N` / `.minN`) — `hubPackageBaseName` covers both shapes.
  */
 export function resourceDetailMatchesPackageName(detail, packageName) {
   if (!detail?.resource_id || !packageName) return false
   const base = hubPackageBaseName(packageName)
   if (!base) return false
+  const baseLower = base.toLowerCase()
 
   for (const f of detail.hubFiles || []) {
-    if (f?.filename && hubPackageBaseName(f.filename) === base) return true
+    if (f?.filename && hubPackageBaseName(f.filename).toLowerCase() === baseLower) return true
   }
 
   for (const key of Object.keys(detail.dependencies || {})) {
     if (!key) continue
-    // Keys are either the package base (`Creator.Pkg`) or the queried ref
-    // echoed verbatim (`Creator.Pkg.latest` / `.N`).
-    if (key === base || key === packageName || key === `${base}.latest`) return true
-    if (hubPackageBaseName(key) === base) return true
+    if (hubPackageBaseName(key).toLowerCase() === baseLower) return true
   }
   return false
 }
