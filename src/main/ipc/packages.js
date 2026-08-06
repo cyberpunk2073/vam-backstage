@@ -14,6 +14,7 @@ import {
 } from '../db.js'
 import { scanAndUpsert } from '../scanner/ingest.js'
 import { runLocalScan } from '../scanner/local.js'
+import { enrichNewPackages } from '../hub/scanner.js'
 import { readVar, parseVarFilename } from '../scanner/var-reader.js'
 import { verifyPackageFull } from '../scanner/integrity.js'
 import {
@@ -1202,6 +1203,9 @@ export function registerPackageHandlers() {
       buildFromDb()
       notify('packages:updated')
       notify('contents:updated')
+      // Bytes replaced in place; Hub link is usually already set. enrich is a
+      // no-op for linked rows and respects hub_name_checked_at for unlinked ones.
+      enrichNewPackages([filename])
       return { ok: true }
     } catch (err) {
       try {

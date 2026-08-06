@@ -21,6 +21,7 @@ import { getSetting } from '../db.js'
 import { findLocalByFilename } from '../store.js'
 import { recordOwnedPath, withBulkWindow } from '../watcher.js'
 import { getMainLibraryDirPath } from '../library-dirs.js'
+import { enrichNewPackages } from '../hub/scanner.js'
 import { integrateScannedPackage, integrateGraphPhase } from './manager.js'
 
 const BATCH_IDLE_MS = 30_000
@@ -210,11 +211,21 @@ async function destroySession(session) {
  * Queue graph work on the cross-owner chain. The trailing catch keeps
  * `commitChain` settled — a rejection left on it would strand every later
  * commit — so `integrateGraphPhase` throwing only costs one batch its rebuild.
+ *
+ * After the graph rebuild, Hub-enrich the new filenames the same way the file
+ * watcher does. Drop-import deliberately silences the watcher (`withBulkWindow`
+ * + `recordOwnedPath`), and `integrateScannedPackage` is called with
+ * `hubResourceId: null`, so without this pass paid/off-index packages would
+ * stay unlinked until the next full `scanHubDetails`.
  */
 function enqueueGraphPhase(entries) {
   if (!entries.length) return
   commitChain = commitChain
-    .then(() => integrateGraphPhase(entries, { autoQueueDeps: false }))
+    .then(async () => {
+      await integrateGraphPhase(entries, { autoQueueDeps: false })
+      const filenames = entries.map((e) => e.filename).filter(Boolean)
+      if (filenames.length) enrichNewPackages(filenames)
+    })
     .catch((err) => {
       console.warn('[import] graph phase failed:', err?.message || err)
     })

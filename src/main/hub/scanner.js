@@ -258,11 +258,26 @@ export async function scanHubDetails(onProgress) {
  * hub detail fetches for any that are on the Hub but don't have cached details.
  * Packages absent from the index fall through to a name-based lookup (paid /
  * off-Hub), mirroring scanHubDetails' Pass 4. Fire-and-forget — used by the
- * file watcher when new packages arrive.
+ * file watcher when new packages arrive, drop-import after commit, and
+ * non-initial `runScan` for freshly added rows.
+ *
+ * Name lookups reuse `getPackagesNeedingHubNameLookup` so a prior definitive
+ * miss (`hub_name_checked_at`) is not re-queried when a previously known row
+ * is re-scanned or resurrected. CDN index hits still apply — a package that
+ * later appears on the free Hub should link even if name lookup had stamped
+ * a miss.
  */
 export function enrichNewPackages(filenames) {
   const index = getPackagesIndex()
   if (!index) return
+  if (!filenames?.length) return
+
+  const want = new Set(filenames)
+  const eligibleName = new Set(
+    getPackagesNeedingHubNameLookup()
+      .filter((r) => want.has(r.filename))
+      .map((r) => r.filename),
+  )
 
   const notFoundIds = getNotFoundHubResourceIds()
   const toFetch = []
@@ -278,15 +293,16 @@ export function enrichNewPackages(filenames) {
 
     const entry = index.get(packageName)
     if (!entry?.resourceId) {
-      // Not in the CDN index — resolve by name (covers paid drop-ins).
-      toResolveByName.push({ filename, packageName })
+      // Not in the CDN index — resolve by name (covers paid drop-ins), unless
+      // Pass 4 already retired this row as a definitive miss / live link.
+      if (eligibleName.has(filename)) toResolveByName.push({ filename, packageName })
       continue
     }
 
     const rid = String(entry.resourceId)
     // Dead CDN id (Hub re-publish) — same heal path as scanHubDetails Pass 4.
     if (notFoundIds.has(rid)) {
-      toResolveByName.push({ filename, packageName })
+      if (eligibleName.has(filename)) toResolveByName.push({ filename, packageName })
       continue
     }
 

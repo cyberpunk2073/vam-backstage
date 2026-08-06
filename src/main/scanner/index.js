@@ -37,6 +37,7 @@ import {
   isArchiveLibraryDir,
 } from '../library-dirs.js'
 import { normalizeAuxDisabled } from '../watcher.js'
+import { enrichNewPackages } from '../hub/scanner.js'
 
 /**
  * Run a full library scan across the main dir and every registered aux dir.
@@ -259,6 +260,12 @@ export async function runScan(vamDir, onProgress = () => {}) {
 
   if (isInitialScan) {
     setSetting('initial_scan_done', '1')
+  } else if (newAdditions.size > 0) {
+    // Same incremental Hub enrich the watcher runs for FS arrivals. Only
+    // brand-new rows (`!cached`) are passed — resurrected tombstones and
+    // content rescans keep their hub_resource_id / hub_name_checked_at.
+    // Skipped on the wizard's first scan; that path uses full scanHubDetails.
+    enrichNewPackages([...newAdditions.keys()])
   }
 
   // Final clearing event — the status bar hides on finalizing/step===total, so
