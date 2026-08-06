@@ -413,6 +413,46 @@ describe('migrate v28 (normalize .disabled content labels)', () => {
   })
 })
 
+// ── v30 migration: clear hub_name_checked_at on unlinked packages ─────────────
+//
+// Case-sensitive name matching stamped definitive misses for paid listings whose
+// Hub deps-key casing differed from the local .var. migrate() to head clears
+// those negative-cache stamps so Pass 4 re-asks once; already-linked packages
+// keep their stamp.
+
+describe('migrate v30 (clear unlinked hub_name_checked_at)', () => {
+  beforeEach(async () => {
+    tmp = await mkTempVamDir()
+    const raw = new Database(tmp.dbPath)
+    raw.exec(V22_SCHEMA_SQL)
+    raw.pragma('user_version = 22')
+    const ins = raw.prepare(
+      `INSERT INTO packages (filename, creator, package_name, version, size_bytes, file_mtime, hub_resource_id, hub_name_checked_at)
+       VALUES (?, ?, ?, '1', 1, 0, ?, ?)`,
+    )
+    ins.run('miss.case.1.var', 'miss', 'miss.case', null, 100) // unlinked + stamped → cleared
+    ins.run('linked.1.var', 'linked', 'linked.pkg', '123', 200) // linked + stamped → kept
+    ins.run('never.1.var', 'never', 'never.asked', null, null) // never checked → stays NULL
+    raw.close()
+
+    await openTestDatabase(tmp.dbPath)
+  })
+
+  it('clears hub_name_checked_at only for packages with no hub_resource_id', () => {
+    const rows = getDb()
+      .prepare(
+        `SELECT filename, hub_resource_id, hub_name_checked_at FROM packages
+         WHERE filename != ? ORDER BY filename`,
+      )
+      .all(LOCAL_PACKAGE_FILENAME)
+    expect(rows).toEqual([
+      { filename: 'linked.1.var', hub_resource_id: '123', hub_name_checked_at: 200 },
+      { filename: 'miss.case.1.var', hub_resource_id: null, hub_name_checked_at: null },
+      { filename: 'never.1.var', hub_resource_id: null, hub_name_checked_at: null },
+    ])
+  })
+})
+
 // ── frozen v22 baseline + schema parity ────────────────────────────────────────
 //
 // createSchema() (fresh install) and the incremental MIGRATIONS are two

@@ -4,7 +4,7 @@ import { app } from 'electron'
 import { join } from 'path'
 import { LOCAL_PACKAGE_FILENAME, LOCAL_PACKAGE_DISPLAY_NAME } from '@shared/local-package.js'
 
-export const SCHEMA_VERSION = 29
+export const SCHEMA_VERSION = 30
 
 /**
  * Normalize a value to a non-negative integer string, or null. Hub resource/user
@@ -148,6 +148,7 @@ export const MIGRATIONS = [
   [27, applyV27],
   [28, applyV28],
   [29, applyV29],
+  [30, applyV30],
 ]
 
 function migrate() {
@@ -482,6 +483,30 @@ function applyV28() {
  */
 function applyV29() {
   db.exec(`ALTER TABLE library_dirs ADD COLUMN archive INTEGER NOT NULL DEFAULT 0`)
+}
+
+/**
+ * v30 — one-shot clear of name-lookup negative-cache stamps on packages that
+ * never linked to a Hub resource. Earlier builds compared Hub deps keys /
+ * hubFiles to the local package name case-sensitively, so paid listings whose
+ * creator casing differed from the `.var` filename (e.g. `caelryn.skallet` vs
+ * `caelryn.Skallet`) were stamped as definitive misses and skipped on every
+ * later scan. Nulling `hub_name_checked_at` for unlinked rows forces Pass 4 to
+ * ask once more under the case-insensitive matcher; already-linked packages and
+ * genuine off-Hub creations are left alone (the latter re-stamp on the next
+ * definitive miss).
+ */
+function applyV30() {
+  const r = db
+    .prepare(
+      `UPDATE packages
+       SET hub_name_checked_at = NULL
+       WHERE hub_resource_id IS NULL AND hub_name_checked_at IS NOT NULL`,
+    )
+    .run()
+  if (r.changes > 0) {
+    console.info(`[migrate v30] cleared hub_name_checked_at on ${r.changes} unlinked package(s)`)
+  }
 }
 
 /**
