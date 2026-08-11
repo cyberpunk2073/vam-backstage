@@ -7,7 +7,9 @@ function getCacheDir() {
 }
 
 function avatarFile(userId, avatarDate) {
-  return `${userId}_${avatarDate}.jpg`
+  const safeId = String(userId).replace(/[^a-zA-Z0-9_-]/g, '_')
+  const safeDate = String(avatarDate).replace(/[^a-zA-Z0-9_-]/g, '_')
+  return `${safeId}_${safeDate}.jpg`
 }
 
 // In-memory index: userId (string) → { avatarDate }
@@ -103,13 +105,14 @@ export async function getAvatarBuffers(userIds) {
   const dir = getCacheDir()
   const results = {}
   for (const uid of userIds) {
-    const entry = idx[uid]
+    const safeUid = String(uid).replace(/[^a-zA-Z0-9_-]/g, '_')
+    const entry = idx[safeUid]
     if (!entry) {
       results[uid] = null
       continue
     }
     try {
-      results[uid] = await readFile(join(dir, avatarFile(uid, entry.avatarDate)))
+      results[uid] = await readFile(join(dir, avatarFile(safeUid, entry.avatarDate)))
     } catch {
       results[uid] = null
     }
